@@ -1,0 +1,271 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useState, useRef, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useAccount } from "wagmi";
+import { getBalance, getConfig } from "@/lib/api";
+import { formatUsdt } from "@/lib/format";
+import { DepositModal } from "./DepositModal";
+import { WithdrawModal } from "./WithdrawModal";
+import { SignModal } from "./SignModal";
+import { useWalletContext } from "@/context/WalletContext";
+import { useWalletList } from "@/hooks/useWalletList";
+import { getFormattedAddress } from "@/utils/walletHelpers";
+import { cn } from "@/lib/cn";
+
+const NAV = [
+  { href: "/", label: "Markets" },
+  { href: "/positions", label: "Positions" },
+  { href: "/history", label: "History" },
+];
+
+export function Header() {
+  const pathname = usePathname();
+  const {
+    isWalletConnected,
+    isLoading,
+    loadingStep,
+    walletAddress,
+    connectWallet,
+    disconnectWallet,
+    showSignModal,
+    handleSign,
+    closeSignModal,
+  } = useWalletContext();
+
+  const { isConnected: wagmiConnected } = useAccount();
+  const walletList = useWalletList();
+  const [depositOpen, setDepositOpen] = useState(false);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const connectRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (connectRef.current && !connectRef.current.contains(e.target as Node)) {
+        setConnectOpen(false);
+      }
+    }
+    document.addEventListener("click", onDocClick);
+    return () => document.removeEventListener("click", onDocClick);
+  }, []);
+
+  const { data: cfg } = useQuery({
+    queryKey: ["apiConfig"],
+    queryFn: getConfig,
+    staleTime: 300_000,
+  });
+
+  const { data: bal } = useQuery({
+    queryKey: ["balance", walletAddress?.toLowerCase() ?? ""],
+    queryFn: () => getBalance(walletAddress!),
+    enabled: !!walletAddress && isWalletConnected,
+    refetchInterval: 15_000,
+  });
+
+  const relayer = cfg?.relayerAddress ?? "";
+
+  return (
+    <>
+      {/* Full-screen loading overlay */}
+      {isLoading && (
+        <div className="fixed inset-0 z-[90] flex flex-col items-center justify-center gap-3 bg-white/80 backdrop-blur-sm">
+          <div className="h-10 w-10 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+          {loadingStep && (
+            <p className="max-w-xs text-center text-sm font-medium text-foreground">{loadingStep}</p>
+          )}
+        </div>
+      )}
+
+      <SignModal open={showSignModal} onSign={() => void handleSign()} onCancel={closeSignModal} />
+
+      <header className="sticky top-0 z-40 border-b border-border bg-white/95 shadow-card backdrop-blur-sm">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
+          {/* Logo */}
+          <Link
+            href="/"
+            className="font-display text-xl font-bold tracking-tight text-brand transition-opacity hover:opacity-90"
+          >
+            UpDown
+          </Link>
+
+          {/* Desktop nav */}
+          <nav className="hidden items-center gap-1 sm:flex">
+            {NAV.map((n) => (
+              <Link
+                key={n.href}
+                href={n.href}
+                className={cn(
+                  "rounded-[12px] px-3 py-2 text-sm font-medium transition-colors",
+                  pathname === n.href
+                    ? "bg-brand-subtle text-brand"
+                    : "text-foreground hover:bg-surface-muted hover:text-brand",
+                )}
+              >
+                {n.label}
+              </Link>
+            ))}
+          </nav>
+
+          {/* Right side: balance + actions */}
+          <div className="flex items-center gap-2">
+            {isWalletConnected && walletAddress && (
+              <>
+                {/* Balance chip */}
+                <div className="hidden items-center gap-2 sm:flex">
+                  <span className="rounded-[12px] border border-border bg-surface-muted px-3 py-1.5 font-mono text-sm font-semibold tabular-nums text-foreground">
+                    ${formatUsdt(bal?.available ?? "0")}
+                  </span>
+                  <span className="rounded-[12px] border border-border bg-white px-3 py-1.5 font-mono text-xs text-muted">
+                    {getFormattedAddress(walletAddress)}
+                  </span>
+                </div>
+                {/* Action buttons */}
+                <button
+                  type="button"
+                  className="rounded-[12px] bg-brand px-3 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                  onClick={() => setDepositOpen(true)}
+                  disabled={!relayer}
+                >
+                  Deposit
+                </button>
+                <button
+                  type="button"
+                  className="hidden rounded-[12px] border border-border bg-white px-3 py-2 text-sm font-semibold text-foreground transition-colors hover:bg-surface-muted sm:inline-flex"
+                  onClick={() => setWithdrawOpen(true)}
+                >
+                  Withdraw
+                </button>
+                <button
+                  type="button"
+                  className="hidden rounded-[12px] border border-border px-3 py-2 text-sm font-medium text-muted transition-colors hover:border-brand hover:text-brand sm:inline-flex"
+                  onClick={() => void disconnectWallet()}
+                >
+                  Disconnect
+                </button>
+              </>
+            )}
+
+            {!isWalletConnected && wagmiConnected && (
+              <span className="text-sm font-medium text-muted">Signing…</span>
+            )}
+
+            {!isWalletConnected && !wagmiConnected && (
+              <div className="relative" ref={connectRef}>
+                <button
+                  type="button"
+                  className="rounded-[12px] bg-brand px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                  disabled={isLoading}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setConnectOpen((o) => !o);
+                  }}
+                >
+                  {isLoading ? "Connecting…" : "Connect wallet"}
+                </button>
+                {connectOpen && (
+                  <div className="absolute right-0 top-full z-50 mt-2 min-w-[220px] rounded-[12px] border border-border bg-white py-1 shadow-card-hover">
+                    {walletList.map(({ name, connector, isAvailable }) => (
+                      <button
+                        key={name}
+                        type="button"
+                        disabled={!isAvailable || !connector || isLoading}
+                        className="block w-full px-4 py-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-brand-subtle disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={() => {
+                          if (connector) {
+                            void connectWallet(connector);
+                            setConnectOpen(false);
+                          }
+                        }}
+                      >
+                        {name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Mobile hamburger */}
+            <button
+              type="button"
+              className="ml-1 rounded-[12px] p-2 text-foreground transition-colors hover:bg-surface-muted sm:hidden"
+              onClick={() => setMobileMenuOpen((o) => !o)}
+              aria-label="Menu"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                {mobileMenuOpen ? (
+                  <>
+                    <path d="M18 6 6 18" />
+                    <path d="m6 6 12 12" />
+                  </>
+                ) : (
+                  <>
+                    <path d="M4 6h16" />
+                    <path d="M4 12h16" />
+                    <path d="M4 18h16" />
+                  </>
+                )}
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Mobile menu */}
+        {mobileMenuOpen && (
+          <div className="border-t border-border bg-white px-4 pb-4 pt-2 sm:hidden">
+            <nav className="flex flex-col gap-1">
+              {NAV.map((n) => (
+                <Link
+                  key={n.href}
+                  href={n.href}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={cn(
+                    "rounded-[12px] px-3 py-2.5 text-sm font-medium transition-colors",
+                    pathname === n.href
+                      ? "bg-brand-subtle text-brand"
+                      : "text-foreground hover:bg-surface-muted",
+                  )}
+                >
+                  {n.label}
+                </Link>
+              ))}
+            </nav>
+            {isWalletConnected && walletAddress && (
+              <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-xs text-muted">{getFormattedAddress(walletAddress)}</span>
+                  <span className="font-mono text-sm font-semibold text-foreground">
+                    ${formatUsdt(bal?.available ?? "0")}
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    className="flex-1 rounded-[12px] border border-border bg-white py-2 text-sm font-semibold text-foreground"
+                    onClick={() => { setWithdrawOpen(true); setMobileMenuOpen(false); }}
+                  >
+                    Withdraw
+                  </button>
+                  <button
+                    type="button"
+                    className="flex-1 rounded-[12px] border border-border py-2 text-sm font-medium text-muted"
+                    onClick={() => { void disconnectWallet(); setMobileMenuOpen(false); }}
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </header>
+
+      <DepositModal open={depositOpen} onClose={() => setDepositOpen(false)} relayerAddress={relayer} />
+      <WithdrawModal open={withdrawOpen} onClose={() => setWithdrawOpen(false)} />
+    </>
+  );
+}
