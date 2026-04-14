@@ -10,11 +10,11 @@ import { ALCHEMY_RPC_URL } from "./environment";
 const walletConnectProjectId =
   typeof process !== "undefined"
     ? process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID?.trim() ||
-      "14808831369ecdaaab7b8869eb13c6b0"
+    "14808831369ecdaaab7b8869eb13c6b0"
     : "14808831369ecdaaab7b8869eb13c6b0";
 
 const appUrl =
-  typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
+  typeof window !== "undefined" ? window.location.origin : "https://api-updown.quecko.org";
 
 export const wagmiConfig = createConfig({
   chains: [mainnet, arbitrum],
