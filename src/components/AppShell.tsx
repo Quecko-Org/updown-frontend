@@ -12,8 +12,8 @@ import { Header } from "./Header";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const marketMatch = pathname?.match(/^\/market\/(0x[a-fA-F0-9]{40})/i);
-  const marketFromRoute = marketMatch?.[1] ?? null;
+  const marketMatch = pathname?.match(/^\/market\/(.+)$/);
+  const marketFromRoute = marketMatch?.[1] ? decodeURIComponent(marketMatch[1]) : null;
 
   const { address } = useAccount();
   const setApiConfig = useSetAtom(apiConfigAtom);

@@ -8,6 +8,7 @@ import { getPositions, postMarketClaim } from "@/lib/api";
 import { formatUsdt } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { EmptyState } from "@/components/EmptyState";
+import { marketPathFromAddress } from "@/lib/marketKey";
 
 export default function PositionsPage() {
   const { address, isConnected } = useAccount();
@@ -69,8 +70,10 @@ export default function PositionsPage() {
             )}
           >
             <div>
-              <Link href={`/market/${p.market}`} className="font-display text-lg font-bold text-brand hover:underline">
-                {p.market.slice(0, 10)}…{p.market.slice(-6)}
+              <Link href={marketPathFromAddress(p.market)} className="font-display text-lg font-bold text-brand hover:underline">
+                {p.market.length > 22
+                  ? `${p.market.slice(0, 12)}…${p.market.slice(-10)}`
+                  : p.market}
               </Link>
               <p className="mt-1 text-sm text-muted">
                 <span

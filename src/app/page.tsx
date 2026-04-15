@@ -175,11 +175,11 @@ function MarketGrid({ timeframe, pair }: { timeframe: 300 | 900 | 3600; pair: Pa
 
   if (isLoading) {
     return (
-      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="flex gap-5 overflow-x-auto pb-2 sm:grid sm:grid-cols-2 sm:overflow-visible lg:grid-cols-3">
         {[1, 2, 3].map((i) => (
           <div
             key={i}
-            className="h-[180px] animate-pulse rounded-xl border border-border bg-surface-muted/40"
+            className="h-[180px] min-w-[280px] shrink-0 animate-pulse rounded-xl border border-border bg-surface-muted/40 sm:min-w-0"
           />
         ))}
       </div>
@@ -197,7 +197,7 @@ function MarketGrid({ timeframe, pair }: { timeframe: 300 | 900 | 3600; pair: Pa
   }
 
   return (
-    <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="flex gap-5 overflow-x-auto pb-2 [-webkit-overflow-scrolling:touch] sm:grid sm:grid-cols-2 sm:overflow-visible lg:grid-cols-3">
       {data.map((m) => (
         <MarketCard key={m.address} market={m} />
       ))}

@@ -8,6 +8,7 @@ import { getMarket, getTrades, type TradeRow } from "@/lib/api";
 import { formatUsdt } from "@/lib/format";
 import { EmptyState } from "@/components/EmptyState";
 import { cn } from "@/lib/cn";
+import { marketPathFromAddress } from "@/lib/marketKey";
 
 const PAGE = 20;
 
@@ -102,8 +103,8 @@ export default function HistoryPage() {
                 className="border-b border-border/80 last:border-0 odd:bg-white even:bg-surface-muted/40"
               >
                 <td className="px-4 py-3">
-                  <Link href={`/market/${t.market}`} className="font-medium text-brand hover:underline">
-                    {t.market.slice(0, 8)}…
+                  <Link href={marketPathFromAddress(t.market)} className="font-medium text-brand hover:underline">
+                    {t.market.length > 20 ? `${t.market.slice(0, 10)}…` : t.market}
                   </Link>
                 </td>
                 <td className="px-4 py-3">

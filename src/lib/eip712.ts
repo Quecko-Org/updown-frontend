@@ -3,7 +3,7 @@ import type { ApiConfig } from "./api";
 export const ORDER_TYPES = {
   Order: [
     { name: "maker", type: "address" },
-    { name: "market", type: "address" },
+    { name: "market", type: "uint256" },
     { name: "option", type: "uint256" },
     { name: "side", type: "uint8" },
     { name: "type", type: "uint8" },
@@ -31,7 +31,8 @@ export const WITHDRAW_TYPES = {
 
 export type OrderSignMessage = {
   maker: `0x${string}`;
-  market: `0x${string}`;
+  /** Numeric market id from settlement contract (same as composite key suffix). */
+  market: bigint;
   option: bigint;
   side: number;
   type: number;

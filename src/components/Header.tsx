@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAccount } from "wagmi";
-import { getBalance, getConfig } from "@/lib/api";
+import { getBalance, getConfig, getDmmStatus } from "@/lib/api";
 import { formatUsdt } from "@/lib/format";
 import { DepositModal } from "./DepositModal";
 import { WithdrawModal } from "./WithdrawModal";
@@ -19,6 +19,7 @@ const NAV = [
   { href: "/", label: "Markets" },
   { href: "/positions", label: "Positions" },
   { href: "/history", label: "History" },
+  { href: "/fees", label: "Fees" },
 ];
 
 export function Header() {
@@ -66,6 +67,13 @@ export function Header() {
     refetchInterval: 15_000,
   });
 
+  const { data: dmmStatus } = useQuery({
+    queryKey: ["dmmStatus", walletAddress?.toLowerCase() ?? ""],
+    queryFn: () => getDmmStatus(walletAddress!),
+    enabled: !!walletAddress && isWalletConnected,
+    staleTime: 60_000,
+  });
+
   const relayer = cfg?.relayerAddress ?? "";
 
   return (
@@ -108,6 +116,19 @@ export function Header() {
                 {n.label}
               </Link>
             ))}
+            {isWalletConnected && dmmStatus?.isDmm ? (
+              <Link
+                href="/rebates"
+                className={cn(
+                  "rounded-[12px] px-3 py-2 text-sm font-medium transition-colors",
+                  pathname === "/rebates"
+                    ? "bg-brand-subtle text-brand"
+                    : "text-foreground hover:bg-surface-muted hover:text-brand",
+                )}
+              >
+                Rebates
+              </Link>
+            ) : null}
           </nav>
 
           {/* Right side: balance + actions */}
@@ -233,6 +254,20 @@ export function Header() {
                   {n.label}
                 </Link>
               ))}
+              {isWalletConnected && dmmStatus?.isDmm ? (
+                <Link
+                  href="/rebates"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={cn(
+                    "rounded-[12px] px-3 py-2.5 text-sm font-medium transition-colors",
+                    pathname === "/rebates"
+                      ? "bg-brand-subtle text-brand"
+                      : "text-foreground hover:bg-surface-muted",
+                  )}
+                >
+                  Rebates
+                </Link>
+              ) : null}
             </nav>
             {isWalletConnected && walletAddress && (
               <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3">
