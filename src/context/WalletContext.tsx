@@ -18,7 +18,7 @@ import {
   useSwitchChain,
   type Connector,
 } from "wagmi";
-import { signMessage } from "@wagmi/core";
+import { signMessage, getConnections } from "@wagmi/core";
 import { createWalletClient, custom, createPublicClient, http, type PublicClient } from "viem";
 import { arbitrum, alchemy } from "@account-kit/infra";
 import { WalletClientSigner } from "@aa-sdk/core";
@@ -69,8 +69,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const { connectAsync } = useConnect();
   const { disconnectAsync } = useDisconnect();
-  const { address, isConnected, connector } = useAccount();
-  const { data: walletClient } = useWalletClient({ chainId: platform_chainId });
+  const { address, isConnected } = useAccount();
+  const { data: walletClient } = useWalletClient();
   const connectedChainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
 
@@ -135,10 +135,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           await switchChainAsync({ chainId: platform_chainId });
         }
 
-        if (!connector) throw new Error("No connector");
+        const connections = getConnections(wagmiConfig);
+        const activeConnector = connections[0]?.connector;
+        if (!activeConnector) throw new Error("No connector");
 
         const signData = await signMessage(wagmiConfig, {
-          connector,
+          connector: activeConnector,
           message: walletAddr.toLowerCase(),
         });
 
@@ -159,7 +161,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         return null;
       }
     },
-    [connectedChainId, switchChainAsync, connector, disconnectWallet]
+    [connectedChainId, switchChainAsync, disconnectWallet]
   );
 
   const connectWallet = useCallback(
