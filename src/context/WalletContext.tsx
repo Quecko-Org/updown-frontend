@@ -34,7 +34,6 @@ import {
 } from "@/config/environment";
 import { LOGIN_SUCCESS, SIGNATURE_REJECTED } from "@/config/walletConstants";
 import { userSmartAccount, userSmartAccountClient, userPublicClient } from "@/store/atoms";
-import { grantRootSessionIfNeeded } from "@/lib/grantSessionPermissions";
 import { deleteIndexKey } from "@/utils/indexDb";
 
 export interface WalletContextValue {
@@ -43,9 +42,9 @@ export interface WalletContextValue {
   loadingStep: string;
   walletAddress: string | undefined;
   connectWallet: (connector: Connector) => Promise<void>;
-  disconnectWallet: () => Promise<void>;
+  disconnectWallet: () => void;
   showSignModal: boolean;
-  handleSign: () => Promise<void>;
+  handleSign: () => void;
   closeSignModal: () => void;
 }
 
@@ -68,14 +67,15 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const pendingSign = useRef(false);
 
   const { connectAsync } = useConnect();
-  const { disconnectAsync } = useDisconnect();
+  const { disconnect } = useDisconnect();
   const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
   const connectedChainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
 
-  const disconnectWallet = useCallback(async () => {
-    await disconnectAsync();
+  // ── Disconnect (matches speed-market: sync disconnect) ──
+  const disconnectWallet = useCallback(() => {
+    disconnect();
     setSmartAccount("");
     setSmartAccountClient(null);
     setPubClient(null);
@@ -86,16 +86,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("sign");
     localStorage.removeItem("sessionExpiryTime");
     localStorage.removeItem("userlastconnectorId");
-    await deleteIndexKey("sessionKeyData");
-  }, [disconnectAsync, setSmartAccount, setSmartAccountClient, setPubClient]);
+    void deleteIndexKey("sessionKeyData");
+  }, [disconnect, setSmartAccount, setSmartAccountClient, setPubClient]);
 
+  // ── Create smart account (matches speed-market: no API key guard, no session grant) ──
   const createSmartAccountFn = useCallback(
     async (wc: NonNullable<typeof walletClient>) => {
       try {
-        if (!ALCHEMY_API_KEY) {
-          console.error("NEXT_PUBLIC_ALCHEMY_API_KEY is not set");
-          return null;
-        }
         const signer = new WalletClientSigner(
           createWalletClient({
             chain: arbitrum,
@@ -108,14 +105,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           transport: alchemy({ apiKey: ALCHEMY_API_KEY }),
           chain: arbitrum,
           signer,
-          ...(PAYMASTER_POLICY_ID ? { policyId: PAYMASTER_POLICY_ID } : {}),
+          policyId: PAYMASTER_POLICY_ID,
         });
 
-        const smartAccountResult = await client.requestAccount();
-        const addr = smartAccountResult.address as string;
+        const smartAccountAddress = await (client as ReturnType<typeof createSmartWalletClient>).requestAccount();
+        const addr = smartAccountAddress?.address as string;
         setSmartAccount(addr);
         setSmartAccountClient(client);
-        await grantRootSessionIfNeeded(client, addr);
         return addr;
       } catch (error) {
         console.error("Error creating smart account:", error);
@@ -125,6 +121,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     [setSmartAccount, setSmartAccountClient]
   );
 
+  // ── Sign message (matches speed-market: getConnections for wagmi v2) ──
   const performSign = useCallback(
     async (walletAddr: string) => {
       try {
@@ -135,6 +132,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           await switchChainAsync({ chainId: platform_chainId });
         }
 
+        // wagmi v2 equivalent of speed-market's getConnection(wagmiConfig)
         const connections = getConnections(wagmiConfig);
         const activeConnector = connections[0]?.connector;
         if (!activeConnector) throw new Error("No connector");
@@ -156,7 +154,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         setLoadingStep("");
         setIsLoading(false);
         toast.error(SIGNATURE_REJECTED);
-        await disconnectWallet();
+        disconnectWallet();
         console.error("Signing failed:", error);
         return null;
       }
@@ -164,26 +162,22 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     [connectedChainId, switchChainAsync, disconnectWallet]
   );
 
+  // ── Connect wallet (matches speed-market) ──
   const connectWallet = useCallback(
-    async (c: Connector) => {
+    async (connector: Connector) => {
       try {
         setIsLoading(true);
         setLoadingStep("Confirm wallet connection from your wallet");
 
-        // If wagmi auto-reconnected from a previous session, disconnect first
-        // to avoid "Connector already connected" error.
-        const existingConnections = getConnections(wagmiConfig);
-        if (existingConnections.length > 0) {
-          await disconnectAsync();
-        }
-
         const result = await connectAsync(
-          c?.name === "WalletConnect" ? { connector: c } : { connector: c, chainId: platform_chainId }
+          connector?.name === "WalletConnect"
+            ? { connector }
+            : { connector, chainId: platform_chainId }
         );
 
-        localStorage.setItem("connectorId", c?.name ?? "");
+        localStorage.setItem("connectorId", connector?.name ?? "");
         localStorage.setItem("flag", "true");
-        localStorage.setItem("userlastconnectorId", c?.name ?? "");
+        localStorage.setItem("userlastconnectorId", connector?.name ?? "");
 
         if (result?.accounts?.[0]) {
           pendingSign.current = true;
@@ -196,9 +190,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem("flag");
       }
     },
-    [connectAsync, disconnectAsync]
+    [connectAsync]
   );
 
+  // ── When walletClient becomes available after connect, show sign modal ──
   useEffect(() => {
     if (!pendingSign.current || !address || !walletClient) return;
     pendingSign.current = false;
@@ -207,6 +202,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setShowSignModal(true);
   }, [address, walletClient]);
 
+  // ── Handle sign (matches speed-market: sign → smart account → done) ──
   const handleSign = useCallback(async () => {
     if (!address || !walletClient) return;
     setShowSignModal(false);
@@ -225,26 +221,23 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const closeSignModal = useCallback(() => {
     setShowSignModal(false);
-    void disconnectWallet();
+    disconnectWallet();
   }, [disconnectWallet]);
 
-  // On page reload / auto-reconnect: restore smart account if we have a stored
-  // signature, otherwise prompt the user to sign again.
+  // ── Auto-restore smart account on page reload (matches speed-market) ──
   useEffect(() => {
-    if (!address || !walletClient || smartAccount || pendingSign.current) return;
-
-    const hasStoredSign =
-      localStorage.getItem("sign") &&
-      localStorage.getItem("lastAccount") === address;
-
-    if (hasStoredSign) {
+    if (
+      address &&
+      walletClient &&
+      !smartAccount &&
+      !pendingSign.current &&
+      localStorage.getItem("sign")
+    ) {
       void createSmartAccountFn(walletClient);
-    } else if (isConnected) {
-      // Wagmi auto-reconnected but no stored signature — show sign modal
-      setShowSignModal(true);
     }
-  }, [address, walletClient, smartAccount, isConnected, createSmartAccountFn]);
+  }, [address, walletClient, smartAccount, createSmartAccountFn]);
 
+  // ── Create public client when smart account is ready ──
   useEffect(() => {
     if (smartAccount) {
       setPubClient(
@@ -256,6 +249,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [smartAccount, setPubClient]);
 
+  // ── Clear session expiry on account change ──
   useEffect(() => {
     if (address && smartAccount) {
       const lastConnectedAccount = localStorage.getItem("lastAccount");
@@ -265,8 +259,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [address, smartAccount]);
 
+  // ── Context value (matches speed-market: isWalletConnected = isConnected && !!address) ──
   const value: WalletContextValue = {
-    isWalletConnected: isConnected && !!smartAccount,
+    isWalletConnected: isConnected && !!address,
     isLoading,
     loadingStep,
     walletAddress: address,

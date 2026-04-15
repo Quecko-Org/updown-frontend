@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useAccount } from "wagmi";
 import { getBalance, getConfig, getDmmStatus } from "@/lib/api";
 import { formatUsdt } from "@/lib/format";
 import { DepositModal } from "./DepositModal";
@@ -36,7 +35,6 @@ export function Header() {
     closeSignModal,
   } = useWalletContext();
 
-  const { isConnected: wagmiConnected } = useAccount();
   const walletList = useWalletList();
   const [depositOpen, setDepositOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
@@ -170,17 +168,7 @@ export function Header() {
               </>
             )}
 
-            {!isWalletConnected && wagmiConnected && !isLoading && (
-              <button
-                type="button"
-                className="rounded-[12px] bg-brand px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90"
-                onClick={() => void disconnectWallet()}
-              >
-                Disconnect &amp; Reconnect
-              </button>
-            )}
-
-            {!isWalletConnected && !wagmiConnected && (
+            {!isWalletConnected && (
               <div className="relative" ref={connectRef}>
                 <button
                   type="button"

@@ -37,5 +37,4 @@ export const wagmiConfig = createConfig({
     [mainnet.id]: http(),
     [arbitrum.id]: http(ALCHEMY_RPC_URL),
   },
-  ssr: true,
 });
