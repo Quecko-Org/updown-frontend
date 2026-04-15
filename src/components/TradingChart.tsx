@@ -6,23 +6,55 @@ import { getPriceHistory } from "@/lib/api";
 
 type Point = { t: number; p: number };
 
+function parseTimeSec(o: Record<string, unknown>): number | null {
+  const tRaw = o.time ?? o.t ?? o.ts ?? o.timestamp;
+  if (typeof tRaw === "number" && Number.isFinite(tRaw)) {
+    return tRaw > 1e12 ? tRaw / 1000 : tRaw;
+  }
+  if (typeof tRaw === "string" && tRaw) {
+    const n = Number(tRaw);
+    if (Number.isFinite(n)) return n > 1e12 ? n / 1000 : n;
+  }
+  const iso = o.createdAt ?? o.updatedAt;
+  if (typeof iso === "string" && iso) {
+    const ms = Date.parse(iso);
+    if (Number.isFinite(ms)) return ms / 1000;
+  }
+  return null;
+}
+
+function parsePrice(o: Record<string, unknown>): number | null {
+  const pRaw = o.currentPrice ?? o.price ?? o.close ?? o.value ?? o.p ?? o.last;
+  if (typeof pRaw === "string") {
+    const n = Number(pRaw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+  if (typeof pRaw === "number" && Number.isFinite(pRaw) && pRaw > 0) return pRaw;
+  return null;
+}
+
+function rowToPoint(row: unknown): Point | null {
+  if (Array.isArray(row) && row.length >= 2) {
+    const t = Number(row[0]);
+    const p = Number(row[1]);
+    if (Number.isFinite(t) && Number.isFinite(p) && p > 0) return { t, p };
+    return null;
+  }
+  if (row && typeof row === "object") {
+    const o = row as Record<string, unknown>;
+    const t = parseTimeSec(o);
+    const p = parsePrice(o);
+    if (t != null && p != null) return { t, p };
+  }
+  return null;
+}
+
 function normalizeHistory(raw: unknown): Point[] {
   if (!raw) return [];
   if (Array.isArray(raw)) {
-    return raw
-      .map((row) => {
-        if (Array.isArray(row) && row.length >= 2) {
-          return { t: Number(row[0]), p: Number(row[1]) };
-        }
-        if (row && typeof row === "object") {
-          const o = row as Record<string, unknown>;
-          const t = Number(o.time ?? o.t ?? o.ts ?? 0);
-          const p = Number(o.price ?? o.close ?? o.value ?? 0);
-          if (Number.isFinite(t) && Number.isFinite(p)) return { t, p };
-        }
-        return null;
-      })
-      .filter((x): x is Point => x !== null);
+    const pts = raw.map(rowToPoint).filter((x): x is Point => x !== null);
+    pts.sort((a, b) => a.t - b.t);
+    return pts;
   }
   if (typeof raw === "object" && raw !== null && "data" in raw) {
     return normalizeHistory((raw as { data: unknown }).data);
@@ -31,7 +63,7 @@ function normalizeHistory(raw: unknown): Point[] {
 }
 
 export function TradingChart({ symbol = "BTC" }: { symbol?: string }) {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["priceHistory", symbol],
     queryFn: () => getPriceHistory(symbol),
     refetchInterval: 10_000,
@@ -39,6 +71,7 @@ export function TradingChart({ symbol = "BTC" }: { symbol?: string }) {
 
   const points = useMemo(() => normalizeHistory(data), [data]);
   const last = points.length ? points[points.length - 1] : null;
+  const showSpot = last != null && last.p > 0;
 
   const pathD = useMemo(() => {
     if (points.length < 2) return "";
@@ -63,20 +96,25 @@ export function TradingChart({ symbol = "BTC" }: { symbol?: string }) {
     <div className="card-kraken flex min-h-[220px] flex-col p-5">
       <div className="flex items-baseline justify-between border-b border-border pb-3">
         <h3 className="font-display text-lg font-bold text-foreground">{symbol} spot</h3>
-        {last && (
+        {showSpot && (
           <span className="font-mono text-lg font-bold tabular-nums text-brand">
-            {last.p.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            {last!.p.toLocaleString(undefined, { maximumFractionDigits: 2 })}
           </span>
         )}
       </div>
       <div className="flex min-h-[160px] flex-1 items-center justify-center pt-4">
         {isLoading && <p className="text-sm text-muted">Loading chart…</p>}
-        {!isLoading && points.length < 2 && (
-          <p className="max-w-xs text-center text-sm leading-relaxed text-muted">
-            No history yet. The price feed proxy may be unavailable.
+        {isError && !isLoading && (
+          <p className="max-w-xs text-center text-sm font-medium text-foreground">
+            Price data unavailable
           </p>
         )}
-        {!isLoading && points.length >= 2 && (
+        {!isLoading && !isError && points.length < 2 && (
+          <p className="max-w-xs text-center text-sm leading-relaxed text-muted">
+            No history yet. The price feed may be warming up.
+          </p>
+        )}
+        {!isLoading && !isError && points.length >= 2 && (
           <svg
             viewBox="0 0 320 120"
             className="h-[160px] w-full max-w-full text-brand"

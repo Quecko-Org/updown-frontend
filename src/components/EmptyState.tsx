@@ -62,9 +62,7 @@ export function EmptyState({
         <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted">{subtitle}</p>
       )}
       {children && (
-        <p className={cn("max-w-md text-sm leading-relaxed text-muted", (title || subtitle) && "mt-2")}>
-          {children}
-        </p>
+        <div className="mt-4 flex w-full max-w-md flex-col items-center gap-2">{children}</div>
       )}
     </div>
   );

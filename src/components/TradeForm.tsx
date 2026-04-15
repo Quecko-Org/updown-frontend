@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAccount, useSignTypedData } from "wagmi";
 import { toast } from "sonner";
@@ -19,6 +19,7 @@ import { parseCompositeMarketKey } from "@/lib/marketKey";
 import { cn } from "@/lib/cn";
 import { formatUserFacingError } from "@/lib/errors";
 import { EmptyState } from "@/components/EmptyState";
+import { WalletConnectorList } from "@/components/WalletConnectorList";
 
 const PRESETS = [5, 25, 50, 100, 500];
 
@@ -60,6 +61,11 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
   const [dollars, setDollars] = useState(25);
   const [orderType, setOrderType] = useState<OrderApiType>("LIMIT");
   const qc = useQueryClient();
+  const connectSectionRef = useRef<HTMLDivElement>(null);
+
+  function scrollToConnect() {
+    connectSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
 
   const parsedKey = useMemo(() => parseCompositeMarketKey(marketAddress), [marketAddress]);
 
@@ -172,16 +178,6 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
     );
   }
 
-  if (!isConnected) {
-    return (
-      <EmptyState
-        icon="wallet"
-        title="Connect a wallet"
-        subtitle="Connect with MetaMask or another wallet to place signed UP / DOWN orders on this market."
-      />
-    );
-  }
-
   const rebateBps = dmmStatus?.isDmm ? dmmStatus.rebateBps : undefined;
 
   return (
@@ -196,7 +192,10 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
               ? "bg-success text-white shadow-sm"
               : "bg-surface-muted text-foreground hover:bg-success-soft"
           )}
-          onClick={() => setSide(1)}
+          onClick={() => {
+            setSide(1);
+            if (!isConnected) scrollToConnect();
+          }}
         >
           UP
         </button>
@@ -208,7 +207,10 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
               ? "bg-down text-white shadow-sm"
               : "bg-surface-muted text-foreground hover:bg-down-soft"
           )}
-          onClick={() => setSide(2)}
+          onClick={() => {
+            setSide(2);
+            if (!isConnected) scrollToConnect();
+          }}
         >
           DOWN
         </button>
@@ -279,14 +281,27 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
           Limit price (BPS): <span className="font-mono text-foreground">{limitPrice}</span>
         </p>
       )}
-      <button
-        type="button"
-        disabled={submit.isPending || market?.status !== "ACTIVE"}
-        className="btn-primary mt-4 w-full disabled:opacity-50"
-        onClick={() => submit.mutate()}
-      >
-        {submit.isPending ? "Signing…" : `Buy ${side === 1 ? "UP" : "DOWN"}`}
-      </button>
+      {isConnected ? (
+        <button
+          type="button"
+          disabled={submit.isPending || market?.status !== "ACTIVE"}
+          className="btn-primary mt-4 w-full disabled:opacity-50"
+          onClick={() => submit.mutate()}
+        >
+          {submit.isPending ? "Signing…" : `Buy ${side === 1 ? "UP" : "DOWN"}`}
+        </button>
+      ) : (
+        <div
+          ref={connectSectionRef}
+          className="mt-4 rounded-[12px] border border-border bg-surface-muted/30 p-4"
+        >
+          <p className="text-center font-display text-base font-bold text-foreground">Connect wallet to trade</p>
+          <p className="mt-1 text-center text-xs text-muted">
+            Choose a wallet to sign in. You can adjust side and size first.
+          </p>
+          <WalletConnectorList className="mt-3" />
+        </div>
+      )}
     </div>
   );
 }
