@@ -5,13 +5,14 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAccount } from "wagmi";
 import { getMarket, getPositions, getDmmStatus } from "@/lib/api";
-import { formatProbabilityPrice, formatTimeRemainingNoSeconds, formatUsdt } from "@/lib/format";
+import { formatStrikeUsd, formatTimeRemainingNoSeconds, formatUsdt, marketDurationLabel } from "@/lib/format";
 import { parseCompositeMarketKey } from "@/lib/marketKey";
 import { TradingChart } from "@/components/TradingChart";
 import { TradeForm } from "@/components/TradeForm";
 import { OrderBookPanel } from "@/components/OrderBook";
 import { EmptyState } from "@/components/EmptyState";
 import { CancelAllMarketOrders } from "@/components/CancelAllMarketOrders";
+import { WalletConnectorList } from "@/components/WalletConnectorList";
 import { cn } from "@/lib/cn";
 
 export function MarketPageClient({ address }: { address: string }) {
@@ -70,10 +71,9 @@ export function MarketPageClient({ address }: { address: string }) {
     );
   }
 
-  const strike =
-    market.strikePrice && market.strikePrice !== "0"
-      ? formatProbabilityPrice(market.strikePrice)
-      : "—";
+  const strike = formatStrikeUsd(market.strikePrice);
+  const pairLabel = (market.pairSymbol ?? market.pairId).replace("-", " / ");
+  const heroTitle = `${pairLabel} · ${marketDurationLabel(market.duration)}`;
 
   const showCancelAll = !!wallet && dmmStatus?.isDmm;
 
@@ -88,9 +88,14 @@ export function MarketPageClient({ address }: { address: string }) {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1">
           <h1 className="font-display text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
-            {(market.pairSymbol ?? market.pairId).replace("-", " / ")}
+            {heroTitle}
           </h1>
-          <p className="mt-2 break-all font-mono text-xs text-muted sm:text-sm">{market.address}</p>
+          <p
+            className="mt-1.5 max-w-full truncate font-mono text-[10px] leading-tight text-muted"
+            title={market.address}
+          >
+            {market.address}
+          </p>
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <span
               className={cn(
@@ -139,9 +144,11 @@ export function MarketPageClient({ address }: { address: string }) {
         {!wallet && (
           <EmptyState
             icon="wallet"
-            title="Connect to view positions"
+            title="Connect wallet to see your positions"
             subtitle="Link your wallet to see holdings for this market. You can still browse markets and order books without connecting."
-          />
+          >
+            <WalletConnectorList className="w-full max-w-xs rounded-[12px] border border-border bg-white p-2 shadow-card" />
+          </EmptyState>
         )}
         {wallet && localPositions.length === 0 && (
           <EmptyState

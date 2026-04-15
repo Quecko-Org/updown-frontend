@@ -10,7 +10,7 @@ import { DepositModal } from "./DepositModal";
 import { WithdrawModal } from "./WithdrawModal";
 import { SignModal } from "./SignModal";
 import { useWalletContext } from "@/context/WalletContext";
-import { useWalletList } from "@/hooks/useWalletList";
+import { WalletConnectorList } from "@/components/WalletConnectorList";
 import { getFormattedAddress } from "@/utils/walletHelpers";
 import { cn } from "@/lib/cn";
 
@@ -28,14 +28,12 @@ export function Header() {
     isLoading,
     loadingStep,
     walletAddress,
-    connectWallet,
     disconnectWallet,
     showSignModal,
     handleSign,
     closeSignModal,
   } = useWalletContext();
 
-  const walletList = useWalletList();
   const [depositOpen, setDepositOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
@@ -74,6 +72,11 @@ export function Header() {
 
   const relayer = cfg?.relayerAddress ?? "";
 
+  function navActive(href: string): boolean {
+    if (href === "/") return pathname === "/" || pathname.startsWith("/market/");
+    return pathname === href;
+  }
+
   return (
     <>
       {/* Full-screen loading overlay */}
@@ -106,7 +109,7 @@ export function Header() {
                 href={n.href}
                 className={cn(
                   "rounded-[12px] px-3 py-2 text-sm font-medium transition-colors",
-                  pathname === n.href
+                  navActive(n.href)
                     ? "bg-brand-subtle text-brand"
                     : "text-foreground hover:bg-surface-muted hover:text-brand",
                 )}
@@ -183,22 +186,10 @@ export function Header() {
                 </button>
                 {connectOpen && (
                   <div className="absolute right-0 top-full z-50 mt-2 min-w-[220px] rounded-[12px] border border-border bg-white py-1 shadow-card-hover">
-                    {walletList.map(({ name, connector, isAvailable }) => (
-                      <button
-                        key={name}
-                        type="button"
-                        disabled={!isAvailable || !connector || isLoading}
-                        className="block w-full px-4 py-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-brand-subtle disabled:cursor-not-allowed disabled:opacity-50"
-                        onClick={() => {
-                          if (connector) {
-                            void connectWallet(connector);
-                            setConnectOpen(false);
-                          }
-                        }}
-                      >
-                        {name}
-                      </button>
-                    ))}
+                    <WalletConnectorList
+                      onPick={() => setConnectOpen(false)}
+                      buttonClassName="block"
+                    />
                   </div>
                 )}
               </div>
@@ -240,7 +231,7 @@ export function Header() {
                   onClick={() => setMobileMenuOpen(false)}
                   className={cn(
                     "rounded-[12px] px-3 py-2.5 text-sm font-medium transition-colors",
-                    pathname === n.href
+                    navActive(n.href)
                       ? "bg-brand-subtle text-brand"
                       : "text-foreground hover:bg-surface-muted",
                   )}

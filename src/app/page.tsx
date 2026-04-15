@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getMarkets, getStats, type PairSymbol } from "@/lib/api";
 import { formatUsdt } from "@/lib/format";
@@ -175,11 +175,11 @@ function MarketGrid({ timeframe, pair }: { timeframe: 300 | 900 | 3600; pair: Pa
 
   if (isLoading) {
     return (
-      <div className="flex gap-5 overflow-x-auto pb-2 sm:grid sm:grid-cols-2 sm:overflow-visible lg:grid-cols-3">
+      <div className="flex snap-x snap-mandatory flex-nowrap gap-5 overflow-x-auto pb-2 [-webkit-overflow-scrolling:touch] scroll-pl-4 sm:grid sm:grid-cols-2 sm:overflow-visible sm:scroll-pl-0 lg:grid-cols-3">
         {[1, 2, 3].map((i) => (
           <div
             key={i}
-            className="h-[180px] min-w-[280px] shrink-0 animate-pulse rounded-xl border border-border bg-surface-muted/40 sm:min-w-0"
+            className="h-[180px] min-w-[280px] shrink-0 snap-start animate-pulse rounded-xl border border-border bg-surface-muted/40 sm:min-w-0 sm:snap-none"
           />
         ))}
       </div>
@@ -197,7 +197,7 @@ function MarketGrid({ timeframe, pair }: { timeframe: 300 | 900 | 3600; pair: Pa
   }
 
   return (
-    <div className="flex gap-5 overflow-x-auto pb-2 [-webkit-overflow-scrolling:touch] sm:grid sm:grid-cols-2 sm:overflow-visible lg:grid-cols-3">
+    <div className="flex snap-x snap-mandatory flex-nowrap gap-5 overflow-x-auto pb-2 [-webkit-overflow-scrolling:touch] scroll-pl-4 sm:grid sm:grid-cols-2 sm:overflow-visible sm:scroll-pl-0 lg:grid-cols-3">
       {data.map((m) => (
         <MarketCard key={m.address} market={m} />
       ))}

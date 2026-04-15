@@ -39,3 +39,36 @@ export function formatProbabilityPrice(raw: string): string {
     return "—";
   }
 }
+
+/** Chainlink BTC/USD / ETH/USD answer decimals */
+const STRIKE_USD_DECIMALS = 8;
+
+const strikeUsdFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+/** Strike from API as integer string (8 decimals). */
+export function formatStrikeUsd(raw: string | undefined | null): string {
+  if (raw == null || raw === "") return "Pending";
+  try {
+    const v = BigInt(raw);
+    if (v === BigInt(0)) return "Pending";
+    const s = formatUnits(v, STRIKE_USD_DECIMALS);
+    const n = Number(s);
+    if (!Number.isFinite(n) || n <= 0) return "Pending";
+    return strikeUsdFormatter.format(n);
+  } catch {
+    return "Pending";
+  }
+}
+
+/** Market duration in seconds → UI label (COWORK timeframes). */
+export function marketDurationLabel(durationSec: number): string {
+  if (durationSec === 300) return "5 min";
+  if (durationSec === 900) return "15 min";
+  if (durationSec === 3600) return "1 hour";
+  return `${Math.round(durationSec / 60)} min`;
+}

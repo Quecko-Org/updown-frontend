@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { MarketListItem } from "@/lib/api";
-import { formatProbabilityPrice } from "@/lib/format";
+import { formatStrikeUsd } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { marketPathFromAddress } from "@/lib/marketKey";
 
@@ -20,34 +20,33 @@ function useCountdown(endTime: number) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function bestFromList(m: MarketListItem): { bid: string; ask: string } {
+function bestFromList(m: MarketListItem): { mode: "prices"; bid: string; ask: string } | { mode: "empty" } {
   try {
     const up = BigInt(m.upPrice);
     const down = BigInt(m.downPrice);
+    if (up === BigInt(0) && down === BigInt(0)) return { mode: "empty" };
     const upP = Number(up) / 1e18;
     const downP = Number(down) / 1e18;
-    if (!Number.isFinite(upP) || !Number.isFinite(downP)) return { bid: "—", ask: "—" };
+    if (!Number.isFinite(upP) || !Number.isFinite(downP)) return { mode: "empty" };
     const upC = `${(upP * 100).toFixed(1)}¢`;
     const downC = `${(downP * 100).toFixed(1)}¢`;
-    return { bid: `UP ${upC}`, ask: `DOWN ${downC}` };
+    if (upC === "0.0¢" && downC === "0.0¢") return { mode: "empty" };
+    return { mode: "prices", bid: `UP ${upC}`, ask: `DOWN ${downC}` };
   } catch {
-    return { bid: "—", ask: "—" };
+    return { mode: "empty" };
   }
 }
 
 export function MarketCard({ market }: { market: MarketListItem }) {
   const cd = useCountdown(market.endTime);
-  const strike =
-    market.strikePrice && market.strikePrice !== "0"
-      ? formatProbabilityPrice(market.strikePrice)
-      : "—";
-  const { bid, ask } = bestFromList(market);
+  const strike = formatStrikeUsd(market.strikePrice);
+  const quotes = bestFromList(market);
 
   return (
     <Link
       href={marketPathFromAddress(market.address)}
       className={cn(
-        "card-kraken group block min-w-[280px] shrink-0 p-5 transition-all duration-200 sm:min-w-0",
+        "card-kraken group block min-w-[280px] shrink-0 snap-start p-5 transition-all duration-200 sm:snap-none sm:min-w-0",
         "hover:shadow-card-hover hover:border-brand/20"
       )}
     >
@@ -78,8 +77,14 @@ export function MarketCard({ market }: { market: MarketListItem }) {
           <p className="mt-1 font-mono text-xl font-bold tabular-nums text-brand">{cd}</p>
         </div>
         <div className="text-right">
-          <p className="mt-1 text-sm font-semibold text-success">{bid}</p>
-          <p className="text-sm font-semibold text-down">{ask}</p>
+          {quotes.mode === "empty" ? (
+            <p className="mt-1 text-sm font-medium text-muted">No orders yet</p>
+          ) : (
+            <>
+              <p className="mt-1 text-sm font-semibold text-success">{quotes.bid}</p>
+              <p className="text-sm font-semibold text-down">{quotes.ask}</p>
+            </>
+          )}
         </div>
       </div>
       {/* Hover hint */}
