@@ -170,6 +170,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         setIsLoading(true);
         setLoadingStep("Confirm wallet connection from your wallet");
 
+        // If wagmi auto-reconnected from a previous session, disconnect first
+        // to avoid "Connector already connected" error.
+        const existingConnections = getConnections(wagmiConfig);
+        if (existingConnections.length > 0) {
+          await disconnectAsync();
+        }
+
         const result = await connectAsync(
           c?.name === "WalletConnect" ? { connector: c } : { connector: c, chainId: platform_chainId }
         );
@@ -189,7 +196,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem("flag");
       }
     },
-    [connectAsync]
+    [connectAsync, disconnectAsync]
   );
 
   useEffect(() => {
