@@ -99,7 +99,7 @@ export type MarketDetail = MarketListItem & {
 };
 
 export async function getMarket(address: string): Promise<MarketDetail> {
-  const res = await fetch(url(`/markets/${address}`));
+  const res = await fetch(url(`/markets/${encodeURIComponent(address)}`));
   return parseJson<MarketDetail>(res);
 }
 
@@ -114,7 +114,7 @@ export type OrderBookResponse = {
 };
 
 export async function getOrderbook(marketId: string): Promise<OrderBookResponse> {
-  const res = await fetch(url(`/orderbook/${marketId}`));
+  const res = await fetch(url(`/orderbook/${encodeURIComponent(marketId)}`));
   return parseJson<OrderBookResponse>(res);
 }
 
@@ -184,12 +184,23 @@ export async function getPriceHistory(symbol: string, query?: Record<string, str
   return parseJson<unknown>(res);
 }
 
+export type OrderApiType = "LIMIT" | "MARKET" | "POST_ONLY" | "IOC";
+
+/** Must match backend order `type` uint8 enum. */
+export const ORDER_TYPE_U8: Record<OrderApiType, number> = {
+  LIMIT: 0,
+  MARKET: 1,
+  POST_ONLY: 2,
+  IOC: 3,
+};
+
 export type PostOrderBody = {
   maker: string;
+  /** Composite key settlementAddress-marketId for REST. */
   market: string;
   option: number;
   side: number | "BUY" | "SELL";
-  type: number | "LIMIT" | "MARKET";
+  type: number | OrderApiType;
   price?: number;
   amount: string;
   nonce: number;
@@ -232,6 +243,52 @@ export async function postWithdraw(body: {
 }
 
 export async function postMarketClaim(marketAddress: string): Promise<{ ok: boolean }> {
-  const res = await fetch(url(`/markets/${marketAddress}/claim`), { method: "POST" });
+  const enc = encodeURIComponent(marketAddress);
+  const res = await fetch(url(`/markets/${enc}/claim`), { method: "POST" });
+  return parseJson(res);
+}
+
+export type DmmStatusResponse = {
+  isDmm: boolean;
+  rebateBps?: number;
+};
+
+export async function getDmmStatus(wallet: string): Promise<DmmStatusResponse> {
+  const res = await fetch(url(`/dmm/status/${encodeURIComponent(wallet)}`));
+  return parseJson<DmmStatusResponse>(res);
+}
+
+export type DmmRebateClaimRow = {
+  amount?: string;
+  claimedAt?: string;
+  txHash?: string;
+};
+
+export type DmmRebatesResponse = {
+  accumulatedRebate?: string;
+  pendingRebate?: string;
+  totalClaimed?: string;
+  claimHistory?: DmmRebateClaimRow[];
+  /** Allow extra fields from API */
+  [key: string]: unknown;
+};
+
+export async function getDmmRebates(wallet: string): Promise<DmmRebatesResponse> {
+  const res = await fetch(url(`/dmm/rebates/${encodeURIComponent(wallet)}`));
+  return parseJson<DmmRebatesResponse>(res);
+}
+
+export async function postDmmClaimRebate(body: Record<string, unknown> = {}): Promise<unknown> {
+  const res = await fetch(url("/dmm/claim-rebate"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return parseJson(res);
+}
+
+export async function deleteAllMarketOrders(marketComposite: string): Promise<unknown> {
+  const enc = encodeURIComponent(marketComposite);
+  const res = await fetch(url(`/orders/market/${enc}`), { method: "DELETE" });
   return parseJson(res);
 }

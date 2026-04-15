@@ -4,21 +4,64 @@ import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAccount, useSignTypedData } from "wagmi";
 import { toast } from "sonner";
-import { getConfig, getMarket, postOrder } from "@/lib/api";
+import {
+  getConfig,
+  getMarket,
+  getDmmStatus,
+  postOrder,
+  ORDER_TYPE_U8,
+  type OrderApiType,
+} from "@/lib/api";
 import { buildOrderTypedData } from "@/lib/eip712";
-import { parseUsdtToAtomic, formatUsdt } from "@/lib/format";
+import { parseUsdtToAtomic } from "@/lib/format";
+import { impliedProbabilityForSide, probabilityScaledFeePercent } from "@/lib/feeEstimate";
+import { parseCompositeMarketKey } from "@/lib/marketKey";
 import { cn } from "@/lib/cn";
 import { formatUserFacingError } from "@/lib/errors";
 import { EmptyState } from "@/components/EmptyState";
 
 const PRESETS = [5, 25, 50, 100, 500];
 
+const ORDER_TYPES: { id: OrderApiType; label: string; tooltip?: string }[] = [
+  { id: "LIMIT", label: "Limit" },
+  { id: "MARKET", label: "Market" },
+  {
+    id: "POST_ONLY",
+    label: "Post-only",
+    tooltip:
+      "Your order will only rest on the book. If it would fill immediately, it's rejected.",
+  },
+  {
+    id: "IOC",
+    label: "IOC",
+    tooltip: "Fill what's available now, cancel the remainder.",
+  },
+];
+
+function InfoTip({ text }: { text: string }) {
+  return (
+    <span className="inline-flex align-middle" title={text}>
+      <span className="sr-only">{text}</span>
+      <svg
+        className="ml-0.5 inline h-3.5 w-3.5 text-muted"
+        viewBox="0 0 12 12"
+        fill="currentColor"
+        aria-hidden
+      >
+        <path d="M6 0a6 6 0 100 12A6 6 0 006 0zm.75 9H5.25V5.25h1.5V9zm0-5.25H5.25v-1h1.5v1z" />
+      </svg>
+    </span>
+  );
+}
+
 export function TradeForm({ marketAddress }: { marketAddress: string }) {
   const { address, isConnected } = useAccount();
   const [side, setSide] = useState<1 | 2>(1);
   const [dollars, setDollars] = useState(25);
-  const [orderType, setOrderType] = useState<"MARKET" | "LIMIT">("MARKET");
+  const [orderType, setOrderType] = useState<OrderApiType>("LIMIT");
   const qc = useQueryClient();
+
+  const parsedKey = useMemo(() => parseCompositeMarketKey(marketAddress), [marketAddress]);
 
   const { data: cfg } = useQuery({
     queryKey: ["apiConfig"],
@@ -26,15 +69,27 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
     staleTime: 300_000,
   });
 
+  const marketKey = parsedKey?.composite ?? marketAddress;
+
   const { data: market } = useQuery({
-    queryKey: ["market", marketAddress.toLowerCase()],
-    queryFn: () => getMarket(marketAddress),
+    queryKey: ["market", marketKey.toLowerCase()],
+    queryFn: () => getMarket(marketKey),
+    enabled: !!parsedKey,
     refetchInterval: 15_000,
+  });
+
+  const { data: dmmStatus } = useQuery({
+    queryKey: ["dmmStatus", address?.toLowerCase() ?? ""],
+    queryFn: () => getDmmStatus(address!),
+    enabled: !!address && isConnected,
+    staleTime: 60_000,
   });
 
   const { signTypedDataAsync } = useSignTypedData();
 
-  const feeBps = (cfg?.platformFeeBps ?? 70) + (cfg?.makerFeeBps ?? 80);
+  const platformBps = cfg?.platformFeeBps ?? 70;
+  const makerBps = cfg?.makerFeeBps ?? 80;
+  const totalBps = platformBps + makerBps;
 
   const limitPrice = useMemo(() => {
     if (!market || orderType === "MARKET") return 5000;
@@ -42,7 +97,6 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
     const ask = ob.bestAsk?.price;
     const bid = ob.bestBid?.price;
     if (side === 1) {
-      // BUY: pay up to best ask or mid
       if (ask) return Math.min(9999, ask + 50);
       if (bid) return Math.min(9999, bid + 100);
     } else {
@@ -52,9 +106,14 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
     return 5000;
   }, [market, orderType, side]);
 
+  const impliedP =
+    market != null ? impliedProbabilityForSide(side, market.upPrice, market.downPrice) : 0.5;
+  const feeUsdDisplay = (Number(dollars) * totalBps) / 10000;
+  const scaledFeePct = probabilityScaledFeePercent(totalBps, impliedP);
+
   const submit = useMutation({
     mutationFn: async () => {
-      if (!address || !cfg) throw new Error("Connect wallet");
+      if (!address || !cfg || !parsedKey) throw new Error("Connect wallet");
       if (!market || market.status !== "ACTIVE") throw new Error("Market not active");
       const amount = parseUsdtToAtomic(String(dollars));
       const min = parseUsdtToAtomic("5");
@@ -63,12 +122,12 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
 
       const nonce = Math.floor(Math.random() * 1e12);
       const expiry = Math.floor(Date.now() / 1000) + 3600;
-      const typeNum = orderType === "MARKET" ? 1 : 0;
+      const typeNum = ORDER_TYPE_U8[orderType];
       const priceNum = orderType === "MARKET" ? 0 : limitPrice;
 
       const msg = {
         maker: address as `0x${string}`,
-        market: marketAddress as `0x${string}`,
+        market: parsedKey.marketId,
         option: BigInt(side),
         side: 0,
         type: typeNum,
@@ -83,10 +142,10 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
 
       await postOrder({
         maker: address,
-        market: marketAddress,
+        market: parsedKey.composite,
         option: side,
         side: 0,
-        type: orderType === "MARKET" ? "MARKET" : "LIMIT",
+        type: typeNum,
         price: orderType === "MARKET" ? 0 : priceNum,
         amount: amount.toString(),
         nonce,
@@ -98,10 +157,20 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
       toast.success("Order submitted");
       qc.invalidateQueries({ queryKey: ["positions", address?.toLowerCase()] });
       qc.invalidateQueries({ queryKey: ["balance", address?.toLowerCase()] });
-      qc.invalidateQueries({ queryKey: ["orderbook", marketAddress.toLowerCase()] });
+      qc.invalidateQueries({ queryKey: ["orderbook", marketKey.toLowerCase()] });
     },
     onError: (e: Error) => toast.error(formatUserFacingError(e)),
   });
+
+  if (!parsedKey) {
+    return (
+      <EmptyState
+        icon="chart"
+        title="Invalid market link"
+        subtitle="This URL does not match a valid market key (settlement address and market id)."
+      />
+    );
+  }
 
   if (!isConnected) {
     return (
@@ -112,6 +181,8 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
       />
     );
   }
+
+  const rebateBps = dmmStatus?.isDmm ? dmmStatus.rebateBps : undefined;
 
   return (
     <div className="card-kraken p-5">
@@ -142,27 +213,25 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
           DOWN
         </button>
       </div>
-      <div className="mt-4 flex gap-2">
-        <button
-          type="button"
-          className={cn(
-            "flex-1 rounded-[12px] py-2 text-sm font-medium",
-            orderType === "MARKET" ? "bg-brand-subtle text-brand" : "text-muted"
-          )}
-          onClick={() => setOrderType("MARKET")}
-        >
-          Market
-        </button>
-        <button
-          type="button"
-          className={cn(
-            "flex-1 rounded-[12px] py-2 text-sm font-medium",
-            orderType === "LIMIT" ? "bg-brand-subtle text-brand" : "text-muted"
-          )}
-          onClick={() => setOrderType("LIMIT")}
-        >
-          Limit
-        </button>
+      <div className="mt-4">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Order type</p>
+        <div className="flex flex-wrap gap-2">
+          {ORDER_TYPES.map((ot) => (
+            <button
+              key={ot.id}
+              type="button"
+              title={ot.tooltip}
+              className={cn(
+                "inline-flex items-center rounded-[12px] px-3 py-2 text-xs font-semibold transition-colors",
+                orderType === ot.id ? "bg-brand-subtle text-brand" : "text-muted hover:bg-surface-muted"
+              )}
+              onClick={() => setOrderType(ot.id)}
+            >
+              {ot.label}
+              {ot.tooltip ? <InfoTip text={ot.tooltip} /> : null}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="mt-4">
         <label className="text-xs font-medium text-muted">Size (USDT)</label>
@@ -189,12 +258,24 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
         </div>
         <p className="mt-2 text-center text-lg font-bold text-foreground">${dollars}</p>
       </div>
-      <p className="mt-2 text-xs text-muted">
-        Fees ~{(feeBps / 100).toFixed(2)}% total ({cfg?.platformFeeBps ?? 70} + {cfg?.makerFeeBps ?? 80}{" "}
-        bps). Notional: <span className="font-medium text-foreground">${formatUsdt(parseUsdtToAtomic(String(dollars)))}</span>
-      </p>
-      {orderType === "LIMIT" && (
-        <p className="mt-1 text-xs text-muted">
+      <div className="mt-2 space-y-1 text-xs text-muted">
+        <p>
+          Est. fee on this size:{" "}
+          <span className="font-medium text-foreground">~${feeUsdDisplay.toFixed(2)}</span> (
+          {platformBps + makerBps} bps on notional).{" "}
+          <span className="text-foreground">
+            About {scaledFeePct.toFixed(2)}% fee at current prices
+          </span>{" "}
+          (~{(totalBps / 100).toFixed(2)}% near 50¢).
+        </p>
+        {rebateBps != null && rebateBps > 0 && (
+          <p className="font-medium text-success-dark">
+            You&apos;ll earn {(rebateBps / 100).toFixed(2)}% rebate on this fill
+          </p>
+        )}
+      </div>
+      {orderType !== "MARKET" && (
+        <p className="mt-2 text-xs text-muted">
           Limit price (BPS): <span className="font-mono text-foreground">{limitPrice}</span>
         </p>
       )}

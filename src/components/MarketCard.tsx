@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import type { MarketListItem } from "@/lib/api";
 import { formatProbabilityPrice } from "@/lib/format";
 import { cn } from "@/lib/cn";
+import { marketPathFromAddress } from "@/lib/marketKey";
 
 function useCountdown(endTime: number) {
   const [left, setLeft] = useState(() => Math.max(0, endTime - Math.floor(Date.now() / 1000)));
@@ -44,9 +45,9 @@ export function MarketCard({ market }: { market: MarketListItem }) {
 
   return (
     <Link
-      href={`/market/${market.address}`}
+      href={marketPathFromAddress(market.address)}
       className={cn(
-        "card-kraken group block p-5 transition-all duration-200",
+        "card-kraken group block min-w-[280px] shrink-0 p-5 transition-all duration-200 sm:min-w-0",
         "hover:shadow-card-hover hover:border-brand/20"
       )}
     >
