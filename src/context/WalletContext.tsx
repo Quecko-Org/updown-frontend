@@ -228,18 +228,22 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     void disconnectWallet();
   }, [disconnectWallet]);
 
+  // On page reload / auto-reconnect: restore smart account if we have a stored
+  // signature, otherwise prompt the user to sign again.
   useEffect(() => {
-    if (
-      address &&
-      walletClient &&
-      !smartAccount &&
-      !pendingSign.current &&
+    if (!address || !walletClient || smartAccount || pendingSign.current) return;
+
+    const hasStoredSign =
       localStorage.getItem("sign") &&
-      localStorage.getItem("lastAccount") === address
-    ) {
+      localStorage.getItem("lastAccount") === address;
+
+    if (hasStoredSign) {
       void createSmartAccountFn(walletClient);
+    } else if (isConnected) {
+      // Wagmi auto-reconnected but no stored signature — show sign modal
+      setShowSignModal(true);
     }
-  }, [address, walletClient, smartAccount, createSmartAccountFn]);
+  }, [address, walletClient, smartAccount, isConnected, createSmartAccountFn]);
 
   useEffect(() => {
     if (smartAccount) {

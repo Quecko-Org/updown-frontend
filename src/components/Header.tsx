@@ -170,8 +170,14 @@ export function Header() {
               </>
             )}
 
-            {!isWalletConnected && wagmiConnected && (
-              <span className="text-sm font-medium text-muted">Signing…</span>
+            {!isWalletConnected && wagmiConnected && !isLoading && (
+              <button
+                type="button"
+                className="rounded-[12px] bg-brand px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                onClick={() => void disconnectWallet()}
+              >
+                Disconnect &amp; Reconnect
+              </button>
             )}
 
             {!isWalletConnected && !wagmiConnected && (
