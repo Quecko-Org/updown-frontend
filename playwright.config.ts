@@ -10,6 +10,6 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   use: {
-    baseURL: process.env.PLAYWRIGHT_API_BASE_URL ?? "https://api-updown.quecko.org",
+    baseURL: process.env.PLAYWRIGHT_API_BASE_URL ?? "https://dev-api.pulsepairs.com",
   },
 });

@@ -14,7 +14,7 @@ const walletConnectProjectId =
     : "14808831369ecdaaab7b8869eb13c6b0";
 
 const appUrl =
-  typeof window !== "undefined" ? window.location.origin : "https://api-updown.quecko.org";
+  typeof window !== "undefined" ? window.location.origin : "https://dev-api.pulsepairs.com";
 
 export const wagmiConfig = createConfig({
   chains: [mainnet, arbitrum],
