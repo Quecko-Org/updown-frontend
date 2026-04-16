@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAtomValue } from "jotai";
 import { useAccount, useSignTypedData } from "wagmi";
 import { toast } from "sonner";
 import {
@@ -26,6 +27,7 @@ import { cn } from "@/lib/cn";
 import { formatUserFacingError } from "@/lib/errors";
 import { EmptyState } from "@/components/EmptyState";
 import { WalletConnectorList } from "@/components/WalletConnectorList";
+import { sessionReadyAtom, userSmartAccount } from "@/store/atoms";
 
 const PRESETS = [5, 25, 50, 100, 500];
 
@@ -63,6 +65,8 @@ function InfoTip({ text }: { text: string }) {
 
 export function TradeForm({ marketAddress }: { marketAddress: string }) {
   const { address, isConnected } = useAccount();
+  const smartAccount = useAtomValue(userSmartAccount);
+  const sessionReady = useAtomValue(sessionReadyAtom);
   const [side, setSide] = useState<1 | 2>(1);
   const [dollars, setDollars] = useState(25);
   const [orderType, setOrderType] = useState<OrderApiType>("LIMIT");
@@ -183,8 +187,9 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
     },
     onSuccess: () => {
       toast.success("Order submitted");
-      qc.invalidateQueries({ queryKey: ["positions", address?.toLowerCase()] });
-      qc.invalidateQueries({ queryKey: ["balance", address?.toLowerCase()] });
+      const sa = smartAccount?.toLowerCase() ?? "";
+      qc.invalidateQueries({ queryKey: ["positions", sa] });
+      qc.invalidateQueries({ queryKey: ["balance", sa] });
       qc.invalidateQueries({ queryKey: ["orderbook", marketKey.toLowerCase()] });
     },
     onError: (e: Error) => toast.error(formatUserFacingError(e)),
@@ -314,7 +319,8 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
       {isConnected ? (
         <button
           type="button"
-          disabled={submit.isPending || market?.status !== "ACTIVE"}
+          disabled={submit.isPending || market?.status !== "ACTIVE" || !sessionReady}
+          title={!sessionReady ? "Complete connection first" : undefined}
           className="btn-primary mt-3 w-full disabled:opacity-50"
           onClick={() => submit.mutate()}
         >

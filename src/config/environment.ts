@@ -15,7 +15,13 @@ export const ALCHEMY_RPC_URL = ALCHEMY_API_KEY
   ? `https://arb-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`
   : "https://arb1.arbitrum.io/rpc";
 
-/** Absolute Unix `expirySec` for new sessions (speed-market `ACTIVE_SESSION_TIME` pattern). */
+/** Absolute Unix `expirySec` for new sessions (48h default). */
 export function getSessionExpirySec(): number {
-  return Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7;
+  return Math.floor(Date.now() / 1000) + 60 * 60 * 48;
 }
+
+export const SESSION_USDT_ALLOWANCE_BASE_UNITS: bigint = BigInt(
+  process.env.NEXT_PUBLIC_SESSION_USDT_ALLOWANCE ?? "10000000000"
+);
+
+export const SESSION_GAS_LIMIT: bigint = BigInt(process.env.NEXT_PUBLIC_SESSION_GAS_LIMIT ?? "10000000");

@@ -4,7 +4,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getBalance, getConfig, getDmmStatus } from "@/lib/api";
+import { useAtomValue } from "jotai";
+import { getBalance, getDmmStatus } from "@/lib/api";
+import { sessionReadyAtom, userSmartAccount } from "@/store/atoms";
 import { formatUsdt } from "@/lib/format";
 import { DepositModal } from "./DepositModal";
 import { WithdrawModal } from "./WithdrawModal";
@@ -32,7 +34,11 @@ export function Header() {
     showSignModal,
     handleSign,
     closeSignModal,
+    reauthorizeSession,
   } = useWalletContext();
+
+  const smartAccount = useAtomValue(userSmartAccount);
+  const sessionReady = useAtomValue(sessionReadyAtom);
 
   const [depositOpen, setDepositOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
@@ -50,16 +56,10 @@ export function Header() {
     return () => document.removeEventListener("click", onDocClick);
   }, []);
 
-  const { data: cfg } = useQuery({
-    queryKey: ["apiConfig"],
-    queryFn: getConfig,
-    staleTime: 300_000,
-  });
-
   const { data: bal } = useQuery({
-    queryKey: ["balance", walletAddress?.toLowerCase() ?? ""],
-    queryFn: () => getBalance(walletAddress!),
-    enabled: !!walletAddress && isWalletConnected,
+    queryKey: ["balance", smartAccount?.toLowerCase() ?? ""],
+    queryFn: () => getBalance(smartAccount),
+    enabled: !!smartAccount && isWalletConnected,
     refetchInterval: 15_000,
   });
 
@@ -70,7 +70,7 @@ export function Header() {
     staleTime: 60_000,
   });
 
-  const relayer = cfg?.relayerAddress ?? "";
+  const depositAddress = smartAccount;
 
   function navActive(href: string): boolean {
     if (href === "/") return pathname === "/" || pathname.startsWith("/market/");
@@ -150,7 +150,7 @@ export function Header() {
                   type="button"
                   className="rounded-[12px] bg-brand px-3 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90"
                   onClick={() => setDepositOpen(true)}
-                  disabled={!relayer}
+                  disabled={!depositAddress}
                 >
                   Deposit
                 </button>
@@ -161,6 +161,16 @@ export function Header() {
                 >
                   Withdraw
                 </button>
+                {smartAccount && !sessionReady ? (
+                  <button
+                    type="button"
+                    className="hidden rounded-[12px] border border-brand bg-brand-subtle px-3 py-2 text-sm font-semibold text-brand transition-colors hover:opacity-90 disabled:opacity-50 sm:inline-flex"
+                    disabled={isLoading}
+                    onClick={() => void reauthorizeSession()}
+                  >
+                    Re-authorize
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="hidden rounded-[12px] border border-border px-3 py-2 text-sm font-medium text-muted transition-colors hover:border-brand hover:text-brand sm:inline-flex"
@@ -262,7 +272,7 @@ export function Header() {
                     ${formatUsdt(bal?.available ?? "0")}
                   </span>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
                     className="flex-1 rounded-[12px] border border-border bg-white py-2 text-sm font-semibold text-foreground"
@@ -270,6 +280,19 @@ export function Header() {
                   >
                     Withdraw
                   </button>
+                  {smartAccount && !sessionReady ? (
+                    <button
+                      type="button"
+                      className="flex-1 rounded-[12px] border border-brand bg-brand-subtle py-2 text-sm font-semibold text-brand disabled:opacity-50"
+                      disabled={isLoading}
+                      onClick={() => {
+                        void reauthorizeSession();
+                        setMobileMenuOpen(false);
+                      }}
+                    >
+                      Re-authorize
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="flex-1 rounded-[12px] border border-border py-2 text-sm font-medium text-muted"
@@ -284,7 +307,7 @@ export function Header() {
         )}
       </header>
 
-      <DepositModal open={depositOpen} onClose={() => setDepositOpen(false)} relayerAddress={relayer} />
+      <DepositModal open={depositOpen} onClose={() => setDepositOpen(false)} depositAddress={depositAddress} />
       <WithdrawModal open={withdrawOpen} onClose={() => setWithdrawOpen(false)} />
     </>
   );

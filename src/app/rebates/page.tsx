@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAtomValue } from "jotai";
 import { useAccount } from "wagmi";
 import { toast } from "sonner";
 import { getDmmRebates, postDmmClaimRebate } from "@/lib/api";
 import { formatUsdt } from "@/lib/format";
 import { formatUserFacingError } from "@/lib/errors";
 import { EmptyState } from "@/components/EmptyState";
+import { userSmartAccount } from "@/store/atoms";
 
 function formatAtomicUsdtSafe(raw: string | undefined): string {
   if (raw == null || raw === "") return "0.00";
@@ -19,7 +21,9 @@ function formatAtomicUsdtSafe(raw: string | undefined): string {
 }
 
 export default function RebatesPage() {
+  // DMM rebates API is keyed by EOA (program identity), not smart account.
   const { address, isConnected } = useAccount();
+  const smartAccount = useAtomValue(userSmartAccount);
   const qc = useQueryClient();
 
   const { data, isLoading, isError } = useQuery({
@@ -33,7 +37,8 @@ export default function RebatesPage() {
     onSuccess: () => {
       toast.success("Claim submitted");
       void qc.invalidateQueries({ queryKey: ["dmmRebates", address?.toLowerCase()] });
-      void qc.invalidateQueries({ queryKey: ["balance", address?.toLowerCase()] });
+      const sa = smartAccount?.toLowerCase() ?? "";
+      if (sa) void qc.invalidateQueries({ queryKey: ["balance", sa] });
     },
     onError: (e: Error) => toast.error(formatUserFacingError(e)),
   });
