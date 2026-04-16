@@ -1,11 +1,13 @@
 "use client";
 
 import { useMemo } from "react";
+import { useAtomValue } from "jotai";
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { getConfig, getMarkets, getPriceHistory, type ApiConfig, type MarketListItem } from "@/lib/api";
+import { getMarkets, getPriceHistory, type ApiConfig, type MarketListItem } from "@/lib/api";
 import { MarketCard } from "@/components/MarketCard";
 import { EmptyState } from "@/components/EmptyState";
 import { normalizePriceHistoryData } from "@/lib/priceChart";
+import { apiConfigAtom } from "@/store/atoms";
 
 const BTC = "BTC-USD" as const;
 const TFS = [300, 900, 3600] as const;
@@ -17,24 +19,23 @@ function pickPrimaryMarket(list: MarketListItem[] | undefined): MarketListItem |
 }
 
 export default function HomePage() {
+  const cfg = useAtomValue(apiConfigAtom);
+
   const results = useQueries({
     queries: TFS.map((tf) => ({
       queryKey: ["markets", tf, BTC],
       queryFn: () => getMarkets(tf, BTC),
-      refetchInterval: 15_000,
+      staleTime: 30_000,
     })),
   });
 
-  const { data: priceRaw, isLoading: priceLoading } = useQuery({
+  const {
+    data: priceRaw,
+    isPending: pricePending,
+  } = useQuery({
     queryKey: ["priceHistory", "BTC"],
     queryFn: () => getPriceHistory("BTC"),
-    refetchInterval: 10_000,
-  });
-
-  const { data: cfg } = useQuery({
-    queryKey: ["apiConfig"],
-    queryFn: getConfig,
-    staleTime: 300_000,
+    refetchInterval: 30_000,
   });
 
   const feeConfig: Pick<ApiConfig, "platformFeeBps" | "makerFeeBps" | "feeModel" | "peakFeeBps"> | null = cfg
@@ -58,9 +59,10 @@ export default function HomePage() {
     [results],
   );
 
-  const loadingMarkets = results.some((r) => r.isLoading);
+  const loadingMarkets = results.some((r) => r.isPending && r.data === undefined);
+  const priceLoadingInitial = priceRaw === undefined && pricePending;
 
-  if (loadingMarkets || priceLoading) {
+  if (loadingMarkets || priceLoadingInitial) {
     return (
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         {[0, 1, 2].map((i) => (
