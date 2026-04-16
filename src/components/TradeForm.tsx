@@ -190,7 +190,7 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
       toast.success("Order submitted");
       const sa = smartAccount?.toLowerCase() ?? "";
       qc.invalidateQueries({ queryKey: ["positions", sa] });
-      qc.invalidateQueries({ queryKey: ["balance", sa] });
+      qc.invalidateQueries({ queryKey: ["balance", address?.toLowerCase() ?? ""] });
       qc.invalidateQueries({ queryKey: ["orderbook", marketKey.toLowerCase()] });
     },
     onError: (e: Error) => toast.error(formatUserFacingError(e)),

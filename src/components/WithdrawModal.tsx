@@ -44,9 +44,9 @@ export function WithdrawModal({ open, onClose }: Props) {
   const configReady = !!apiConfig?.usdtAddress;
 
   const { data: bal } = useQuery({
-    queryKey: ["balance", smartAccount?.toLowerCase() ?? ""],
-    queryFn: () => getBalance(smartAccount!),
-    enabled: open && !!smartAccount && isConnected,
+    queryKey: ["balance", address?.toLowerCase() ?? ""],
+    queryFn: () => getBalance(address!),
+    enabled: open && !!address && isConnected,
   });
 
   const withdraw = useMutation({
@@ -84,7 +84,7 @@ export function WithdrawModal({ open, onClose }: Props) {
     },
     onSuccess: (txHash) => {
       toast.success(`Withdrawal submitted: ${txHash}`);
-      void qc.invalidateQueries({ queryKey: ["balance", smartAccount?.toLowerCase()] });
+      void qc.invalidateQueries({ queryKey: ["balance", address?.toLowerCase()] });
       setAmountError("");
       onClose();
     },
