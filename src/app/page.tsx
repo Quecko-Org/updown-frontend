@@ -29,13 +29,12 @@ export default function HomePage() {
     })),
   });
 
-  const {
-    data: priceRaw,
-    isPending: pricePending,
-  } = useQuery({
+  const { data: priceRaw } = useQuery({
     queryKey: ["priceHistory", "BTC"],
     queryFn: () => getPriceHistory("BTC"),
     refetchInterval: 30_000,
+    retry: 2,
+    retryDelay: (attempt) => Math.min(5000, 1000 * 2 ** attempt),
   });
 
   const feeConfig: Pick<ApiConfig, "platformFeeBps" | "makerFeeBps" | "feeModel" | "peakFeeBps"> | null = cfg
@@ -60,9 +59,8 @@ export default function HomePage() {
   );
 
   const loadingMarkets = results.some((r) => r.isPending && r.data === undefined);
-  const priceLoadingInitial = priceRaw === undefined && pricePending;
 
-  if (loadingMarkets || priceLoadingInitial) {
+  if (loadingMarkets) {
     return (
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         {[0, 1, 2].map((i) => (
