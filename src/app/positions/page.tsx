@@ -10,18 +10,20 @@ import { formatUsdt } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { EmptyState } from "@/components/EmptyState";
 import { marketPathFromAddress } from "@/lib/marketKey";
-import { userSmartAccount } from "@/store/atoms";
+import { sessionReadyAtom, userSmartAccount } from "@/store/atoms";
 
 export default function PositionsPage() {
   const { isConnected } = useAccount();
   const smartAccount = useAtomValue(userSmartAccount);
+  const sessionReady = useAtomValue(sessionReadyAtom);
   const qc = useQueryClient();
 
   const { data, isLoading } = useQuery({
     queryKey: ["positions", smartAccount?.toLowerCase() ?? ""],
     queryFn: () => getPositions(smartAccount!),
-    enabled: !!smartAccount && isConnected,
+    enabled: !!smartAccount && isConnected && sessionReady,
     refetchInterval: 20_000,
+    retry: 1,
   });
 
   const claim = useMutation({

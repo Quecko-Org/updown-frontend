@@ -27,7 +27,7 @@ import { cn } from "@/lib/cn";
 import { formatUserFacingError } from "@/lib/errors";
 import { EmptyState } from "@/components/EmptyState";
 import { WalletConnectorList } from "@/components/WalletConnectorList";
-import { sessionReadyAtom, userSmartAccount } from "@/store/atoms";
+import { apiConfigAtom, sessionReadyAtom, userSmartAccount } from "@/store/atoms";
 
 const PRESETS = [5, 25, 50, 100, 500];
 
@@ -67,6 +67,7 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
   const { address, isConnected } = useAccount();
   const smartAccount = useAtomValue(userSmartAccount);
   const sessionReady = useAtomValue(sessionReadyAtom);
+  const apiConfig = useAtomValue(apiConfigAtom);
   const [side, setSide] = useState<1 | 2>(1);
   const [dollars, setDollars] = useState(25);
   const [orderType, setOrderType] = useState<OrderApiType>("LIMIT");
@@ -205,7 +206,7 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
     );
   }
 
-  const rebateBps = dmmStatus?.isDmm ? dmmStatus.rebateBps : undefined;
+  const rebateBps = dmmStatus?.isDmm ? apiConfig?.dmmRebateBps : undefined;
 
   return (
     <div className="panel-dense px-3 py-3">

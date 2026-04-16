@@ -38,6 +38,8 @@ export type ApiConfig = {
   feeModel?: string;
   /** Max combined fee bps (typically at 50¢); from GET /config when present. */
   peakFeeBps?: number;
+  /** DMM maker rebate bps from GET /config when present (e.g. 30). */
+  dmmRebateBps?: number;
   usdtDecimals: number;
   eip712: {
     domain: {
@@ -275,9 +277,19 @@ export type DmmStatusResponse = {
   rebateBps?: number;
 };
 
+type DmmListResponse = { dmms: Array<{ wallet?: string; address?: string } | string> };
+
 export async function getDmmStatus(wallet: string): Promise<DmmStatusResponse> {
-  const res = await fetch(url(`/dmm/status/${encodeURIComponent(wallet)}`));
-  return parseJson<DmmStatusResponse>(res);
+  const res = await fetch(url("/dmm/list"));
+  const data = await parseJson<DmmListResponse>(res);
+  const target = wallet.toLowerCase();
+  const list = data?.dmms ?? [];
+  const isDmm = list.some((entry) => {
+    if (typeof entry === "string") return entry.toLowerCase() === target;
+    const w = entry.wallet ?? entry.address;
+    return typeof w === "string" && w.toLowerCase() === target;
+  });
+  return { isDmm };
 }
 
 export type DmmRebateClaimRow = {
