@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
+import { useAtomValue } from "jotai";
 import { useAccount } from "wagmi";
 import Link from "next/link";
 import { getMarket, getTrades, type TradeRow } from "@/lib/api";
@@ -9,6 +10,7 @@ import { formatUsdt } from "@/lib/format";
 import { EmptyState } from "@/components/EmptyState";
 import { cn } from "@/lib/cn";
 import { marketPathFromAddress } from "@/lib/marketKey";
+import { userSmartAccount } from "@/store/atoms";
 
 const PAGE = 20;
 
@@ -26,13 +28,14 @@ function tradeResult(t: TradeRow, winner: number | null | undefined, wallet: str
 }
 
 export default function HistoryPage() {
-  const { address, isConnected } = useAccount();
+  const { isConnected } = useAccount();
+  const smartAccount = useAtomValue(userSmartAccount);
   const [offset, setOffset] = useState(0);
 
   const { data: trades, isLoading } = useQuery({
-    queryKey: ["trades", address?.toLowerCase() ?? "", offset],
-    queryFn: () => getTrades(address!, PAGE, offset),
-    enabled: !!address && isConnected,
+    queryKey: ["trades", smartAccount?.toLowerCase() ?? "", offset],
+    queryFn: () => getTrades(smartAccount!, PAGE, offset),
+    enabled: !!smartAccount && isConnected,
   });
 
   const markets = useMemo(() => {
@@ -123,8 +126,8 @@ export default function HistoryPage() {
                   {new Date(t.createdAt).toLocaleString()}
                 </td>
                 <td className="px-4 py-3 text-sm text-foreground">
-                  {address
-                    ? tradeResult(t, winnerByMarket.get(t.market.toLowerCase()), address)
+                  {smartAccount
+                    ? tradeResult(t, winnerByMarket.get(t.market.toLowerCase()), smartAccount)
                     : "—"}
                 </td>
               </tr>

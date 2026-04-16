@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useAtomValue } from "jotai";
 import { useAccount } from "wagmi";
 import { getMarket, getPositions, getPriceHistory, getDmmStatus } from "@/lib/api";
 import { formatStrikeUsd, formatUsdt, marketDurationLabel, parseStrikeUsdNumber } from "@/lib/format";
@@ -15,6 +16,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { CancelAllMarketOrders } from "@/components/CancelAllMarketOrders";
 import { WalletConnectorList } from "@/components/WalletConnectorList";
 import { cn } from "@/lib/cn";
+import { userSmartAccount } from "@/store/atoms";
 
 function useEndsInCountdown(endTimeSec: number) {
   const [left, setLeft] = useState(() =>
@@ -38,7 +40,8 @@ function useEndsInCountdown(endTimeSec: number) {
 }
 
 export function MarketPageClient({ address }: { address: string }) {
-  const { address: wallet } = useAccount();
+  const { address: eoa } = useAccount();
+  const smartAccount = useAtomValue(userSmartAccount);
 
   const parsed = useMemo(() => parseCompositeMarketKey(address), [address]);
   const marketKey = parsed?.composite ?? address;
@@ -67,16 +70,16 @@ export function MarketPageClient({ address }: { address: string }) {
   }, [priceRaw]);
 
   const { data: positions } = useQuery({
-    queryKey: ["positions", wallet?.toLowerCase() ?? ""],
-    queryFn: () => getPositions(wallet!),
-    enabled: !!wallet,
+    queryKey: ["positions", smartAccount?.toLowerCase() ?? ""],
+    queryFn: () => getPositions(smartAccount!),
+    enabled: !!smartAccount,
     refetchInterval: 20_000,
   });
 
   const { data: dmmStatus } = useQuery({
-    queryKey: ["dmmStatus", wallet?.toLowerCase() ?? ""],
-    queryFn: () => getDmmStatus(wallet!),
-    enabled: !!wallet,
+    queryKey: ["dmmStatus", eoa?.toLowerCase() ?? ""],
+    queryFn: () => getDmmStatus(eoa!),
+    enabled: !!eoa,
     staleTime: 60_000,
   });
 
@@ -120,7 +123,7 @@ export function MarketPageClient({ address }: { address: string }) {
         ? "Currently UP ▲"
         : "Currently DOWN ▼";
 
-  const showCancelAll = !!wallet && dmmStatus?.isDmm;
+  const showCancelAll = !!eoa && dmmStatus?.isDmm;
 
   return (
     <div className="space-y-4">
@@ -181,7 +184,7 @@ export function MarketPageClient({ address }: { address: string }) {
 
       <section>
         <h2 className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">Your positions</h2>
-        {!wallet && (
+        {!smartAccount && (
           <EmptyState
             icon="wallet"
             title="Connect wallet to see your positions"
@@ -191,7 +194,7 @@ export function MarketPageClient({ address }: { address: string }) {
             <WalletConnectorList className="w-full max-w-xs rounded-lg border border-border bg-white p-2" />
           </EmptyState>
         )}
-        {wallet && localPositions.length === 0 && (
+        {smartAccount && localPositions.length === 0 && (
           <EmptyState
             icon="trade"
             title="No position here"

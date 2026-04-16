@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAtomValue } from "jotai";
 import { useAccount } from "wagmi";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -9,15 +10,17 @@ import { formatUsdt } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { EmptyState } from "@/components/EmptyState";
 import { marketPathFromAddress } from "@/lib/marketKey";
+import { userSmartAccount } from "@/store/atoms";
 
 export default function PositionsPage() {
-  const { address, isConnected } = useAccount();
+  const { isConnected } = useAccount();
+  const smartAccount = useAtomValue(userSmartAccount);
   const qc = useQueryClient();
 
   const { data, isLoading } = useQuery({
-    queryKey: ["positions", address?.toLowerCase() ?? ""],
-    queryFn: () => getPositions(address!),
-    enabled: !!address && isConnected,
+    queryKey: ["positions", smartAccount?.toLowerCase() ?? ""],
+    queryFn: () => getPositions(smartAccount!),
+    enabled: !!smartAccount && isConnected,
     refetchInterval: 20_000,
   });
 
@@ -25,8 +28,9 @@ export default function PositionsPage() {
     mutationFn: (market: string) => postMarketClaim(market),
     onSuccess: () => {
       toast.success("Claim request sent");
-      qc.invalidateQueries({ queryKey: ["positions", address?.toLowerCase()] });
-      qc.invalidateQueries({ queryKey: ["balance", address?.toLowerCase()] });
+      const sa = smartAccount?.toLowerCase() ?? "";
+      qc.invalidateQueries({ queryKey: ["positions", sa] });
+      qc.invalidateQueries({ queryKey: ["balance", sa] });
     },
     onError: (e: Error) => toast.error(e.message),
   });

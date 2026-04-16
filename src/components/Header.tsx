@@ -4,7 +4,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getBalance, getConfig, getDmmStatus } from "@/lib/api";
+import { useAtomValue } from "jotai";
+import { getBalance, getDmmStatus } from "@/lib/api";
+import { userSmartAccount } from "@/store/atoms";
 import { formatUsdt } from "@/lib/format";
 import { DepositModal } from "./DepositModal";
 import { WithdrawModal } from "./WithdrawModal";
@@ -34,6 +36,8 @@ export function Header() {
     closeSignModal,
   } = useWalletContext();
 
+  const smartAccount = useAtomValue(userSmartAccount);
+
   const [depositOpen, setDepositOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
@@ -50,16 +54,10 @@ export function Header() {
     return () => document.removeEventListener("click", onDocClick);
   }, []);
 
-  const { data: cfg } = useQuery({
-    queryKey: ["apiConfig"],
-    queryFn: getConfig,
-    staleTime: 300_000,
-  });
-
   const { data: bal } = useQuery({
-    queryKey: ["balance", walletAddress?.toLowerCase() ?? ""],
-    queryFn: () => getBalance(walletAddress!),
-    enabled: !!walletAddress && isWalletConnected,
+    queryKey: ["balance", smartAccount?.toLowerCase() ?? ""],
+    queryFn: () => getBalance(smartAccount),
+    enabled: !!smartAccount && isWalletConnected,
     refetchInterval: 15_000,
   });
 
@@ -70,7 +68,7 @@ export function Header() {
     staleTime: 60_000,
   });
 
-  const relayer = cfg?.relayerAddress ?? "";
+  const depositAddress = smartAccount;
 
   function navActive(href: string): boolean {
     if (href === "/") return pathname === "/" || pathname.startsWith("/market/");
@@ -150,7 +148,7 @@ export function Header() {
                   type="button"
                   className="rounded-[12px] bg-brand px-3 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90"
                   onClick={() => setDepositOpen(true)}
-                  disabled={!relayer}
+                  disabled={!depositAddress}
                 >
                   Deposit
                 </button>
@@ -284,7 +282,7 @@ export function Header() {
         )}
       </header>
 
-      <DepositModal open={depositOpen} onClose={() => setDepositOpen(false)} relayerAddress={relayer} />
+      <DepositModal open={depositOpen} onClose={() => setDepositOpen(false)} depositAddress={depositAddress} />
       <WithdrawModal open={withdrawOpen} onClose={() => setWithdrawOpen(false)} />
     </>
   );

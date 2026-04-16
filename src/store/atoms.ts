@@ -10,6 +10,9 @@ export const userPublicClient = atom<PublicClient | null>(null);
 
 export const apiConfigAtom = atom<ApiConfig | null>(null);
 
+/** True after scoped session grant + backend register succeeded (or restored via register). */
+export const sessionReadyAtom = atom<boolean>(false);
+
 export const wsConnectedAtom = atom(false);
 
 /** Last time a WebSocket message was handled (ms since epoch); for stale UI hints. */
