@@ -233,17 +233,35 @@ export async function cancelOrder(
   return parseJson(res);
 }
 
-export async function postWithdraw(body: {
-  wallet: string;
-  amount: string;
-  signature: string;
-}): Promise<{ txHash: string; amount: string; newAvailable: string }> {
-  const res = await fetch(url("/balance/withdraw"), {
+export type RegisterSmartAccountRequest = {
+  ownerAddress: string;
+  smartAccountAddress: string;
+  sessionKey: `0x${string}`;
+  sessionExpiry: number;
+  permissionsContext: string;
+  sessionScope: {
+    settlementAddress: string;
+    functionSelector: `0x${string}`;
+    usdtAllowance: string;
+  };
+};
+
+export type RegisterSmartAccountResponse = {
+  ownerAddress: string;
+  smartAccountAddress: string;
+  isNew: boolean;
+  sessionExpiry: number;
+};
+
+export async function registerSmartAccount(
+  body: RegisterSmartAccountRequest
+): Promise<RegisterSmartAccountResponse> {
+  const res = await fetch(url("/api/smart-account/register"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  return parseJson(res);
+  return parseJson<RegisterSmartAccountResponse>(res);
 }
 
 export async function postMarketClaim(marketAddress: string): Promise<{ ok: boolean }> {

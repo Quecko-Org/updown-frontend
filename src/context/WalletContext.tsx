@@ -74,7 +74,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const connectedChainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
 
-  // ── Disconnect (matches speed-market: sync disconnect) ──
   const disconnectWallet = useCallback(() => {
     disconnect();
     setSmartAccount("");
@@ -90,7 +89,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     void deleteIndexKey("sessionKeyData");
   }, [disconnect, setSmartAccount, setSmartAccountClient, setPubClient]);
 
-  // ── Create smart account (matches speed-market: no API key guard, no session grant) ──
   const createSmartAccountFn = useCallback(
     async (wc: NonNullable<typeof walletClient>) => {
       try {
@@ -109,7 +107,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           policyId: PAYMASTER_POLICY_ID,
         });
 
-        const smartAccountAddress = await (client as ReturnType<typeof createSmartWalletClient>).requestAccount();
+        const smartAccountAddress = await (
+          client as ReturnType<typeof createSmartWalletClient>
+        ).requestAccount();
         const addr = smartAccountAddress?.address as string;
         setSmartAccount(addr);
         setSmartAccountClient(client);
@@ -122,7 +122,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     [setSmartAccount, setSmartAccountClient]
   );
 
-  // ── Sign message (matches speed-market: getConnections for wagmi v2) ──
   const performSign = useCallback(
     async (walletAddr: string) => {
       try {
@@ -133,7 +132,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           await switchChainAsync({ chainId: platform_chainId });
         }
 
-        // wagmi v2 equivalent of speed-market's getConnection(wagmiConfig)
         const connections = getConnections(wagmiConfig);
         const activeConnector = connections[0]?.connector;
         if (!activeConnector) throw new Error("No connector");
@@ -163,7 +161,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     [connectedChainId, switchChainAsync, disconnectWallet]
   );
 
-  // ── Connect wallet (matches speed-market) ──
   const connectWallet = useCallback(
     async (connector: Connector) => {
       try {
@@ -194,7 +191,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     [connectAsync]
   );
 
-  // ── When walletClient becomes available after connect, show sign modal ──
   useEffect(() => {
     if (!pendingSign.current || !address || !walletClient) return;
     pendingSign.current = false;
@@ -203,7 +199,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setShowSignModal(true);
   }, [address, walletClient]);
 
-  // ── Handle sign (matches speed-market: sign → smart account → done) ──
   const handleSign = useCallback(async () => {
     if (!address || !walletClient) return;
     setShowSignModal(false);
@@ -225,7 +220,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     disconnectWallet();
   }, [disconnectWallet]);
 
-  // ── Auto-restore smart account on page reload (matches speed-market) ──
   useEffect(() => {
     if (
       address &&
@@ -238,7 +232,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [address, walletClient, smartAccount, createSmartAccountFn]);
 
-  // ── Create public client when smart account is ready ──
   useEffect(() => {
     if (smartAccount) {
       setPubClient(
@@ -250,7 +243,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [smartAccount, setPubClient]);
 
-  // ── Clear session expiry on account change ──
   useEffect(() => {
     if (address && smartAccount) {
       const lastConnectedAccount = localStorage.getItem("lastAccount");
@@ -260,7 +252,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [address, smartAccount]);
 
-  // ── Context value (matches speed-market: isWalletConnected = isConnected && !!address) ──
   const value: WalletContextValue = {
     isWalletConnected: isConnected && !!address,
     isLoading,

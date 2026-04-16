@@ -249,7 +249,7 @@ export function Header() {
                     ${balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
                     className="flex-1 rounded-[12px] border border-border bg-white py-2 text-sm font-semibold text-foreground"

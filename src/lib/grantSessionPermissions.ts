@@ -19,7 +19,7 @@ type GrantClient = {
 };
 
 /**
- * Root session + IndexedDB persistence (speed-market `useSessionPermissions`).
+ * Root session + IndexedDB persistence (mirrors speed-market `useSessionPermissions`).
  */
 export async function grantRootSessionIfNeeded(
   smartAccountClient: unknown,
