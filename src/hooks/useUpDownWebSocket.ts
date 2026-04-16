@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef } from "react";
 import { useSetAtom } from "jotai";
 import { useQueryClient } from "@tanstack/react-query";
 import { wsConnectedAtom, wsLastEventAtAtom } from "@/store/atoms";
@@ -13,9 +13,17 @@ type WsPayload = {
   data?: unknown;
 };
 
+function walletChannels(walletLower: string) {
+  return [`orders:${walletLower}`, `balance:${walletLower}`] as const;
+}
+
+function marketChannels(marketLower: string) {
+  return [`orderbook:${marketLower}`, `trades:${marketLower}`] as const;
+}
+
 /**
  * Subscribes to `/stream`. Merges balance + order book updates into React Query.
- * Until the backend reliably broadcasts market events, pages also poll `GET /markets` and `GET /balance/:wallet`.
+ * Market list updates come from debounced invalidation on WS events plus focus refetch.
  */
 export function useUpDownWebSocket(opts: {
   wallet: string | null | undefined;
@@ -29,38 +37,95 @@ export function useUpDownWebSocket(opts: {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const marketInvalidateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleMessage = useCallback(
-    (ev: MessageEvent) => {
-      try {
-        const msg = JSON.parse(String(ev.data)) as WsPayload;
-        if (msg.type === "balance_update" && wallet) {
-          const data = msg.data as BalanceResponse;
-          queryClient.setQueryData(["balance", wallet.toLowerCase()], data);
-        }
-        if (msg.type === "orderbook_update" && marketAddress && msg.data && typeof msg.data === "object") {
-          const d = msg.data as { option?: number; snapshot?: OrderBookResponse["up"] };
-          if (d.option === 1 || d.option === 2) {
-            queryClient.setQueryData<OrderBookResponse>(["orderbook", marketAddress.toLowerCase()], (prev) => {
-              if (!prev) return prev;
-              const key = d.option === 1 ? "up" : "down";
-              return { ...prev, [key]: d.snapshot ?? prev[key] };
-            });
-          }
-        }
-        if (msg.type === "market_created" || msg.type === "market_resolved") {
-          queryClient.invalidateQueries({ queryKey: ["markets"] });
-          if (marketAddress) {
-            queryClient.invalidateQueries({ queryKey: ["market", marketAddress.toLowerCase()] });
-          }
-        }
-        setWsLastEventAt(Date.now());
-      } catch {
-        /* ignore */
+  const walletRef = useRef(wallet);
+  walletRef.current = wallet;
+  const marketAddressRef = useRef(marketAddress);
+  marketAddressRef.current = marketAddress;
+
+  /** Last wallet string we applied to the socket (raw from props); null if none. */
+  const subscribedWalletRef = useRef<string | null>(null);
+  /** Last market address we applied (raw); null if none. */
+  const subscribedMarketRef = useRef<string | null>(null);
+
+  const handleMessageRef = useRef<(ev: MessageEvent) => void>(() => {});
+
+  handleMessageRef.current = (ev: MessageEvent) => {
+    try {
+      const msg = JSON.parse(String(ev.data)) as WsPayload;
+      const w = walletRef.current;
+      if (msg.type === "balance_update" && w) {
+        const data = msg.data as BalanceResponse;
+        queryClient.setQueryData(["balance", w.toLowerCase()], data);
       }
-    },
-    [queryClient, wallet, marketAddress, setWsLastEventAt]
-  );
+      const m = marketAddressRef.current;
+      if (msg.type === "orderbook_update" && m && msg.data && typeof msg.data === "object") {
+        const d = msg.data as { option?: number; snapshot?: OrderBookResponse["up"] };
+        if (d.option === 1 || d.option === 2) {
+          queryClient.setQueryData<OrderBookResponse>(["orderbook", m.toLowerCase()], (prev) => {
+            if (!prev) return prev;
+            const key = d.option === 1 ? "up" : "down";
+            return { ...prev, [key]: d.snapshot ?? prev[key] };
+          });
+        }
+      }
+      if (msg.type === "market_created" || msg.type === "market_resolved") {
+        if (marketInvalidateTimerRef.current) clearTimeout(marketInvalidateTimerRef.current);
+        marketInvalidateTimerRef.current = setTimeout(() => {
+          marketInvalidateTimerRef.current = null;
+          queryClient.invalidateQueries({ queryKey: ["markets"] });
+          const ma = marketAddressRef.current;
+          if (ma) {
+            queryClient.invalidateQueries({ queryKey: ["market", ma.toLowerCase()] });
+          }
+        }, 1000);
+      }
+      setWsLastEventAt(Date.now());
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const syncWalletMarketSubscriptionsRef = useRef<(ws: WebSocket) => void>(() => {});
+
+  syncWalletMarketSubscriptionsRef.current = (ws: WebSocket) => {
+    if (ws.readyState !== WebSocket.OPEN) return;
+
+    const oldW = subscribedWalletRef.current;
+    const oldM = subscribedMarketRef.current;
+    const newW = walletRef.current?.trim() ? String(walletRef.current) : null;
+    const newM = marketAddressRef.current?.trim() ? String(marketAddressRef.current) : null;
+
+    const oldWKey = oldW?.toLowerCase() ?? null;
+    const newWKey = newW?.toLowerCase() ?? null;
+    const oldMKey = oldM?.toLowerCase() ?? null;
+    const newMKey = newM?.toLowerCase() ?? null;
+
+    if (oldWKey !== newWKey) {
+      if (oldWKey && oldW) {
+        const ch = [...walletChannels(oldWKey)];
+        ws.send(JSON.stringify({ type: "unsubscribe", channels: ch, wallet: oldW }));
+      }
+      if (newWKey && newW) {
+        const ch = [...walletChannels(newWKey)];
+        ws.send(JSON.stringify({ type: "subscribe", channels: ch, wallet: newW }));
+      }
+      subscribedWalletRef.current = newW;
+    }
+
+    if (oldMKey !== newMKey) {
+      if (oldMKey && oldM) {
+        const ch = [...marketChannels(oldMKey)];
+        ws.send(JSON.stringify({ type: "unsubscribe", channels: ch, wallet: undefined }));
+      }
+      if (newMKey && newM) {
+        const ch = [...marketChannels(newMKey)];
+        ws.send(JSON.stringify({ type: "subscribe", channels: ch, wallet: newW ?? undefined }));
+      }
+      subscribedMarketRef.current = newM;
+    }
+  };
 
   useEffect(() => {
     if (!enabled || typeof window === "undefined") return;
@@ -74,22 +139,20 @@ export function useUpDownWebSocket(opts: {
       ws.onopen = () => {
         reconnectRef.current = 0;
         setWsConnected(true);
-        const channels: string[] = ["markets"];
-        if (marketAddress) {
-          const m = marketAddress.toLowerCase();
-          channels.push(`orderbook:${m}`, `trades:${m}`);
-        }
-        if (wallet) {
-          const w = wallet.toLowerCase();
-          channels.push(`orders:${w}`, `balance:${w}`);
-        }
-        ws.send(JSON.stringify({ type: "subscribe", channels, wallet: wallet ?? undefined }));
+        subscribedWalletRef.current = null;
+        subscribedMarketRef.current = null;
+        ws.send(JSON.stringify({ type: "subscribe", channels: ["markets"], wallet: undefined }));
+        syncWalletMarketSubscriptionsRef.current(ws);
       };
 
-      ws.onmessage = handleMessage;
+      ws.onmessage = (ev) => {
+        handleMessageRef.current(ev);
+      };
 
       ws.onclose = () => {
         setWsConnected(false);
+        subscribedWalletRef.current = null;
+        subscribedMarketRef.current = null;
         const attempt = reconnectRef.current;
         reconnectRef.current += 1;
         const exp = Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5));
@@ -107,8 +170,22 @@ export function useUpDownWebSocket(opts: {
     return () => {
       setWsConnected(false);
       if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = null;
+      if (marketInvalidateTimerRef.current) clearTimeout(marketInvalidateTimerRef.current);
+      marketInvalidateTimerRef.current = null;
+      subscribedWalletRef.current = null;
+      subscribedMarketRef.current = null;
       wsRef.current?.close();
       wsRef.current = null;
     };
-  }, [enabled, wallet, marketAddress, handleMessage, setWsConnected]);
+    // Socket lifetime is intentionally tied only to `enabled`. setWsConnected is a stable Jotai setter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    syncWalletMarketSubscriptionsRef.current(ws);
+  }, [wallet, marketAddress, enabled]);
 }
