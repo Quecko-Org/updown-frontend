@@ -14,7 +14,13 @@ import {
 } from "@/lib/api";
 import { buildOrderTypedData } from "@/lib/eip712";
 import { parseUsdtToAtomic } from "@/lib/format";
-import { impliedProbabilityForSide, probabilityScaledFeePercent } from "@/lib/feeEstimate";
+import {
+  estimateTotalFee,
+  formatShareCentsLabel,
+  impliedProbabilityForSide,
+  sharePriceBpsFromOrderBookMid,
+} from "@/lib/feeEstimate";
+import { approxProfitIfSideWinsUsd } from "@/lib/payoutEstimate";
 import { parseCompositeMarketKey } from "@/lib/marketKey";
 import { cn } from "@/lib/cn";
 import { formatUserFacingError } from "@/lib/errors";
@@ -93,9 +99,7 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
 
   const { signTypedDataAsync } = useSignTypedData();
 
-  const platformBps = cfg?.platformFeeBps ?? 70;
-  const makerBps = cfg?.makerFeeBps ?? 80;
-  const totalBps = platformBps + makerBps;
+  const totalBps = (cfg?.platformFeeBps ?? 70) + (cfg?.makerFeeBps ?? 80);
 
   const limitPrice = useMemo(() => {
     if (!market || orderType === "MARKET") return 5000;
@@ -114,8 +118,26 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
 
   const impliedP =
     market != null ? impliedProbabilityForSide(side, market.upPrice, market.downPrice) : 0.5;
-  const feeUsdDisplay = (Number(dollars) * totalBps) / 10000;
-  const scaledFeePct = probabilityScaledFeePercent(totalBps, impliedP);
+
+  const sharePriceBps = useMemo(() => {
+    if (!market) return 5000;
+    return sharePriceBpsFromOrderBookMid(side, market.orderBook);
+  }, [market, side]);
+
+  const { feeUsd: feeUsdDisplay, effectivePercentOfNotional } = estimateTotalFee(
+    Number(dollars),
+    totalBps,
+    sharePriceBps,
+    cfg?.feeModel,
+  );
+  const shareCentsLabel = formatShareCentsLabel(sharePriceBps);
+  const peakFeeBps = cfg?.peakFeeBps ?? totalBps;
+  const peakFeePct = (peakFeeBps / 100).toFixed(2);
+
+  const payoutIfWin = approxProfitIfSideWinsUsd(Number(dollars), impliedP, totalBps, {
+    feeModel: cfg?.feeModel,
+    sharePriceBps,
+  });
 
   const submit = useMutation({
     mutationFn: async () => {
@@ -181,13 +203,13 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
   const rebateBps = dmmStatus?.isDmm ? dmmStatus.rebateBps : undefined;
 
   return (
-    <div className="card-kraken p-5">
-      <h3 className="font-display text-lg font-bold text-foreground">Trade</h3>
-      <div className="mt-3 flex gap-2">
+    <div className="panel-dense px-3 py-3">
+      <h3 className="text-xs font-bold uppercase tracking-wide text-muted">Trade</h3>
+      <div className="mt-2 flex gap-1.5">
         <button
           type="button"
           className={cn(
-            "flex-1 rounded-[12px] py-3 text-sm font-semibold transition-colors",
+            "flex-1 rounded-[10px] py-2.5 text-sm font-semibold transition-colors",
             side === 1
               ? "bg-success text-white shadow-sm"
               : "bg-surface-muted text-foreground hover:bg-success-soft"
@@ -202,7 +224,7 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
         <button
           type="button"
           className={cn(
-            "flex-1 rounded-[12px] py-3 text-sm font-semibold transition-colors",
+            "flex-1 rounded-[10px] py-2.5 text-sm font-semibold transition-colors",
             side === 2
               ? "bg-down text-white shadow-sm"
               : "bg-surface-muted text-foreground hover:bg-down-soft"
@@ -215,8 +237,8 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
           DOWN
         </button>
       </div>
-      <div className="mt-4">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Order type</p>
+      <div className="mt-3">
+        <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">Order type</p>
         <div className="flex flex-wrap gap-2">
           {ORDER_TYPES.map((ot) => (
             <button
@@ -235,8 +257,8 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
           ))}
         </div>
       </div>
-      <div className="mt-4">
-        <label className="text-xs font-medium text-muted">Size (USDT)</label>
+      <div className="mt-3">
+        <label className="text-[10px] font-medium text-muted">Size (USDT)</label>
         <input
           type="range"
           min={5}
@@ -258,17 +280,25 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
             </button>
           ))}
         </div>
-        <p className="mt-2 text-center text-lg font-bold text-foreground">${dollars}</p>
+        <p className="mt-1 text-center text-base font-bold tabular-nums text-foreground">${dollars}</p>
       </div>
-      <div className="mt-2 space-y-1 text-xs text-muted">
-        <p>
-          Est. fee on this size:{" "}
-          <span className="font-medium text-foreground">~${feeUsdDisplay.toFixed(2)}</span> (
-          {platformBps + makerBps} bps on notional).{" "}
-          <span className="text-foreground">
-            About {scaledFeePct.toFixed(2)}% fee at current prices
+      <p className="mt-2 text-xs font-semibold text-foreground">
+        If {side === 1 ? "UP" : "DOWN"} wins:{" "}
+        <span className="text-success">+${payoutIfWin.toFixed(2)}</span>{" "}
+        <span className="font-normal text-muted">(est., after fees)</span>
+      </p>
+      <div className="mt-1.5 space-y-1 text-[10px] text-muted">
+        <p className="text-foreground">
+          Fee:{" "}
+          <span className="font-semibold">
+            ${feeUsdDisplay.toFixed(2)} ({effectivePercentOfNotional.toFixed(2)}% at {shareCentsLabel})
           </span>{" "}
-          (~{(totalBps / 100).toFixed(2)}% near 50¢).
+          <InfoTip
+            text={`Peak fee: ${peakFeePct}% at 50¢ (combined platform + maker bps). Fees scale down toward 0¢ and 100¢ — same probability weight as Polymarket.`}
+          />
+        </p>
+        <p className="text-muted">
+          Peak fee {(peakFeeBps / 100).toFixed(2)}% at 50¢ — lower when the book is far from 50/50.
         </p>
         {rebateBps != null && rebateBps > 0 && (
           <p className="font-medium text-success-dark">
@@ -285,7 +315,7 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
         <button
           type="button"
           disabled={submit.isPending || market?.status !== "ACTIVE"}
-          className="btn-primary mt-4 w-full disabled:opacity-50"
+          className="btn-primary mt-3 w-full disabled:opacity-50"
           onClick={() => submit.mutate()}
         >
           {submit.isPending ? "Signing…" : `Buy ${side === 1 ? "UP" : "DOWN"}`}
@@ -293,9 +323,9 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
       ) : (
         <div
           ref={connectSectionRef}
-          className="mt-4 rounded-[12px] border border-border bg-surface-muted/30 p-4"
+          className="mt-3 rounded-lg border border-border bg-surface-muted/30 p-3"
         >
-          <p className="text-center font-display text-base font-bold text-foreground">Connect wallet to trade</p>
+          <p className="text-center text-sm font-bold text-foreground">Connect wallet to trade</p>
           <p className="mt-1 text-center text-xs text-muted">
             Choose a wallet to sign in. You can adjust side and size first.
           </p>

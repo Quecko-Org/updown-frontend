@@ -1,89 +1,116 @@
+"use client";
+
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
+import { getConfig } from "@/lib/api";
+import { effectiveFeeBpsAtSharePrice, formatShareCentsLabel } from "@/lib/feeEstimate";
+
+const TABLE_CENTS = [50, 30, 70, 10, 90] as const;
 
 export default function FeesPage() {
+  const { data: cfg } = useQuery({
+    queryKey: ["apiConfig"],
+    queryFn: getConfig,
+    staleTime: 300_000,
+  });
+
+  const platform = cfg?.platformFeeBps ?? 70;
+  const maker = cfg?.makerFeeBps ?? 80;
+  const totalBps = platform + maker;
+  const peakBps = cfg?.peakFeeBps ?? totalBps;
+
   return (
-    <div className="space-y-10">
+    <div className="space-y-8">
       <div>
-        <h1 className="font-display text-3xl font-bold tracking-tight text-foreground sm:text-4xl">Fees</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted sm:text-base">
-          UpDown uses a transparent fee stack on matched volume. Exact basis points are loaded from protocol
-          configuration at runtime; the targets below are the live product defaults.
+        <h1 className="font-display text-2xl font-bold tracking-tight text-foreground sm:text-3xl">Fees</h1>
+        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
+          PulsePairs charges platform and maker fees on matched volume. When the protocol uses{" "}
+          <span className="font-semibold text-foreground">probability-weighted</span> fees (same model as Polymarket),
+          the effective rate scales with the share price:{" "}
+          <span className="font-semibold text-foreground">
+            fees peak at {(peakBps / 100).toFixed(2)}% near a 50/50 market
+          </span>{" "}
+          and taper toward <span className="font-semibold text-foreground">near zero</span> at extreme prices (e.g. 10¢
+          or 90¢), because weight = 4 × price × (1 − price) in fraction form.
         </p>
       </div>
 
-      <section className="card-kraken space-y-4 p-6">
-        <h2 className="font-display text-xl font-bold text-foreground">Trading fees</h2>
-        <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted">
-          <li>
-            <span className="font-semibold text-foreground">0.7% platform fee</span> — supports matching,
-            settlement, and infrastructure.
-          </li>
-          <li>
-            <span className="font-semibold text-foreground">0.8% maker fee</span> — paid on liquidity that rests on
-            the book and gets filled.
-          </li>
-          <li>
-            Together that is <span className="font-semibold text-foreground">1.5% total</span> on the configured fee
-            leg (see live values on the trade panel from{" "}
-            <code className="rounded bg-surface-muted px-1 font-mono text-xs">GET /config</code>).
-          </li>
-        </ul>
+      <section className="panel-dense space-y-3 p-4">
+        <h2 className="text-sm font-bold text-foreground">Effective fee examples</h2>
+        <p className="text-xs text-muted">
+          Combined platform ({platform} bps) + maker ({maker} bps) = {totalBps} bps before weighting. Values below are
+          effective bps after the probability weight (integer math, aligned with backend).
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[280px] border-collapse text-left text-xs">
+            <thead>
+              <tr className="border-b border-border text-muted">
+                <th className="py-2 pr-3 font-semibold">Share price</th>
+                <th className="py-2 pr-3 font-semibold">Effective fee (bps)</th>
+                <th className="py-2 font-semibold">On $100 trade</th>
+              </tr>
+            </thead>
+            <tbody className="font-mono text-foreground">
+              {TABLE_CENTS.map((cents) => {
+                const priceBps = cents * 100;
+                const eff = effectiveFeeBpsAtSharePrice(totalBps, priceBps);
+                const feeUsd = (100 * eff) / 10_000;
+                return (
+                  <tr key={cents} className="border-b border-border/70">
+                    <td className="py-1.5 pr-3">{formatShareCentsLabel(priceBps)}</td>
+                    <td className="py-1.5 pr-3">{eff}</td>
+                    <td className="py-1.5">${feeUsd.toFixed(2)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-[10px] text-muted">
+          Live values: <code className="rounded bg-surface-muted px-1">GET /config</code> (
+          <code className="rounded bg-surface-muted px-1">feeModel</code>,{" "}
+          <code className="rounded bg-surface-muted px-1">peakFeeBps</code>).
+        </p>
       </section>
 
-      <section className="card-kraken space-y-4 p-6">
-        <h2 className="font-display text-xl font-bold text-foreground">Designated market makers (DMM)</h2>
-        <p className="text-sm leading-relaxed text-muted">
-          Market makers who meet program requirements can earn <span className="font-semibold text-foreground">rebates</span>{" "}
-          on filled maker volume. Rebates are configured in basis points and shown in the trade form when your wallet is
-          approved for the program.
+      <section className="panel-dense space-y-3 p-4">
+        <h2 className="text-sm font-bold text-foreground">Designated market makers (DMM)</h2>
+        <p className="text-xs leading-relaxed text-muted">
+          Market makers who meet program requirements can earn rebates on filled maker volume. Rebates are shown in the
+          trade form when your wallet is approved.
         </p>
-        <p className="text-sm leading-relaxed text-muted">
-          Requirements typically include quoting both sides of the book within spread and size guidelines, uptime, and
-          fair pricing. To apply, contact the team through your usual operations channel; approval is reflected in{" "}
-          <code className="rounded bg-surface-muted px-1 font-mono text-xs">GET /dmm/status/:wallet</code>.
-        </p>
-        <p className="text-sm">
+        <p className="text-xs">
           <Link href="/rebates" className="font-semibold text-brand hover:underline">
             Rebates dashboard →
-          </Link>{" "}
-          <span className="text-muted">(visible in the nav when your wallet is connected as a DMM.)</span>
+          </Link>
         </p>
       </section>
 
-      <section className="card-kraken space-y-4 p-6">
-        <h2 className="font-display text-xl font-bold text-foreground">Order types</h2>
-        <dl className="space-y-4 text-sm">
+      <section className="panel-dense space-y-3 p-4">
+        <h2 className="text-sm font-bold text-foreground">Order types</h2>
+        <dl className="space-y-3 text-xs">
           <div>
             <dt className="font-semibold text-foreground">LIMIT</dt>
-            <dd className="mt-1 text-muted">
-              Rests on the book at your price (basis points). Fills when the market reaches your level.
-            </dd>
+            <dd className="mt-0.5 text-muted">Rests on the book at your price (basis points).</dd>
           </div>
           <div>
             <dt className="font-semibold text-foreground">MARKET</dt>
-            <dd className="mt-1 text-muted">
-              No limit price in the form; matches against the best available liquidity on the book immediately.
-            </dd>
+            <dd className="mt-0.5 text-muted">Matches immediately against the best available liquidity.</dd>
           </div>
           <div>
             <dt className="font-semibold text-foreground">POST_ONLY</dt>
-            <dd className="mt-1 text-muted">
-              Maker-only: your order is only accepted if it would rest on the book. If it would cross and fill
-              immediately, it is rejected.
-            </dd>
+            <dd className="mt-0.5 text-muted">Maker-only: rejected if it would cross and fill immediately.</dd>
           </div>
           <div>
-            <dt className="font-semibold text-foreground">IOC (Immediate or cancel)</dt>
-            <dd className="mt-1 text-muted">
-              Fills whatever size is available at your limit right now; any unfilled remainder is canceled.
-            </dd>
+            <dt className="font-semibold text-foreground">IOC</dt>
+            <dd className="mt-0.5 text-muted">Fills now; remainder canceled.</dd>
           </div>
         </dl>
       </section>
 
-      <p className="text-sm text-muted">
+      <p className="text-xs text-muted">
         <Link href="/" className="font-semibold text-brand hover:underline">
-          ← Back to markets
+          ← Markets
         </Link>
       </p>
     </div>

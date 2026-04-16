@@ -34,6 +34,10 @@ export type ApiConfig = {
   relayerAddress: string;
   platformFeeBps: number;
   makerFeeBps: number;
+  /** e.g. `"probability-weighted"` — when set, fee UI uses Polymarket-style weighting. */
+  feeModel?: string;
+  /** Max combined fee bps (typically at 50¢); from GET /config when present. */
+  peakFeeBps?: number;
   usdtDecimals: number;
   eip712: {
     domain: {

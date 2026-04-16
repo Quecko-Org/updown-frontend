@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-test.describe("UpDown API smoke", () => {
+test.describe("PulsePairs API smoke", () => {
   test("GET /health returns JSON status", async ({ request }) => {
     const res = await request.get("/health");
     expect(res.ok(), `expected 200, got ${res.status()}`).toBeTruthy();

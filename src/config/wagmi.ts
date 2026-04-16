@@ -23,14 +23,14 @@ export const wagmiConfig = createConfig({
     walletConnect({
       projectId: walletConnectProjectId,
       metadata: {
-        name: "UpDown",
-        description: "Prediction markets on Arbitrum",
+        name: "PulsePairs",
+        description: "PulsePairs",
         url: appUrl,
         icons: [],
       },
     }),
     coinbaseWallet({
-      appName: "UpDown",
+      appName: "PulsePairs",
     }),
   ],
   transports: {

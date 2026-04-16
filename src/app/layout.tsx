@@ -11,8 +11,9 @@ const ibmPlex = IBM_Plex_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "UpDown",
-  description: "Prediction markets on Arbitrum",
+  title: "PulsePairs",
+  description: "PulsePairs",
+  applicationName: "PulsePairs",
 };
 
 export default function RootLayout({
