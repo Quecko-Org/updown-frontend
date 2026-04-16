@@ -72,3 +72,18 @@ export function marketDurationLabel(durationSec: number): string {
   if (durationSec === 3600) return "1 hour";
   return `${Math.round(durationSec / 60)} min`;
 }
+
+/** Strike as USD number for comparisons; null if pending / invalid. */
+export function parseStrikeUsdNumber(raw: string | undefined | null): number | null {
+  if (raw == null || raw === "") return null;
+  try {
+    const v = BigInt(raw);
+    if (v === BigInt(0)) return null;
+    const s = formatUnits(v, STRIKE_USD_DECIMALS);
+    const n = Number(s);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return n;
+  } catch {
+    return null;
+  }
+}

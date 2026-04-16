@@ -1,13 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { MarketListItem } from "@/lib/api";
-import { formatStrikeUsd } from "@/lib/format";
+import { formatStrikeUsd, marketDurationLabel, parseStrikeUsdNumber } from "@/lib/format";
+import { clipForMarketCard, type PricePoint } from "@/lib/priceChart";
 import { cn } from "@/lib/cn";
 import { marketPathFromAddress } from "@/lib/marketKey";
+import { MiniPriceSparkline } from "@/components/MiniPriceSparkline";
 
-function useCountdown(endTime: number) {
+function useCountdownRemaining(endTime: number) {
   const [left, setLeft] = useState(() => Math.max(0, endTime - Math.floor(Date.now() / 1000)));
   useEffect(() => {
     const t = setInterval(() => {
@@ -28,69 +30,104 @@ function bestFromList(m: MarketListItem): { mode: "prices"; bid: string; ask: st
     const upP = Number(up) / 1e18;
     const downP = Number(down) / 1e18;
     if (!Number.isFinite(upP) || !Number.isFinite(downP)) return { mode: "empty" };
-    const upC = `${(upP * 100).toFixed(1)}¢`;
-    const downC = `${(downP * 100).toFixed(1)}¢`;
-    if (upC === "0.0¢" && downC === "0.0¢") return { mode: "empty" };
+    const upC = `${(upP * 100).toFixed(0)}¢`;
+    const downC = `${(downP * 100).toFixed(0)}¢`;
+    if (upC === "0¢" && downC === "0¢") return { mode: "empty" };
     return { mode: "prices", bid: `UP ${upC}`, ask: `DOWN ${downC}` };
   } catch {
     return { mode: "empty" };
   }
 }
 
-export function MarketCard({ market }: { market: MarketListItem }) {
-  const cd = useCountdown(market.endTime);
-  const strike = formatStrikeUsd(market.strikePrice);
+function formatUsdInt(n: number): string {
+  return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+}
+
+export function MarketCard({
+  market,
+  btcPoints,
+  spotUsd,
+}: {
+  market: MarketListItem;
+  btcPoints: PricePoint[];
+  spotUsd: number | null;
+}) {
+  const cd = useCountdownRemaining(market.endTime);
+  const strikeLabel = formatStrikeUsd(market.strikePrice);
+  const strikeNum = parseStrikeUsdNumber(market.strikePrice);
   const quotes = bestFromList(market);
+  const pairLabel = (market.pairSymbol ?? market.pairId).replace("-", " / ");
+  const title = `${pairLabel} · ${marketDurationLabel(market.duration)}`;
+
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 15_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const miniPoints = useMemo(
+    () => clipForMarketCard(btcPoints, market.startTime, market.endTime, nowSec, 900),
+    [btcPoints, market.startTime, market.endTime, nowSec],
+  );
+
+  const spotLine = useMemo(() => {
+    if (spotUsd == null || strikeNum == null) {
+      return { text: "—", className: "text-muted" };
+    }
+    const diff = spotUsd - strikeNum;
+    const pct = strikeNum !== 0 ? (diff / strikeNum) * 100 : 0;
+    const up = diff >= 0;
+    const arrow = up ? "▲" : "▼";
+    const sign = diff >= 0 ? "+" : "";
+    return {
+      text: `${formatUsdInt(spotUsd)} ${arrow} ${sign}${formatUsdInt(Math.abs(diff))} (${sign}${pct.toFixed(2)}%)`,
+      className: up ? "text-success" : "text-down",
+    };
+  }, [spotUsd, strikeNum]);
 
   return (
     <Link
       href={marketPathFromAddress(market.address)}
       className={cn(
-        "card-kraken group block min-w-[280px] shrink-0 snap-start p-5 transition-all duration-200 sm:snap-none sm:min-w-0",
-        "hover:shadow-card-hover hover:border-brand/20"
+        "panel-dense group block min-h-0 transition-colors hover:border-brand/30",
+        "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
       )}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="font-display text-lg font-bold text-foreground">
-            {(market.pairSymbol ?? market.pairId).replace("-", " / ")}
-          </p>
-          <p className="mt-1 text-xs text-muted">
-            Strike{" "}
-            <span className="font-semibold text-foreground">{strike}</span>
-          </p>
-        </div>
+        <h2 className="font-display text-base font-bold leading-tight text-foreground sm:text-lg">{title}</h2>
         <span
           className={cn(
-            "shrink-0 rounded-[6px] px-2.5 py-1 text-xs font-bold uppercase tracking-wide",
-            market.status === "ACTIVE"
-              ? "bg-success-soft text-success-dark"
-              : "bg-[rgba(104,107,130,0.12)] text-neutral-ink"
+            "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide",
+            market.status === "ACTIVE" ? "bg-success-soft text-success-dark" : "bg-surface-muted text-muted"
           )}
         >
           {market.status}
         </span>
       </div>
-      <div className="mt-4 flex items-end justify-between gap-4 border-t border-border pt-4 text-sm">
+      <p className="mt-2 text-sm font-semibold text-foreground">
+        Price to Beat: <span className="tabular-nums">{strikeLabel}</span>
+      </p>
+      <p className={cn("mt-1 text-sm font-semibold tabular-nums", spotLine.className)}>{spotLine.text}</p>
+      <div className="mt-2">
+        <MiniPriceSparkline points={miniPoints} strikeUsd={strikeNum} />
+      </div>
+      <div className="mt-2 flex items-end justify-between gap-2 border-t border-border pt-2 text-xs">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">Ends in</p>
-          <p className="mt-1 font-mono text-xl font-bold tabular-nums text-brand">{cd}</p>
+          <span className="font-mono font-bold tabular-nums text-foreground">{cd}</span>
+          <span className="text-muted"> remaining</span>
         </div>
         <div className="text-right">
           {quotes.mode === "empty" ? (
-            <p className="mt-1 text-sm font-medium text-muted">No orders yet</p>
+            <span className="text-muted">No orders yet</span>
           ) : (
-            <>
-              <p className="mt-1 text-sm font-semibold text-success">{quotes.bid}</p>
-              <p className="text-sm font-semibold text-down">{quotes.ask}</p>
-            </>
+            <span className="text-foreground">
+              <span className="font-semibold text-success">{quotes.bid}</span>
+              <span className="text-muted"> / </span>
+              <span className="font-semibold text-down">{quotes.ask}</span>
+            </span>
           )}
         </div>
       </div>
-      {/* Hover hint */}
-      <p className="mt-3 text-center text-xs font-medium text-muted opacity-0 transition-opacity group-hover:opacity-100">
-        View market →
-      </p>
     </Link>
   );
 }

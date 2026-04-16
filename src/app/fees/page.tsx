@@ -6,7 +6,7 @@ export default function FeesPage() {
       <div>
         <h1 className="font-display text-3xl font-bold tracking-tight text-foreground sm:text-4xl">Fees</h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted sm:text-base">
-          UpDown uses a transparent fee stack on matched volume. Exact basis points are loaded from protocol
+          PulsePairs charges a transparent fee stack on matched volume. Exact basis points are loaded from protocol
           configuration at runtime; the targets below are the live product defaults.
         </p>
       </div>

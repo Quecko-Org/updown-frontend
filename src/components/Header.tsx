@@ -98,7 +98,7 @@ export function Header() {
             href="/"
             className="font-display text-xl font-bold tracking-tight text-brand transition-opacity hover:opacity-90"
           >
-            UpDown
+            PulsePairs
           </Link>
 
           {/* Desktop nav */}

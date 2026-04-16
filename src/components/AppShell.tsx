@@ -9,9 +9,11 @@ import { getConfig } from "@/lib/api";
 import { apiConfigAtom } from "@/store/atoms";
 import { useUpDownWebSocket } from "@/hooks/useUpDownWebSocket";
 import { Header } from "./Header";
+import { cn } from "@/lib/cn";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const isMarketPage = pathname?.startsWith("/market/");
   const marketMatch = pathname?.match(/^\/market\/(.+)$/);
   const marketFromRoute = marketMatch?.[1] ? decodeURIComponent(marketMatch[1]) : null;
 
@@ -37,7 +39,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-background">
       <Header />
-      <main className="mx-auto w-full max-w-6xl px-4 pb-16 pt-6 sm:px-6 lg:px-8">{children}</main>
+      <main
+        className={cn(
+          "mx-auto w-full px-4 pb-12 pt-4 sm:px-6 lg:px-8",
+          isMarketPage ? "max-w-7xl" : "max-w-6xl",
+        )}
+      >
+        {children}
+      </main>
     </div>
   );
 }
