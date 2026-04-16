@@ -10,7 +10,7 @@ import { formatUsdt } from "@/lib/format";
 import { EmptyState } from "@/components/EmptyState";
 import { cn } from "@/lib/cn";
 import { marketPathFromAddress } from "@/lib/marketKey";
-import { userSmartAccount } from "@/store/atoms";
+import { sessionReadyAtom, userSmartAccount } from "@/store/atoms";
 
 const PAGE = 20;
 
@@ -30,12 +30,14 @@ function tradeResult(t: TradeRow, winner: number | null | undefined, wallet: str
 export default function HistoryPage() {
   const { isConnected } = useAccount();
   const smartAccount = useAtomValue(userSmartAccount);
+  const sessionReady = useAtomValue(sessionReadyAtom);
   const [offset, setOffset] = useState(0);
 
   const { data: trades, isLoading } = useQuery({
     queryKey: ["trades", smartAccount?.toLowerCase() ?? "", offset],
     queryFn: () => getTrades(smartAccount!, PAGE, offset),
-    enabled: !!smartAccount && isConnected,
+    enabled: !!smartAccount && isConnected && sessionReady,
+    retry: 1,
   });
 
   const markets = useMemo(() => {

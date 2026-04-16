@@ -59,8 +59,9 @@ export function Header() {
   const { data: bal } = useQuery({
     queryKey: ["balance", smartAccount?.toLowerCase() ?? ""],
     queryFn: () => getBalance(smartAccount),
-    enabled: !!smartAccount && isWalletConnected,
+    enabled: !!smartAccount && isWalletConnected && sessionReady,
     refetchInterval: 15_000,
+    retry: 1,
   });
 
   const { data: dmmStatus } = useQuery({

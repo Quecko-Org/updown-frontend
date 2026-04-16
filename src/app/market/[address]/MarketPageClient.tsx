@@ -16,7 +16,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { CancelAllMarketOrders } from "@/components/CancelAllMarketOrders";
 import { WalletConnectorList } from "@/components/WalletConnectorList";
 import { cn } from "@/lib/cn";
-import { userSmartAccount } from "@/store/atoms";
+import { sessionReadyAtom, userSmartAccount } from "@/store/atoms";
 
 function useEndsInCountdown(endTimeSec: number) {
   const [left, setLeft] = useState(() =>
@@ -40,8 +40,9 @@ function useEndsInCountdown(endTimeSec: number) {
 }
 
 export function MarketPageClient({ address }: { address: string }) {
-  const { address: eoa } = useAccount();
+  const { address: eoa, isConnected } = useAccount();
   const smartAccount = useAtomValue(userSmartAccount);
+  const sessionReady = useAtomValue(sessionReadyAtom);
 
   const parsed = useMemo(() => parseCompositeMarketKey(address), [address]);
   const marketKey = parsed?.composite ?? address;
@@ -72,8 +73,9 @@ export function MarketPageClient({ address }: { address: string }) {
   const { data: positions } = useQuery({
     queryKey: ["positions", smartAccount?.toLowerCase() ?? ""],
     queryFn: () => getPositions(smartAccount!),
-    enabled: !!smartAccount,
+    enabled: !!smartAccount && isConnected && sessionReady,
     refetchInterval: 20_000,
+    retry: 1,
   });
 
   const { data: dmmStatus } = useQuery({
