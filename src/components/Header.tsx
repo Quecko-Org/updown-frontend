@@ -4,12 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getBalance, getConfig, getDmmStatus } from "@/lib/api";
-import { formatUsdt } from "@/lib/format";
+import { getDmmStatus } from "@/lib/api";
 import { DepositModal } from "./DepositModal";
 import { WithdrawModal } from "./WithdrawModal";
 import { SignModal } from "./SignModal";
 import { useWalletContext } from "@/context/WalletContext";
+import { useGetUsdtBalance } from "@/hooks/useBalance";
 import { WalletConnectorList } from "@/components/WalletConnectorList";
 import { getFormattedAddress } from "@/utils/walletHelpers";
 import { cn } from "@/lib/cn";
@@ -27,7 +27,7 @@ export function Header() {
     isWalletConnected,
     isLoading,
     loadingStep,
-    walletAddress,
+    smartAccountAddress,
     disconnectWallet,
     showSignModal,
     handleSign,
@@ -50,27 +50,14 @@ export function Header() {
     return () => document.removeEventListener("click", onDocClick);
   }, []);
 
-  const { data: cfg } = useQuery({
-    queryKey: ["apiConfig"],
-    queryFn: getConfig,
-    staleTime: 300_000,
-  });
-
-  const { data: bal } = useQuery({
-    queryKey: ["balance", walletAddress?.toLowerCase() ?? ""],
-    queryFn: () => getBalance(walletAddress!),
-    enabled: !!walletAddress && isWalletConnected,
-    refetchInterval: 15_000,
-  });
+  const { balance } = useGetUsdtBalance();
 
   const { data: dmmStatus } = useQuery({
-    queryKey: ["dmmStatus", walletAddress?.toLowerCase() ?? ""],
-    queryFn: () => getDmmStatus(walletAddress!),
-    enabled: !!walletAddress && isWalletConnected,
+    queryKey: ["dmmStatus", smartAccountAddress?.toLowerCase() ?? ""],
+    queryFn: () => getDmmStatus(smartAccountAddress!),
+    enabled: !!smartAccountAddress && isWalletConnected,
     staleTime: 60_000,
   });
-
-  const relayer = cfg?.relayerAddress ?? "";
 
   function navActive(href: string): boolean {
     if (href === "/") return pathname === "/" || pathname.startsWith("/market/");
@@ -134,15 +121,15 @@ export function Header() {
 
           {/* Right side: balance + actions */}
           <div className="flex items-center gap-2">
-            {isWalletConnected && walletAddress && (
+            {isWalletConnected && smartAccountAddress && (
               <>
                 {/* Balance chip */}
                 <div className="hidden items-center gap-2 sm:flex">
                   <span className="rounded-[12px] border border-border bg-surface-muted px-3 py-1.5 font-mono text-sm font-semibold tabular-nums text-foreground">
-                    ${formatUsdt(bal?.available ?? "0")}
+                    ${balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                   <span className="rounded-[12px] border border-border bg-white px-3 py-1.5 font-mono text-xs text-muted">
-                    {getFormattedAddress(walletAddress)}
+                    {getFormattedAddress(smartAccountAddress)}
                   </span>
                 </div>
                 {/* Action buttons */}
@@ -150,7 +137,7 @@ export function Header() {
                   type="button"
                   className="rounded-[12px] bg-brand px-3 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90"
                   onClick={() => setDepositOpen(true)}
-                  disabled={!relayer}
+                  disabled={!smartAccountAddress}
                 >
                   Deposit
                 </button>
@@ -254,12 +241,12 @@ export function Header() {
                 </Link>
               ) : null}
             </nav>
-            {isWalletConnected && walletAddress && (
+            {isWalletConnected && smartAccountAddress && (
               <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3">
                 <div className="flex items-center justify-between">
-                  <span className="font-mono text-xs text-muted">{getFormattedAddress(walletAddress)}</span>
+                  <span className="font-mono text-xs text-muted">{getFormattedAddress(smartAccountAddress)}</span>
                   <span className="font-mono text-sm font-semibold text-foreground">
-                    ${formatUsdt(bal?.available ?? "0")}
+                    ${balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
                 <div className="flex gap-2">
@@ -284,7 +271,7 @@ export function Header() {
         )}
       </header>
 
-      <DepositModal open={depositOpen} onClose={() => setDepositOpen(false)} relayerAddress={relayer} />
+      <DepositModal open={depositOpen} onClose={() => setDepositOpen(false)} smartAccountAddress={smartAccountAddress} />
       <WithdrawModal open={withdrawOpen} onClose={() => setWithdrawOpen(false)} />
     </>
   );

@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useAccount } from "wagmi";
 import { toast } from "sonner";
+import { useWalletContext } from "@/context/WalletContext";
 import { getDmmRebates, postDmmClaimRebate } from "@/lib/api";
 import { formatUsdt } from "@/lib/format";
 import { formatUserFacingError } from "@/lib/errors";
@@ -19,26 +19,26 @@ function formatAtomicUsdtSafe(raw: string | undefined): string {
 }
 
 export default function RebatesPage() {
-  const { address, isConnected } = useAccount();
+  const { isWalletConnected, smartAccountAddress } = useWalletContext();
   const qc = useQueryClient();
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["dmmRebates", address?.toLowerCase() ?? ""],
-    queryFn: () => getDmmRebates(address!),
-    enabled: !!address && isConnected,
+    queryKey: ["dmmRebates", smartAccountAddress?.toLowerCase() ?? ""],
+    queryFn: () => getDmmRebates(smartAccountAddress!),
+    enabled: !!smartAccountAddress && isWalletConnected,
   });
 
   const claim = useMutation({
-    mutationFn: () => postDmmClaimRebate({ wallet: address! }),
+    mutationFn: () => postDmmClaimRebate({ wallet: smartAccountAddress! }),
     onSuccess: () => {
       toast.success("Claim submitted");
-      void qc.invalidateQueries({ queryKey: ["dmmRebates", address?.toLowerCase()] });
-      void qc.invalidateQueries({ queryKey: ["balance", address?.toLowerCase()] });
+      void qc.invalidateQueries({ queryKey: ["dmmRebates", smartAccountAddress?.toLowerCase()] });
+      void qc.invalidateQueries({ queryKey: ["balance", smartAccountAddress?.toLowerCase()] });
     },
     onError: (e: Error) => toast.error(formatUserFacingError(e)),
   });
 
-  if (!isConnected) {
+  if (!isWalletConnected) {
     return (
       <div className="flex min-h-[50vh] flex-col items-center justify-center">
         <EmptyState

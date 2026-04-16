@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useAccount } from "wagmi";
 import { getMarket, getPositions, getPriceHistory, getDmmStatus } from "@/lib/api";
+import { useWalletContext } from "@/context/WalletContext";
 import { formatStrikeUsd, formatUsdt, marketDurationLabel, parseStrikeUsdNumber } from "@/lib/format";
 import { normalizePriceHistoryData } from "@/lib/priceChart";
 import { parseCompositeMarketKey } from "@/lib/marketKey";
@@ -38,7 +38,7 @@ function useEndsInCountdown(endTimeSec: number) {
 }
 
 export function MarketPageClient({ address }: { address: string }) {
-  const { address: wallet } = useAccount();
+  const { smartAccountAddress: wallet } = useWalletContext();
 
   const parsed = useMemo(() => parseCompositeMarketKey(address), [address]);
   const marketKey = parsed?.composite ?? address;

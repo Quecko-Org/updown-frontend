@@ -2,8 +2,9 @@
 
 import { useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useAccount, useSignTypedData } from "wagmi";
 import { toast } from "sonner";
+import { useWalletContext } from "@/context/WalletContext";
+import { useSessionSign } from "@/hooks/useSessionSign";
 import {
   getConfig,
   getMarket,
@@ -62,7 +63,7 @@ function InfoTip({ text }: { text: string }) {
 }
 
 export function TradeForm({ marketAddress }: { marketAddress: string }) {
-  const { address, isConnected } = useAccount();
+  const { isWalletConnected, smartAccountAddress } = useWalletContext();
   const [side, setSide] = useState<1 | 2>(1);
   const [dollars, setDollars] = useState(25);
   const [orderType, setOrderType] = useState<OrderApiType>("LIMIT");
@@ -91,13 +92,13 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
   });
 
   const { data: dmmStatus } = useQuery({
-    queryKey: ["dmmStatus", address?.toLowerCase() ?? ""],
-    queryFn: () => getDmmStatus(address!),
-    enabled: !!address && isConnected,
+    queryKey: ["dmmStatus", smartAccountAddress?.toLowerCase() ?? ""],
+    queryFn: () => getDmmStatus(smartAccountAddress!),
+    enabled: !!smartAccountAddress && isWalletConnected,
     staleTime: 60_000,
   });
 
-  const { signTypedDataAsync } = useSignTypedData();
+  const { signTypedDataAsync } = useSessionSign();
 
   const totalBps = (cfg?.platformFeeBps ?? 70) + (cfg?.makerFeeBps ?? 80);
 
@@ -141,7 +142,7 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
 
   const submit = useMutation({
     mutationFn: async () => {
-      if (!address || !cfg || !parsedKey) throw new Error("Connect wallet");
+      if (!smartAccountAddress || !cfg || !parsedKey) throw new Error("Connect wallet");
       if (!market || market.status !== "ACTIVE") throw new Error("Market not active");
       const amount = parseUsdtToAtomic(String(dollars));
       const min = parseUsdtToAtomic("5");
@@ -154,7 +155,7 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
       const priceNum = orderType === "MARKET" ? 0 : limitPrice;
 
       const msg = {
-        maker: address as `0x${string}`,
+        maker: smartAccountAddress as `0x${string}`,
         market: parsedKey.marketId,
         option: BigInt(side),
         side: 0,
@@ -169,7 +170,7 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
       const signature = await signTypedDataAsync(typed);
 
       await postOrder({
-        maker: address,
+        maker: smartAccountAddress,
         market: parsedKey.composite,
         option: side,
         side: 0,
@@ -183,8 +184,8 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
     },
     onSuccess: () => {
       toast.success("Order submitted");
-      qc.invalidateQueries({ queryKey: ["positions", address?.toLowerCase()] });
-      qc.invalidateQueries({ queryKey: ["balance", address?.toLowerCase()] });
+      qc.invalidateQueries({ queryKey: ["positions", smartAccountAddress?.toLowerCase()] });
+      qc.invalidateQueries({ queryKey: ["balance", smartAccountAddress?.toLowerCase()] });
       qc.invalidateQueries({ queryKey: ["orderbook", marketKey.toLowerCase()] });
     },
     onError: (e: Error) => toast.error(formatUserFacingError(e)),
@@ -216,7 +217,7 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
           )}
           onClick={() => {
             setSide(1);
-            if (!isConnected) scrollToConnect();
+            if (!isWalletConnected) scrollToConnect();
           }}
         >
           UP
@@ -231,7 +232,7 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
           )}
           onClick={() => {
             setSide(2);
-            if (!isConnected) scrollToConnect();
+            if (!isWalletConnected) scrollToConnect();
           }}
         >
           DOWN
@@ -311,7 +312,7 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
           Limit price (BPS): <span className="font-mono text-foreground">{limitPrice}</span>
         </p>
       )}
-      {isConnected ? (
+      {isWalletConnected ? (
         <button
           type="button"
           disabled={submit.isPending || market?.status !== "ACTIVE"}

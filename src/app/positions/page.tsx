@@ -1,7 +1,6 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useAccount } from "wagmi";
 import Link from "next/link";
 import { toast } from "sonner";
 import { getPositions, postMarketClaim } from "@/lib/api";
@@ -9,15 +8,16 @@ import { formatUsdt } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { EmptyState } from "@/components/EmptyState";
 import { marketPathFromAddress } from "@/lib/marketKey";
+import { useWalletContext } from "@/context/WalletContext";
 
 export default function PositionsPage() {
-  const { address, isConnected } = useAccount();
+  const { isWalletConnected, smartAccountAddress } = useWalletContext();
   const qc = useQueryClient();
 
   const { data, isLoading } = useQuery({
-    queryKey: ["positions", address?.toLowerCase() ?? ""],
-    queryFn: () => getPositions(address!),
-    enabled: !!address && isConnected,
+    queryKey: ["positions", smartAccountAddress?.toLowerCase() ?? ""],
+    queryFn: () => getPositions(smartAccountAddress!),
+    enabled: !!smartAccountAddress && isWalletConnected,
     refetchInterval: 20_000,
   });
 
@@ -25,13 +25,13 @@ export default function PositionsPage() {
     mutationFn: (market: string) => postMarketClaim(market),
     onSuccess: () => {
       toast.success("Claim request sent");
-      qc.invalidateQueries({ queryKey: ["positions", address?.toLowerCase()] });
-      qc.invalidateQueries({ queryKey: ["balance", address?.toLowerCase()] });
+      qc.invalidateQueries({ queryKey: ["positions", smartAccountAddress?.toLowerCase()] });
+      qc.invalidateQueries({ queryKey: ["balance", smartAccountAddress?.toLowerCase()] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
-  if (!isConnected) {
+  if (!isWalletConnected) {
     return (
       <div className="flex min-h-[50vh] flex-col items-center justify-center">
         <EmptyState

@@ -41,6 +41,7 @@ export interface WalletContextValue {
   isLoading: boolean;
   loadingStep: string;
   walletAddress: string | undefined;
+  smartAccountAddress: string;
   connectWallet: (connector: Connector) => Promise<void>;
   disconnectWallet: () => void;
   showSignModal: boolean;
@@ -265,6 +266,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     isLoading,
     loadingStep,
     walletAddress: address,
+    smartAccountAddress: smartAccount,
     connectWallet,
     disconnectWallet,
     closeSignModal,

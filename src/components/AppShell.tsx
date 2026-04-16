@@ -4,10 +4,10 @@ import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { useSetAtom } from "jotai";
-import { useAccount } from "wagmi";
 import { getConfig } from "@/lib/api";
 import { apiConfigAtom } from "@/store/atoms";
 import { useUpDownWebSocket } from "@/hooks/useUpDownWebSocket";
+import { useWalletContext } from "@/context/WalletContext";
 import { Header } from "./Header";
 import { cn } from "@/lib/cn";
 
@@ -17,7 +17,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const marketMatch = pathname?.match(/^\/market\/(.+)$/);
   const marketFromRoute = marketMatch?.[1] ? decodeURIComponent(marketMatch[1]) : null;
 
-  const { address } = useAccount();
+  const { smartAccountAddress } = useWalletContext();
   const setApiConfig = useSetAtom(apiConfigAtom);
 
   const { data: cfg } = useQuery({
@@ -31,7 +31,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [cfg, setApiConfig]);
 
   useUpDownWebSocket({
-    wallet: address ?? null,
+    wallet: smartAccountAddress || null,
     marketAddress: marketFromRoute,
     enabled: true,
   });
