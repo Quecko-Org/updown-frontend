@@ -57,9 +57,9 @@ export function Header() {
   }, []);
 
   const { data: bal } = useQuery({
-    queryKey: ["balance", smartAccount?.toLowerCase() ?? ""],
-    queryFn: () => getBalance(smartAccount),
-    enabled: !!smartAccount && isWalletConnected && sessionReady,
+    queryKey: ["balance", walletAddress?.toLowerCase() ?? ""],
+    queryFn: () => getBalance(walletAddress!),
+    enabled: !!walletAddress && isWalletConnected && sessionReady,
     refetchInterval: 15_000,
     retry: 1,
   });

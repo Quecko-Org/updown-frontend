@@ -13,7 +13,7 @@ import { marketPathFromAddress } from "@/lib/marketKey";
 import { sessionReadyAtom, userSmartAccount } from "@/store/atoms";
 
 export default function PositionsPage() {
-  const { isConnected } = useAccount();
+  const { isConnected, address: walletAddress } = useAccount();
   const smartAccount = useAtomValue(userSmartAccount);
   const sessionReady = useAtomValue(sessionReadyAtom);
   const qc = useQueryClient();
@@ -32,7 +32,7 @@ export default function PositionsPage() {
       toast.success("Claim request sent");
       const sa = smartAccount?.toLowerCase() ?? "";
       qc.invalidateQueries({ queryKey: ["positions", sa] });
-      qc.invalidateQueries({ queryKey: ["balance", sa] });
+      qc.invalidateQueries({ queryKey: ["balance", walletAddress?.toLowerCase() ?? ""] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
