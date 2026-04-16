@@ -23,7 +23,7 @@ import { createWalletClient, custom, createPublicClient, http, type PublicClient
 import { arbitrum, alchemy } from "@account-kit/infra";
 import { WalletClientSigner } from "@aa-sdk/core";
 import { createSmartWalletClient } from "@account-kit/wallet-client";
-import { getDefaultStore, useAtom } from "jotai";
+import { getDefaultStore, useAtom, useAtomValue } from "jotai";
 import { toast } from "sonner";
 import { wagmiConfig } from "@/config/wagmi";
 import {
@@ -59,6 +59,8 @@ export interface WalletContextValue {
   showSignModal: boolean;
   handleSign: () => void;
   closeSignModal: () => void;
+  /** Re-run scoped grant + backend register (e.g. after expiry or failed restore). */
+  reauthorizeSession: () => Promise<void>;
 }
 
 const WalletContext = createContext<WalletContextValue | null>(null);
@@ -72,6 +74,7 @@ export function useWalletContext(): WalletContextValue {
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [smartAccount, setSmartAccount] = useAtom(userSmartAccount);
   const [, setSmartAccountClient] = useAtom(userSmartAccountClient);
+  const smartAccountClientValue = useAtomValue(userSmartAccountClient);
   const [, setPubClient] = useAtom(userPublicClient);
   const [sessionReady, setSessionReady] = useAtom(sessionReadyAtom);
 
@@ -197,7 +200,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         return false;
       }
     },
-    [setSessionReady]
+    [setSessionReady, setLoadingStep]
   );
 
   const performSign = useCallback(
@@ -293,7 +296,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    setLoadingStep("Authorizing trading session...");
     const ok = await syncScopedSessionAndRegister({
       eoaAddress: address,
       saAddress: sa.address,
@@ -311,47 +313,74 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setIsLoading(false);
   }, [address, walletClient, performSign, createSmartAccountFn, syncScopedSessionAndRegister]);
 
+  const reauthorizeSession = useCallback(async () => {
+    if (!address || !smartAccount || !smartAccountClientValue) {
+      toast.error("Wallet or smart account not ready");
+      return;
+    }
+    setIsLoading(true);
+    const ok = await syncScopedSessionAndRegister({
+      eoaAddress: address,
+      saAddress: smartAccount,
+      saClient: smartAccountClientValue,
+      showToasts: true,
+    });
+    setLoadingStep("");
+    setIsLoading(false);
+    if (ok) toast.success("Trading session renewed");
+  }, [address, smartAccount, smartAccountClientValue, syncScopedSessionAndRegister]);
+
   const closeSignModal = useCallback(() => {
     setShowSignModal(false);
     disconnectWallet();
   }, [disconnectWallet]);
 
   useEffect(() => {
-    if (
-      address &&
-      walletClient &&
-      !smartAccount &&
-      !pendingSign.current &&
-      localStorage.getItem("sign")
-    ) {
-      void createSmartAccountFn(walletClient);
-    }
-  }, [address, walletClient, smartAccount, createSmartAccountFn]);
+    if (!address || !walletClient || !localStorage.getItem("sign")) return;
+    if (pendingSign.current) return;
 
-  useEffect(() => {
-    if (!address || !walletClient || !smartAccount) return;
-    if (!localStorage.getItem("sign")) return;
+    if (!smartAccount) {
+      void createSmartAccountFn(walletClient);
+      return;
+    }
+
+    if (!smartAccountClientValue) return;
     if (sessionReady) return;
 
     let cancelled = false;
     void (async () => {
-      const client = getDefaultStore().get(userSmartAccountClient);
-      if (!client) return;
-      const ok = await syncScopedSessionAndRegister({
-        eoaAddress: address,
-        saAddress: smartAccount,
-        saClient: client,
-        showToasts: false,
-      });
-      if (!cancelled && !ok) {
-        console.error("Session restore: register failed (toasts suppressed)");
+      setIsLoading(true);
+      setLoadingStep("Reconnecting…");
+      try {
+        const ok = await syncScopedSessionAndRegister({
+          eoaAddress: address,
+          saAddress: smartAccount,
+          saClient: smartAccountClientValue,
+          showToasts: false,
+        });
+        if (!cancelled && !ok) {
+          console.error("Session restore: register failed (toasts suppressed)");
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+          setLoadingStep("");
+        }
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [address, walletClient, smartAccount, sessionReady, syncScopedSessionAndRegister]);
+  }, [
+    address,
+    walletClient,
+    smartAccount,
+    smartAccountClientValue,
+    sessionReady,
+    createSmartAccountFn,
+    syncScopedSessionAndRegister,
+  ]);
 
   useEffect(() => {
     if (smartAccount) {
@@ -383,6 +412,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     closeSignModal,
     showSignModal,
     handleSign,
+    reauthorizeSession,
   };
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;
