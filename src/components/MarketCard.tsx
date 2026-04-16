@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import type { MarketListItem } from "@/lib/api";
+import type { ApiConfig, MarketListItem } from "@/lib/api";
+import { estimateTotalFee, formatShareCentsLabel, sharePriceBpsFromImpliedUp } from "@/lib/feeEstimate";
 import { formatStrikeUsd, marketDurationLabel, parseStrikeUsdNumber } from "@/lib/format";
 import { clipForMarketCard, type PricePoint } from "@/lib/priceChart";
 import { cn } from "@/lib/cn";
@@ -43,14 +44,18 @@ function formatUsdInt(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 }
 
+const NOTIONAL_PREVIEW = 25;
+
 export function MarketCard({
   market,
   btcPoints,
   spotUsd,
+  feeConfig,
 }: {
   market: MarketListItem;
   btcPoints: PricePoint[];
   spotUsd: number | null;
+  feeConfig?: Pick<ApiConfig, "platformFeeBps" | "makerFeeBps" | "feeModel" | "peakFeeBps"> | null;
 }) {
   const cd = useCountdownRemaining(market.endTime);
   const strikeLabel = formatStrikeUsd(market.strikePrice);
@@ -69,6 +74,25 @@ export function MarketCard({
     () => clipForMarketCard(btcPoints, market.startTime, market.endTime, nowSec, 900),
     [btcPoints, market.startTime, market.endTime, nowSec],
   );
+
+  const feePreview = useMemo(() => {
+    if (!feeConfig) return null;
+    const totalBps = feeConfig.platformFeeBps + feeConfig.makerFeeBps;
+    const shareBps = sharePriceBpsFromImpliedUp(market.upPrice, market.downPrice);
+    const { feeUsd, effectivePercentOfNotional } = estimateTotalFee(
+      NOTIONAL_PREVIEW,
+      totalBps,
+      shareBps,
+      feeConfig.feeModel,
+    );
+    const peak = feeConfig.peakFeeBps ?? totalBps;
+    return {
+      feeUsd,
+      effectivePercentOfNotional,
+      shareLabel: formatShareCentsLabel(shareBps),
+      peakPct: (peak / 100).toFixed(2),
+    };
+  }, [feeConfig, market.upPrice, market.downPrice]);
 
   const spotLine = useMemo(() => {
     if (spotUsd == null || strikeNum == null) {
@@ -128,6 +152,15 @@ export function MarketCard({
           )}
         </div>
       </div>
+      {feePreview ? (
+        <p className="mt-1.5 border-t border-border pt-1.5 text-[10px] text-muted" title={`Peak ~${feePreview.peakPct}% at 50¢`}>
+          Fee on ${NOTIONAL_PREVIEW}:{" "}
+          <span className="font-medium text-foreground">
+            ~${feePreview.feeUsd.toFixed(2)} ({feePreview.effectivePercentOfNotional.toFixed(2)}% at{" "}
+            {feePreview.shareLabel})
+          </span>
+        </p>
+      ) : null}
     </Link>
   );
 }

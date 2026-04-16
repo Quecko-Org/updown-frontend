@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { getMarkets, getPriceHistory, type MarketListItem } from "@/lib/api";
+import { getConfig, getMarkets, getPriceHistory, type ApiConfig, type MarketListItem } from "@/lib/api";
 import { MarketCard } from "@/components/MarketCard";
 import { EmptyState } from "@/components/EmptyState";
 import { normalizePriceHistoryData } from "@/lib/priceChart";
@@ -30,6 +30,21 @@ export default function HomePage() {
     queryFn: () => getPriceHistory("BTC"),
     refetchInterval: 10_000,
   });
+
+  const { data: cfg } = useQuery({
+    queryKey: ["apiConfig"],
+    queryFn: getConfig,
+    staleTime: 300_000,
+  });
+
+  const feeConfig: Pick<ApiConfig, "platformFeeBps" | "makerFeeBps" | "feeModel" | "peakFeeBps"> | null = cfg
+    ? {
+        platformFeeBps: cfg.platformFeeBps,
+        makerFeeBps: cfg.makerFeeBps,
+        feeModel: cfg.feeModel,
+        peakFeeBps: cfg.peakFeeBps,
+      }
+    : null;
 
   const btcPoints = useMemo(() => normalizePriceHistoryData(priceRaw), [priceRaw]);
   const spotUsd = useMemo(() => {
@@ -72,7 +87,7 @@ export default function HomePage() {
     <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
       {markets.map((m, i) =>
         m ? (
-          <MarketCard key={m.address} market={m} btcPoints={btcPoints} spotUsd={spotUsd} />
+          <MarketCard key={m.address} market={m} btcPoints={btcPoints} spotUsd={spotUsd} feeConfig={feeConfig} />
         ) : (
           <div
             key={`empty-${TFS[i]}`}

@@ -14,7 +14,12 @@ import {
 } from "@/lib/api";
 import { buildOrderTypedData } from "@/lib/eip712";
 import { parseUsdtToAtomic } from "@/lib/format";
-import { impliedProbabilityForSide, probabilityScaledFeePercent } from "@/lib/feeEstimate";
+import {
+  estimateTotalFee,
+  formatShareCentsLabel,
+  impliedProbabilityForSide,
+  sharePriceBpsFromOrderBookMid,
+} from "@/lib/feeEstimate";
 import { approxProfitIfSideWinsUsd } from "@/lib/payoutEstimate";
 import { parseCompositeMarketKey } from "@/lib/marketKey";
 import { cn } from "@/lib/cn";
@@ -94,9 +99,7 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
 
   const { signTypedDataAsync } = useSignTypedData();
 
-  const platformBps = cfg?.platformFeeBps ?? 70;
-  const makerBps = cfg?.makerFeeBps ?? 80;
-  const totalBps = platformBps + makerBps;
+  const totalBps = (cfg?.platformFeeBps ?? 70) + (cfg?.makerFeeBps ?? 80);
 
   const limitPrice = useMemo(() => {
     if (!market || orderType === "MARKET") return 5000;
@@ -115,9 +118,26 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
 
   const impliedP =
     market != null ? impliedProbabilityForSide(side, market.upPrice, market.downPrice) : 0.5;
-  const feeUsdDisplay = (Number(dollars) * totalBps) / 10000;
-  const scaledFeePct = probabilityScaledFeePercent(totalBps, impliedP);
-  const payoutIfWin = approxProfitIfSideWinsUsd(Number(dollars), impliedP, totalBps);
+
+  const sharePriceBps = useMemo(() => {
+    if (!market) return 5000;
+    return sharePriceBpsFromOrderBookMid(side, market.orderBook);
+  }, [market, side]);
+
+  const { feeUsd: feeUsdDisplay, effectivePercentOfNotional } = estimateTotalFee(
+    Number(dollars),
+    totalBps,
+    sharePriceBps,
+    cfg?.feeModel,
+  );
+  const shareCentsLabel = formatShareCentsLabel(sharePriceBps);
+  const peakFeeBps = cfg?.peakFeeBps ?? totalBps;
+  const peakFeePct = (peakFeeBps / 100).toFixed(2);
+
+  const payoutIfWin = approxProfitIfSideWinsUsd(Number(dollars), impliedP, totalBps, {
+    feeModel: cfg?.feeModel,
+    sharePriceBps,
+  });
 
   const submit = useMutation({
     mutationFn: async () => {
@@ -268,14 +288,17 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
         <span className="font-normal text-muted">(est., after fees)</span>
       </p>
       <div className="mt-1.5 space-y-1 text-[10px] text-muted">
-        <p>
-          Est. fee on this size:{" "}
-          <span className="font-medium text-foreground">~${feeUsdDisplay.toFixed(2)}</span> (
-          {platformBps + makerBps} bps on notional).{" "}
-          <span className="text-foreground">
-            About {scaledFeePct.toFixed(2)}% fee at current prices
+        <p className="text-foreground">
+          Fee:{" "}
+          <span className="font-semibold">
+            ${feeUsdDisplay.toFixed(2)} ({effectivePercentOfNotional.toFixed(2)}% at {shareCentsLabel})
           </span>{" "}
-          (~{(totalBps / 100).toFixed(2)}% near 50¢).
+          <InfoTip
+            text={`Peak fee: ${peakFeePct}% at 50¢ (combined platform + maker bps). Fees scale down toward 0¢ and 100¢ — same probability weight as Polymarket.`}
+          />
+        </p>
+        <p className="text-muted">
+          Peak fee {(peakFeeBps / 100).toFixed(2)}% at 50¢ — lower when the book is far from 50/50.
         </p>
         {rebateBps != null && rebateBps > 0 && (
           <p className="font-medium text-success-dark">
