@@ -1,6 +1,7 @@
 "use client";
 
 import { QRCodeSVG } from "qrcode.react";
+import { toast } from "sonner";
 import { cn } from "@/lib/cn";
 
 type Props = {
@@ -35,7 +36,10 @@ export function DepositModal({ open, onClose, depositAddress }: Props) {
         <button
           type="button"
           className="btn-primary mt-6 w-full"
-          onClick={() => navigator.clipboard.writeText(depositAddress)}
+          onClick={() => {
+            navigator.clipboard.writeText(depositAddress);
+            toast.success("Address copied!");
+          }}
         >
           Copy address
         </button>

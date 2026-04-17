@@ -72,7 +72,10 @@ export function clipRecentWindow(points: PricePoint[], endAtSec: number, windowS
   return points.filter((pt) => pt.t >= start && pt.t <= endAtSec);
 }
 
-/** Intersection: market window ∩ recent window (for card mini chart). */
+/**
+ * Card mini sparkline: trailing `recentWindowSec` ending at `nowSec`.
+ * Params marketStartSec/marketEndSec kept for caller compatibility; sparkline shows trailing window regardless of market boundaries.
+ */
 export function clipForMarketCard(
   points: PricePoint[],
   marketStartSec: number,
@@ -80,8 +83,7 @@ export function clipForMarketCard(
   nowSec: number,
   recentWindowSec: number,
 ): PricePoint[] {
-  const recentStart = nowSec - recentWindowSec;
-  const lo = Math.max(marketStartSec, recentStart);
-  const hi = Math.min(marketEndSec, nowSec);
+  const lo = nowSec - recentWindowSec;
+  const hi = nowSec;
   return points.filter((pt) => pt.t >= lo && pt.t <= hi);
 }
