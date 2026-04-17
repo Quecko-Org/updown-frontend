@@ -1,14 +1,13 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { ApiConfig, MarketListItem } from "@/lib/api";
 import { estimateTotalFee, formatShareCentsLabel, sharePriceBpsFromImpliedUp } from "@/lib/feeEstimate";
 import { formatStrikeUsd, marketDurationLabel, parseStrikeUsdNumber } from "@/lib/format";
-import { clipForMarketCard, type PricePoint } from "@/lib/priceChart";
+import type { PricePoint } from "@/lib/priceChart";
 import { cn } from "@/lib/cn";
 import { marketPathFromAddress } from "@/lib/marketKey";
-import { MiniPriceSparkline } from "@/components/MiniPriceSparkline";
 
 function useCountdownRemaining(endTime: number) {
   const [left, setLeft] = useState(() => Math.max(0, endTime - Math.floor(Date.now() / 1000)));
@@ -48,32 +47,25 @@ const NOTIONAL_PREVIEW = 25;
 
 export function MarketCard({
   market,
-  btcPoints,
+  btcPoints = [],
   spotUsd,
   feeConfig,
 }: {
   market: MarketListItem;
-  btcPoints: PricePoint[];
+  /** Optional; reserved for callers / future sparkline. Spot line uses `spotUsd`. */
+  btcPoints?: PricePoint[];
   spotUsd: number | null;
   feeConfig?: Pick<ApiConfig, "platformFeeBps" | "makerFeeBps" | "feeModel" | "peakFeeBps"> | null;
 }) {
+  void btcPoints;
+  const router = useRouter();
+  const marketHref = marketPathFromAddress(market.address);
   const cd = useCountdownRemaining(market.endTime);
   const strikeLabel = formatStrikeUsd(market.strikePrice);
   const strikeNum = parseStrikeUsdNumber(market.strikePrice);
   const quotes = bestFromList(market);
   const pairLabel = (market.pairSymbol ?? market.pairId).replace("-", " / ");
   const title = `${pairLabel} · ${marketDurationLabel(market.duration)}`;
-
-  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
-  useEffect(() => {
-    const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 15_000);
-    return () => clearInterval(id);
-  }, []);
-
-  const miniPoints = useMemo(
-    () => clipForMarketCard(btcPoints, market.startTime, market.endTime, nowSec, 900),
-    [btcPoints, market.startTime, market.endTime, nowSec],
-  );
 
   const feePreview = useMemo(() => {
     if (!feeConfig) return null;
@@ -109,12 +101,23 @@ export function MarketCard({
     };
   }, [spotUsd, strikeNum]);
 
+  const resolvedOrClaimed =
+    (market.status === "RESOLVED" || market.status === "CLAIMED") && market.winner != null && market.winner !== 0;
+
   return (
-    <Link
-      href={marketPathFromAddress(market.address)}
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => router.push(marketHref)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          router.push(marketHref);
+        }
+      }}
       className={cn(
-        "panel-dense group block min-h-0 transition-colors hover:border-brand/30",
-        "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+        "panel-dense group min-h-0 cursor-pointer transition-colors hover:border-brand/30",
+        "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand",
       )}
     >
       <div className="flex items-start justify-between gap-2">
@@ -122,7 +125,7 @@ export function MarketCard({
         <span
           className={cn(
             "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide",
-            market.status === "ACTIVE" ? "bg-success-soft text-success-dark" : "bg-surface-muted text-muted"
+            market.status === "ACTIVE" ? "bg-success-soft text-success-dark" : "bg-surface-muted text-muted",
           )}
         >
           {market.status}
@@ -132,9 +135,47 @@ export function MarketCard({
         Price to Beat: <span className="tabular-nums">{strikeLabel}</span>
       </p>
       <p className={cn("mt-1 text-sm font-semibold tabular-nums", spotLine.className)}>{spotLine.text}</p>
-      <div className="mt-2">
-        <MiniPriceSparkline points={miniPoints} strikeUsd={strikeNum} />
-      </div>
+      {market.status === "ACTIVE" ? (
+        <div className="mt-2 flex gap-2">
+          <button
+            type="button"
+            className="flex-1 rounded-lg bg-success/10 py-2 text-center text-sm font-bold text-success transition-colors hover:bg-success/20"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              router.push(`${marketHref}?side=1&amount=25`);
+            }}
+          >
+            ▲ UP
+          </button>
+          <button
+            type="button"
+            className="flex-1 rounded-lg bg-down/10 py-2 text-center text-sm font-bold text-down transition-colors hover:bg-down/20"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              router.push(`${marketHref}?side=2&amount=25`);
+            }}
+          >
+            ▼ DOWN
+          </button>
+        </div>
+      ) : null}
+      {resolvedOrClaimed ? (
+        <div
+          className={cn(
+            "mt-2 rounded-lg py-2 text-center text-sm font-bold",
+            market.winner === 1 ? "bg-success/10 text-success" : "bg-down/10 text-down",
+          )}
+        >
+          {market.winner === 1 ? "▲ UP Won" : "▼ DOWN Won"}
+        </div>
+      ) : null}
+      {market.status === "TRADING_ENDED" ? (
+        <div className="mt-2 rounded-lg bg-surface-muted py-2 text-center text-sm font-semibold text-muted">
+          Resolving…
+        </div>
+      ) : null}
       <div className="mt-2 flex items-end justify-between gap-2 border-t border-border pt-2 text-xs">
         <div>
           <span className="font-mono font-bold tabular-nums text-foreground">{cd}</span>
@@ -153,7 +194,10 @@ export function MarketCard({
         </div>
       </div>
       {feePreview ? (
-        <p className="mt-1.5 border-t border-border pt-1.5 text-[10px] text-muted" title={`Peak ~${feePreview.peakPct}% at 50¢`}>
+        <p
+          className="mt-1.5 border-t border-border pt-1.5 text-[10px] text-muted"
+          title={`Peak ~${feePreview.peakPct}% at 50¢`}
+        >
           Fee on ${NOTIONAL_PREVIEW}:{" "}
           <span className="font-medium text-foreground">
             ~${feePreview.feeUsd.toFixed(2)} ({feePreview.effectivePercentOfNotional.toFixed(2)}% at{" "}
@@ -161,6 +205,6 @@ export function MarketCard({
           </span>
         </p>
       ) : null}
-    </Link>
+    </div>
   );
 }
