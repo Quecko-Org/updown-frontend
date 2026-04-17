@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAtomValue } from "jotai";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getMarkets, getPriceHistory, type ApiConfig, type MarketListItem } from "@/lib/api";
 import { MarketCard } from "@/components/MarketCard";
 import { normalizePriceHistoryData, type PricePoint } from "@/lib/priceChart";
 import { apiConfigAtom } from "@/store/atoms";
+import { cn } from "@/lib/cn";
 
 const PAIRS = ["BTC-USD", "ETH-USD"] as const;
 const TFS = [300, 900, 3600] as const;
@@ -29,65 +30,89 @@ function splitMarkets(list: MarketListItem[] | undefined) {
 
 type FeeConfig = Pick<ApiConfig, "platformFeeBps" | "makerFeeBps" | "feeModel" | "peakFeeBps"> | null;
 
-function TimeframeRow({
-  pair,
+function TimeframeRowWithToggle({
   tf,
-  active,
-  history,
-  pricePoints,
-  spotUsd,
+  btcData,
+  ethData,
+  btcPoints,
+  ethPoints,
+  btcSpot,
+  ethSpot,
   feeConfig,
-  loading,
+  btcLoading,
+  ethLoading,
 }: {
-  pair: (typeof PAIRS)[number];
   tf: number;
-  active: MarketListItem | null;
-  history: MarketListItem[];
-  pricePoints: PricePoint[];
-  spotUsd: number | null;
+  btcData: { active: MarketListItem | null; history: MarketListItem[] };
+  ethData: { active: MarketListItem | null; history: MarketListItem[] };
+  btcPoints: PricePoint[];
+  ethPoints: PricePoint[];
+  btcSpot: number | null;
+  ethSpot: number | null;
   feeConfig: FeeConfig;
-  loading: boolean;
+  btcLoading: boolean;
+  ethLoading: boolean;
 }) {
-  const pairLabel = pair.replace("-", " / ");
-  const label = `${pairLabel} · ${tfLabel(tf)}`;
+  const [selectedPair, setSelectedPair] = useState<"BTC-USD" | "ETH-USD">("BTC-USD");
 
-  if (loading) {
-    return (
-      <div>
-        <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-muted">{label}</h2>
-        <div className="h-[200px] animate-pulse rounded-lg border border-border bg-surface-muted/30" />
-      </div>
-    );
-  }
+  const data = selectedPair === "BTC-USD" ? btcData : ethData;
+  const pricePoints = selectedPair === "BTC-USD" ? btcPoints : ethPoints;
+  const spot = selectedPair === "BTC-USD" ? btcSpot : ethSpot;
+  const loading = selectedPair === "BTC-USD" ? btcLoading : ethLoading;
+  const pairShort = selectedPair === "BTC-USD" ? "BTC" : "ETH";
 
-  const cards = [active, ...history].filter(Boolean) as MarketListItem[];
+  const cards = [data.active, ...data.history].filter(Boolean) as MarketListItem[];
   const visible = cards.slice(0, MAX_CARDS_PER_ROW);
-
-  if (visible.length === 0) {
-    return (
-      <div>
-        <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-muted">{label}</h2>
-        <p className="text-xs text-muted">No markets</p>
-      </div>
-    );
-  }
 
   return (
     <div>
-      <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-muted">{label}</h2>
-      <div className="flex gap-3 overflow-x-auto pb-2">
-        {visible.map((m) => (
-          <div key={m.address} className="w-[300px] shrink-0">
-            <MarketCard market={m} btcPoints={pricePoints} spotUsd={spotUsd} feeConfig={feeConfig} />
-          </div>
-        ))}
+      <div className="mb-2 flex items-center gap-3">
+        <h2 className="text-sm font-bold uppercase tracking-wide text-muted">{tfLabel(tf)}</h2>
+        <div className="flex rounded-md border border-border p-0.5">
+          <button
+            type="button"
+            className={cn(
+              "rounded px-2 py-0.5 text-xs font-semibold transition-colors",
+              selectedPair === "BTC-USD" ? "bg-brand text-white" : "text-muted hover:text-foreground",
+            )}
+            onClick={() => setSelectedPair("BTC-USD")}
+          >
+            BTC
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "rounded px-2 py-0.5 text-xs font-semibold transition-colors",
+              selectedPair === "ETH-USD" ? "bg-brand text-white" : "text-muted hover:text-foreground",
+            )}
+            onClick={() => setSelectedPair("ETH-USD")}
+          >
+            ETH
+          </button>
+        </div>
       </div>
+      {loading ? (
+        <div className="h-[200px] animate-pulse rounded-lg border border-border bg-surface-muted/30" />
+      ) : visible.length === 0 ? (
+        <p className="text-xs text-muted">
+          No {pairShort} markets for {tfLabel(tf)}
+        </p>
+      ) : (
+        <div className="flex gap-3 overflow-x-auto pb-2">
+          {visible.map((m) => (
+            <div key={m.address} className="w-[300px] shrink-0">
+              <MarketCard market={m} btcPoints={pricePoints} spotUsd={spot} feeConfig={feeConfig} />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 export default function HomePage() {
   const cfg = useAtomValue(apiConfigAtom);
+  const qc = useQueryClient();
 
   const marketQueries = useQueries({
     queries: PAIRS.flatMap((pair) =>
@@ -140,31 +165,53 @@ export default function HomePage() {
     return p > 0 ? p : null;
   }, [ethPoints]);
 
+  const activeEndTimes = useMemo(() => {
+    const times: number[] = [];
+    for (let i = 0; i < marketQueries.length; i++) {
+      const { active } = splitMarkets(marketQueries[i]?.data);
+      if (active) times.push(active.endTime);
+    }
+    return times;
+  }, [marketQueries]);
+
+  useEffect(() => {
+    if (activeEndTimes.length === 0) return;
+    const now = Math.floor(Date.now() / 1000);
+    const timers = activeEndTimes
+      .map((end) => end - now)
+      .filter((left) => left > 0 && left < 7200)
+      .map((left) =>
+        setTimeout(() => {
+          void qc.invalidateQueries({ queryKey: ["markets"] });
+        }, (left + 2) * 1000),
+      );
+
+    return () => timers.forEach(clearTimeout);
+  }, [activeEndTimes, qc]);
+
   return (
     <div className="space-y-6">
-      {PAIRS.map((pair, pi) =>
-        TFS.map((tf, ti) => {
-          const qIdx = pi * TFS.length + ti;
-          const { active, history } = splitMarkets(marketQueries[qIdx]?.data);
-          const pricePoints = pair === "BTC-USD" ? btcPoints : ethPoints;
-          const spot = pair === "BTC-USD" ? btcSpot : ethSpot;
-          const loading = marketQueries[qIdx]?.isPending === true && marketQueries[qIdx]?.data === undefined;
-
-          return (
-            <TimeframeRow
-              key={`${pair}-${tf}`}
-              pair={pair}
-              tf={tf}
-              active={active}
-              history={history}
-              pricePoints={pricePoints}
-              spotUsd={spot}
-              feeConfig={feeConfig}
-              loading={loading}
-            />
-          );
-        }),
-      )}
+      {TFS.map((tf, ti) => (
+        <TimeframeRowWithToggle
+          key={tf}
+          tf={tf}
+          btcData={splitMarkets(marketQueries[0 * TFS.length + ti]?.data)}
+          ethData={splitMarkets(marketQueries[1 * TFS.length + ti]?.data)}
+          btcPoints={btcPoints}
+          ethPoints={ethPoints}
+          btcSpot={btcSpot}
+          ethSpot={ethSpot}
+          feeConfig={feeConfig}
+          btcLoading={
+            marketQueries[0 * TFS.length + ti]?.isPending === true &&
+            marketQueries[0 * TFS.length + ti]?.data === undefined
+          }
+          ethLoading={
+            marketQueries[1 * TFS.length + ti]?.isPending === true &&
+            marketQueries[1 * TFS.length + ti]?.data === undefined
+          }
+        />
+      ))}
     </div>
   );
 }
