@@ -26,6 +26,7 @@ export default function HomePage() {
       queryKey: ["markets", tf, BTC],
       queryFn: () => getMarkets(tf, BTC),
       staleTime: 30_000,
+      refetchInterval: 60_000,
     })),
   });
 
