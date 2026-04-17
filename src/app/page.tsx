@@ -5,40 +5,118 @@ import { useAtomValue } from "jotai";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { getMarkets, getPriceHistory, type ApiConfig, type MarketListItem } from "@/lib/api";
 import { MarketCard } from "@/components/MarketCard";
-import { EmptyState } from "@/components/EmptyState";
-import { normalizePriceHistoryData } from "@/lib/priceChart";
+import { normalizePriceHistoryData, type PricePoint } from "@/lib/priceChart";
 import { apiConfigAtom } from "@/store/atoms";
 
-const BTC = "BTC-USD" as const;
+const PAIRS = ["BTC-USD", "ETH-USD"] as const;
 const TFS = [300, 900, 3600] as const;
 
-function pickPrimaryMarket(list: MarketListItem[] | undefined): MarketListItem | null {
-  if (!list?.length) return null;
-  const active = list.find((m) => m.status === "ACTIVE");
-  return active ?? list[0] ?? null;
+const MAX_CARDS_PER_ROW = 20;
+
+function tfLabel(tf: number) {
+  if (tf === 300) return "5 min";
+  if (tf === 900) return "15 min";
+  return "1 hour";
+}
+
+function splitMarkets(list: MarketListItem[] | undefined) {
+  if (!list?.length) return { active: null as MarketListItem | null, history: [] as MarketListItem[] };
+  const sorted = [...list].sort((a, b) => b.endTime - a.endTime);
+  const active = sorted.find((m) => m.status === "ACTIVE") ?? null;
+  const history = sorted.filter((m) => m.status !== "ACTIVE");
+  return { active, history };
+}
+
+type FeeConfig = Pick<ApiConfig, "platformFeeBps" | "makerFeeBps" | "feeModel" | "peakFeeBps"> | null;
+
+function TimeframeRow({
+  pair,
+  tf,
+  active,
+  history,
+  pricePoints,
+  spotUsd,
+  feeConfig,
+  loading,
+}: {
+  pair: (typeof PAIRS)[number];
+  tf: number;
+  active: MarketListItem | null;
+  history: MarketListItem[];
+  pricePoints: PricePoint[];
+  spotUsd: number | null;
+  feeConfig: FeeConfig;
+  loading: boolean;
+}) {
+  const pairLabel = pair.replace("-", " / ");
+  const label = `${pairLabel} · ${tfLabel(tf)}`;
+
+  if (loading) {
+    return (
+      <div>
+        <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-muted">{label}</h2>
+        <div className="h-[200px] animate-pulse rounded-lg border border-border bg-surface-muted/30" />
+      </div>
+    );
+  }
+
+  const cards = [active, ...history].filter(Boolean) as MarketListItem[];
+  const visible = cards.slice(0, MAX_CARDS_PER_ROW);
+
+  if (visible.length === 0) {
+    return (
+      <div>
+        <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-muted">{label}</h2>
+        <p className="text-xs text-muted">No markets</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-muted">{label}</h2>
+      <div className="flex gap-3 overflow-x-auto pb-2">
+        {visible.map((m) => (
+          <div key={m.address} className="w-[300px] shrink-0">
+            <MarketCard market={m} btcPoints={pricePoints} spotUsd={spotUsd} feeConfig={feeConfig} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export default function HomePage() {
   const cfg = useAtomValue(apiConfigAtom);
 
-  const results = useQueries({
-    queries: TFS.map((tf) => ({
-      queryKey: ["markets", tf, BTC],
-      queryFn: () => getMarkets(tf, BTC),
-      staleTime: 30_000,
-      refetchInterval: 60_000,
-    })),
+  const marketQueries = useQueries({
+    queries: PAIRS.flatMap((pair) =>
+      TFS.map((tf) => ({
+        queryKey: ["markets", tf, pair],
+        queryFn: () => getMarkets(tf, pair),
+        staleTime: 30_000,
+        refetchInterval: 60_000,
+      })),
+    ),
   });
 
-  const { data: priceRaw } = useQuery({
+  const { data: btcPriceRaw } = useQuery({
     queryKey: ["priceHistory", "BTC"],
     queryFn: () => getPriceHistory("BTC"),
     refetchInterval: 30_000,
     retry: 2,
-    retryDelay: (attempt) => Math.min(5000, 1000 * 2 ** attempt),
+    retryDelay: (attempt: number) => Math.min(5000, 1000 * 2 ** attempt),
   });
 
-  const feeConfig: Pick<ApiConfig, "platformFeeBps" | "makerFeeBps" | "feeModel" | "peakFeeBps"> | null = cfg
+  const { data: ethPriceRaw } = useQuery({
+    queryKey: ["priceHistory", "ETH"],
+    queryFn: () => getPriceHistory("ETH"),
+    refetchInterval: 30_000,
+    retry: 2,
+    retryDelay: (attempt: number) => Math.min(5000, 1000 * 2 ** attempt),
+  });
+
+  const feeConfig: FeeConfig = cfg
     ? {
         platformFeeBps: cfg.platformFeeBps,
         makerFeeBps: cfg.makerFeeBps,
@@ -47,56 +125,45 @@ export default function HomePage() {
       }
     : null;
 
-  const btcPoints = useMemo(() => normalizePriceHistoryData(priceRaw), [priceRaw]);
-  const spotUsd = useMemo(() => {
+  const btcPoints = useMemo(() => normalizePriceHistoryData(btcPriceRaw), [btcPriceRaw]);
+  const ethPoints = useMemo(() => normalizePriceHistoryData(ethPriceRaw), [ethPriceRaw]);
+
+  const btcSpot = useMemo(() => {
     if (btcPoints.length === 0) return null;
     const p = btcPoints[btcPoints.length - 1]!.p;
     return p > 0 ? p : null;
   }, [btcPoints]);
 
-  const markets = useMemo(
-    () => TFS.map((_, i) => pickPrimaryMarket(results[i]?.data)),
-    [results],
-  );
-
-  const loadingMarkets = results.some((r) => r.isPending && r.data === undefined);
-
-  if (loadingMarkets) {
-    return (
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-        {[0, 1, 2].map((i) => (
-          <div
-            key={i}
-            className="h-[280px] animate-pulse rounded-lg border border-border bg-surface-muted/30"
-          />
-        ))}
-      </div>
-    );
-  }
-
-  if (markets.every((m) => m == null)) {
-    return (
-      <EmptyState
-        icon="chart"
-        title="No BTC markets"
-        subtitle="No markets returned for 5 min, 15 min, or 1 hour. Check the API or cycler."
-      />
-    );
-  }
+  const ethSpot = useMemo(() => {
+    if (ethPoints.length === 0) return null;
+    const p = ethPoints[ethPoints.length - 1]!.p;
+    return p > 0 ? p : null;
+  }, [ethPoints]);
 
   return (
-    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-      {markets.map((m, i) =>
-        m ? (
-          <MarketCard key={m.address} market={m} btcPoints={btcPoints} spotUsd={spotUsd} feeConfig={feeConfig} />
-        ) : (
-          <div
-            key={`empty-${TFS[i]}`}
-            className="panel-dense flex min-h-[200px] items-center justify-center text-center text-xs text-muted"
-          >
-            No {TFS[i] === 300 ? "5 min" : TFS[i] === 900 ? "15 min" : "1 hour"} market
-          </div>
-        ),
+    <div className="space-y-6">
+      {PAIRS.map((pair, pi) =>
+        TFS.map((tf, ti) => {
+          const qIdx = pi * TFS.length + ti;
+          const { active, history } = splitMarkets(marketQueries[qIdx]?.data);
+          const pricePoints = pair === "BTC-USD" ? btcPoints : ethPoints;
+          const spot = pair === "BTC-USD" ? btcSpot : ethSpot;
+          const loading = marketQueries[qIdx]?.isPending === true && marketQueries[qIdx]?.data === undefined;
+
+          return (
+            <TimeframeRow
+              key={`${pair}-${tf}`}
+              pair={pair}
+              tf={tf}
+              active={active}
+              history={history}
+              pricePoints={pricePoints}
+              spotUsd={spot}
+              feeConfig={feeConfig}
+              loading={loading}
+            />
+          );
+        }),
       )}
     </div>
   );

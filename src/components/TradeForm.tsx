@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { useAccount, useSignTypedData } from "wagmi";
@@ -63,16 +64,34 @@ function InfoTip({ text }: { text: string }) {
   );
 }
 
-export function TradeForm({ marketAddress }: { marketAddress: string }) {
+function TradeFormInner({ marketAddress }: { marketAddress: string }) {
+  const searchParams = useSearchParams();
   const { address, isConnected } = useAccount();
   const smartAccount = useAtomValue(userSmartAccount);
   const sessionReady = useAtomValue(sessionReadyAtom);
   const apiConfig = useAtomValue(apiConfigAtom);
   const [side, setSide] = useState<1 | 2>(1);
   const [dollars, setDollars] = useState(25);
+  const [orderSide, setOrderSide] = useState<0 | 1>(0);
   const [orderType, setOrderType] = useState<OrderApiType>("LIMIT");
   const qc = useQueryClient();
   const connectSectionRef = useRef<HTMLDivElement>(null);
+  const initializedRef = useRef(false);
+
+  useEffect(() => {
+    if (initializedRef.current) return;
+    initializedRef.current = true;
+
+    const sideParam = searchParams.get("side");
+    if (sideParam === "1") setSide(1);
+    else if (sideParam === "2") setSide(2);
+
+    const amountParam = searchParams.get("amount");
+    if (amountParam) {
+      const n = parseInt(amountParam, 10);
+      if (n >= 5 && n <= 500) setDollars(n);
+    }
+  }, [searchParams]);
 
   function scrollToConnect() {
     connectSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -162,7 +181,7 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
         maker: address as `0x${string}`,
         market: parsedKey.marketId,
         option: BigInt(side),
-        side: 0,
+        side: orderSide,
         type: typeNum,
         price: BigInt(priceNum),
         amount,
@@ -177,7 +196,7 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
         maker: address,
         market: parsedKey.composite,
         option: side,
-        side: 0,
+        side: orderSide,
         type: typeNum,
         price: orderType === "MARKET" ? 0 : priceNum,
         amount: amount.toString(),
@@ -211,6 +230,28 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
   return (
     <div className="panel-dense px-3 py-3">
       <h3 className="text-xs font-bold uppercase tracking-wide text-muted">Trade</h3>
+      <div className="mt-2 flex rounded-lg border border-border p-0.5">
+        <button
+          type="button"
+          className={cn(
+            "flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
+            orderSide === 0 ? "bg-brand text-white" : "text-muted hover:text-foreground",
+          )}
+          onClick={() => setOrderSide(0)}
+        >
+          Buy
+        </button>
+        <button
+          type="button"
+          className={cn(
+            "flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
+            orderSide === 1 ? "bg-brand text-white" : "text-muted hover:text-foreground",
+          )}
+          onClick={() => setOrderSide(1)}
+        >
+          Sell
+        </button>
+      </div>
       <div className="mt-2 flex gap-1.5">
         <button
           type="button"
@@ -218,7 +259,7 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
             "flex-1 rounded-[10px] py-2.5 text-sm font-semibold transition-colors",
             side === 1
               ? "bg-success text-white shadow-sm"
-              : "bg-surface-muted text-foreground hover:bg-success-soft"
+              : "bg-surface-muted text-foreground hover:bg-success-soft",
           )}
           onClick={() => {
             setSide(1);
@@ -233,7 +274,7 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
             "flex-1 rounded-[10px] py-2.5 text-sm font-semibold transition-colors",
             side === 2
               ? "bg-down text-white shadow-sm"
-              : "bg-surface-muted text-foreground hover:bg-down-soft"
+              : "bg-surface-muted text-foreground hover:bg-down-soft",
           )}
           onClick={() => {
             setSide(2);
@@ -253,7 +294,7 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
               title={ot.tooltip}
               className={cn(
                 "inline-flex items-center rounded-[12px] px-3 py-2 text-xs font-semibold transition-colors",
-                orderType === ot.id ? "bg-brand-subtle text-brand" : "text-muted hover:bg-surface-muted"
+                orderType === ot.id ? "bg-brand-subtle text-brand" : "text-muted hover:bg-surface-muted",
               )}
               onClick={() => setOrderType(ot.id)}
             >
@@ -325,7 +366,9 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
           className="btn-primary mt-3 w-full disabled:opacity-50"
           onClick={() => submit.mutate()}
         >
-          {submit.isPending ? "Signing…" : `Buy ${side === 1 ? "UP" : "DOWN"}`}
+          {submit.isPending
+            ? "Signing…"
+            : `${orderSide === 0 ? "Buy" : "Sell"} ${side === 1 ? "UP" : "DOWN"}`}
         </button>
       ) : (
         <div
@@ -340,5 +383,17 @@ export function TradeForm({ marketAddress }: { marketAddress: string }) {
         </div>
       )}
     </div>
+  );
+}
+
+export function TradeForm({ marketAddress }: { marketAddress: string }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="panel-dense px-3 py-6 text-center text-xs text-muted">Loading…</div>
+      }
+    >
+      <TradeFormInner marketAddress={marketAddress} />
+    </Suspense>
   );
 }
