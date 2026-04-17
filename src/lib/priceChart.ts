@@ -33,10 +33,12 @@ function parsePrice(o: Record<string, unknown>): number | null {
 
 function rowToPoint(row: unknown): PricePoint | null {
   if (Array.isArray(row) && row.length >= 2) {
-    const t = Number(row[0]);
+    let t = Number(row[0]);
     const p = Number(row[1]);
-    if (Number.isFinite(t) && Number.isFinite(p) && p > 0) return { t, p };
-    return null;
+    if (!Number.isFinite(t) || !Number.isFinite(p) || p <= 0) return null;
+    // API returns ms timestamps (e.g. 1776410340000) — normalize to seconds
+    if (t > 1e12) t = t / 1000;
+    return { t, p };
   }
   if (row && typeof row === "object") {
     const o = row as Record<string, unknown>;

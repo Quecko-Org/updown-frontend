@@ -8,8 +8,11 @@ import { useAccount } from "wagmi";
 import { getConfig } from "@/lib/api";
 import { apiConfigAtom } from "@/store/atoms";
 import { useUpDownWebSocket } from "@/hooks/useUpDownWebSocket";
+import { useLivePriceFeed } from "@/hooks/useLivePriceFeed";
 import { Header } from "./Header";
 import { cn } from "@/lib/cn";
+
+const LIVE_SYMBOLS = ["BTC", "ETH"];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -35,6 +38,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     marketAddress: marketFromRoute,
     enabled: true,
   });
+
+  // Binance WebSocket for real-time BTC/ETH prices → updates chart cache every 1s
+  useLivePriceFeed(LIVE_SYMBOLS);
 
   return (
     <div className="min-h-screen bg-background">
