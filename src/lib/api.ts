@@ -73,6 +73,8 @@ export type MarketListItem = {
   upPrice: string;
   downPrice: string;
   strikePrice?: string;
+  /** Chainlink settlement at resolution (resolved/claimed); same scale as strikePrice. */
+  settlementPrice?: string;
   volume: string;
 };
 

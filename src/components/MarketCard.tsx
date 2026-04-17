@@ -52,7 +52,7 @@ export function MarketCard({
   feeConfig,
 }: {
   market: MarketListItem;
-  /** Optional; reserved for callers / future sparkline. Spot line uses `spotUsd`. */
+  /** Optional; reserved for callers / future sparkline. Active cards use live `spotUsd`. */
   btcPoints?: PricePoint[];
   spotUsd: number | null;
   feeConfig?: Pick<ApiConfig, "platformFeeBps" | "makerFeeBps" | "feeModel" | "peakFeeBps"> | null;
@@ -87,19 +87,28 @@ export function MarketCard({
   }, [feeConfig, market.upPrice, market.downPrice]);
 
   const spotLine = useMemo(() => {
-    if (spotUsd == null || strikeNum == null) {
+    const isResolved = market.status === "RESOLVED" || market.status === "CLAIMED";
+
+    let displayPrice: number | null = null;
+    if (isResolved && market.settlementPrice) {
+      displayPrice = parseStrikeUsdNumber(market.settlementPrice);
+    } else {
+      displayPrice = spotUsd;
+    }
+
+    if (displayPrice == null || strikeNum == null) {
       return { text: "—", className: "text-muted" };
     }
-    const diff = spotUsd - strikeNum;
+    const diff = displayPrice - strikeNum;
     const pct = strikeNum !== 0 ? (diff / strikeNum) * 100 : 0;
     const up = diff >= 0;
     const arrow = up ? "▲" : "▼";
     const sign = diff >= 0 ? "+" : "";
     return {
-      text: `${formatUsdInt(spotUsd)} ${arrow} ${sign}${formatUsdInt(Math.abs(diff))} (${sign}${pct.toFixed(2)}%)`,
+      text: `${formatUsdInt(displayPrice)} ${arrow} ${sign}${formatUsdInt(Math.abs(diff))} (${sign}${pct.toFixed(2)}%)`,
       className: up ? "text-success" : "text-down",
     };
-  }, [spotUsd, strikeNum]);
+  }, [spotUsd, strikeNum, market.status, market.settlementPrice]);
 
   const resolvedOrClaimed =
     (market.status === "RESOLVED" || market.status === "CLAIMED") && market.winner != null && market.winner !== 0;
@@ -116,8 +125,11 @@ export function MarketCard({
         }
       }}
       className={cn(
-        "panel-dense group min-h-0 cursor-pointer transition-colors hover:border-brand/30",
+        "panel-dense group min-h-0 cursor-pointer transition-colors",
         "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand",
+        market.status === "ACTIVE"
+          ? "border-2 border-brand/40 shadow-sm hover:border-brand/60"
+          : "border border-border opacity-70 hover:opacity-90",
       )}
     >
       <div className="flex items-start justify-between gap-2">
@@ -134,7 +146,10 @@ export function MarketCard({
       <p className="mt-2 text-sm font-semibold text-foreground">
         Price to Beat: <span className="tabular-nums">{strikeLabel}</span>
       </p>
-      <p className={cn("mt-1 text-sm font-semibold tabular-nums", spotLine.className)}>{spotLine.text}</p>
+      <p className={cn("mt-1 text-sm font-semibold tabular-nums", spotLine.className)}>
+        {market.status === "RESOLVED" || market.status === "CLAIMED" ? "Settled: " : ""}
+        {spotLine.text}
+      </p>
       {market.status === "ACTIVE" ? (
         <div className="mt-2 flex gap-2">
           <button
@@ -178,8 +193,14 @@ export function MarketCard({
       ) : null}
       <div className="mt-2 flex items-end justify-between gap-2 border-t border-border pt-2 text-xs">
         <div>
-          <span className="font-mono font-bold tabular-nums text-foreground">{cd}</span>
-          <span className="text-muted"> remaining</span>
+          {market.status === "ACTIVE" ? (
+            <>
+              <span className="font-mono font-bold tabular-nums text-foreground">{cd}</span>
+              <span className="text-muted"> remaining</span>
+            </>
+          ) : (
+            <span className="text-xs text-muted">Ended</span>
+          )}
         </div>
         <div className="text-right">
           {quotes.mode === "empty" ? (
