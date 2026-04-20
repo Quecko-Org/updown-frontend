@@ -10,11 +10,13 @@ import {
   getConfig,
   getMarket,
   getDmmStatus,
+  getPositions,
   postOrder,
   ORDER_TYPE_U8,
   type OrderApiType,
 } from "@/lib/api";
 import { buildOrderTypedData } from "@/lib/eip712";
+import { validateLimitPriceCents } from "@/lib/derivations";
 import { parseUsdtToAtomic } from "@/lib/format";
 import {
   estimateTotalFee,
@@ -74,6 +76,11 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const [dollars, setDollars] = useState(25);
   const [orderSide, setOrderSide] = useState<0 | 1>(0);
   const [orderType, setOrderType] = useState<OrderApiType>("LIMIT");
+  // Fix A: user-controlled LIMIT price in whole cents (1-99). `null` = fall
+  // back to auto-derived limitPrice (best-ask + 50bps / best-bid - 50bps).
+  // Cleared on context change (orderType / side / market) so the default
+  // re-seeds correctly; user then edits to cross-match against another trader.
+  const [userPriceCentsInput, setUserPriceCentsInput] = useState<string>("");
   const qc = useQueryClient();
   const connectSectionRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
@@ -125,7 +132,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
 
   const totalBps = (cfg?.platformFeeBps ?? 70) + (cfg?.makerFeeBps ?? 80);
 
-  const limitPrice = useMemo(() => {
+  const autoLimitPrice = useMemo(() => {
     if (!market || orderType === "MARKET") return 5000;
     const ob = side === 1 ? market.orderBook.up : market.orderBook.down;
     const ask = ob.bestAsk?.price;
@@ -139,6 +146,22 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     }
     return 5000;
   }, [market, orderType, side]);
+
+  // Reset user-override when the context the auto-derivation depends on changes
+  // — prevents a stale 55¢ input from leaking into a BUY on a new market.
+  useEffect(() => {
+    setUserPriceCentsInput("");
+  }, [orderType, side, marketKey]);
+
+  // Effective LIMIT price in bps: user override when present + valid, else
+  // auto-derivation. MARKET orders ignore this (priceNum = 0 below).
+  const userPriceParsed = validateLimitPriceCents(userPriceCentsInput);
+  const userOverrideActive = userPriceCentsInput !== "" && userPriceParsed.value != null;
+  const limitPrice = userOverrideActive
+    ? (userPriceParsed.value as number) * 100
+    : autoLimitPrice;
+  const autoCentsDisplay = Math.round(autoLimitPrice / 100);
+  const priceInputInvalid = userPriceCentsInput !== "" && userPriceParsed.value == null;
 
   const impliedP =
     market != null ? impliedProbabilityForSide(side, market.upPrice, market.downPrice) : 0.5;
@@ -171,6 +194,42 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       const min = parseUsdtToAtomic("5");
       const max = parseUsdtToAtomic("500");
       if (amount < min || amount > max) throw new Error("Amount must be $5–$500");
+
+      // Fix A: if the user typed a price, it must validate (1-99¢ whole
+      // cents). Don't ask the user to sign garbage only to have the backend
+      // reject.
+      if (orderType !== "MARKET" && userPriceCentsInput !== "") {
+        const v = validateLimitPriceCents(userPriceCentsInput);
+        if (v.value == null) throw new Error(v.error ?? "Invalid price");
+      }
+
+      // Fix B: pre-check share ownership BEFORE asking the user to sign. The
+      // backend (P1 Batch B) correctly returns 400 "Insufficient shares to
+      // sell" — but prompting a wallet popup first and THEN showing the error
+      // is a dumb flow. Fetch the current positions and reject client-side.
+      // This is a non-blocking soft guard: if the request races or fails,
+      // the backend still enforces the invariant.
+      if (orderSide === 1 /* SELL */) {
+        try {
+          const positions = await getPositions(address);
+          const match = positions.find(
+            (p) => p.market.toLowerCase() === parsedKey.composite.toLowerCase() && p.option === side,
+          );
+          const owned = match ? BigInt(match.shares) : BigInt(0);
+          if (owned < amount) {
+            throw new Error(
+              match
+                ? `Insufficient shares to sell. You own $${(Number(owned) / 1e6).toFixed(2)} of ${side === 1 ? "UP" : "DOWN"}.`
+                : `Insufficient shares to sell — you don't own any ${side === 1 ? "UP" : "DOWN"} shares on this market.`,
+            );
+          }
+        } catch (e) {
+          // Only bubble our own "Insufficient shares" error. A network failure
+          // on /positions shouldn't block the order — backend validates again.
+          if (e instanceof Error && e.message.startsWith("Insufficient shares")) throw e;
+          console.warn("[TradeForm] positions precheck failed, proceeding to sign:", e);
+        }
+      }
 
       const nonce = Math.floor(Math.random() * 1e12);
       const expiry = Math.floor(Date.now() / 1000) + 3600;
@@ -208,9 +267,13 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     onSuccess: () => {
       toast.success("Order submitted");
       const sa = smartAccount?.toLowerCase() ?? "";
+      const addrLower = address?.toLowerCase() ?? "";
       qc.invalidateQueries({ queryKey: ["positions", sa] });
-      qc.invalidateQueries({ queryKey: ["balance", address?.toLowerCase() ?? ""] });
+      qc.invalidateQueries({ queryKey: ["balance", addrLower] });
       qc.invalidateQueries({ queryKey: ["orderbook", marketKey.toLowerCase()] });
+      // Fix D: refresh any "my orders" view so a newly-placed LIMIT/POST_ONLY
+      // appears in the history/open-orders list inside ~500ms of placement.
+      qc.invalidateQueries({ queryKey: ["orders", addrLower] });
     },
     onError: (e: Error) => toast.error(formatUserFacingError(e)),
   });
@@ -354,15 +417,62 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         )}
       </div>
       {orderType !== "MARKET" && (
-        <p className="mt-2 text-xs text-muted">
-          Limit price (BPS): <span className="font-mono text-foreground">{limitPrice}</span>
-        </p>
+        <div className="mt-3">
+          <label
+            className="block text-[10px] font-bold uppercase tracking-wide text-muted"
+            htmlFor="limit-price-cents"
+          >
+            Limit price (¢ per share)
+          </label>
+          <div className="mt-1 flex items-center gap-2">
+            <input
+              id="limit-price-cents"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={99}
+              step={1}
+              placeholder={String(autoCentsDisplay)}
+              value={userPriceCentsInput}
+              onChange={(e) => setUserPriceCentsInput(e.target.value)}
+              className={cn(
+                "w-20 rounded-lg border px-2 py-1.5 text-center font-mono text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-brand/40",
+                priceInputInvalid ? "border-down" : "border-border",
+              )}
+              aria-invalid={priceInputInvalid}
+              aria-describedby="limit-price-hint"
+            />
+            <span className="text-xs text-muted">
+              {userOverrideActive
+                ? `= ${limitPrice} bps`
+                : `auto (${autoCentsDisplay}¢ / ${autoLimitPrice} bps)`}
+            </span>
+          </div>
+          <p id="limit-price-hint" className="mt-1 text-[10px] text-muted">
+            {priceInputInvalid
+              ? userPriceParsed.error
+              : userOverrideActive
+                ? "Your price overrides the auto-derived default."
+                : "Leave blank to use the auto-derived default above."}
+          </p>
+        </div>
       )}
       {isConnected ? (
         <button
           type="button"
-          disabled={submit.isPending || market?.status !== "ACTIVE" || !sessionReady}
-          title={!sessionReady ? "Complete connection first" : undefined}
+          disabled={
+            submit.isPending ||
+            market?.status !== "ACTIVE" ||
+            !sessionReady ||
+            priceInputInvalid
+          }
+          title={
+            !sessionReady
+              ? "Complete connection first"
+              : priceInputInvalid
+                ? (userPriceParsed.error ?? "Fix price before submitting")
+                : undefined
+          }
           className="btn-primary mt-3 w-full disabled:opacity-50"
           onClick={() => submit.mutate()}
         >
