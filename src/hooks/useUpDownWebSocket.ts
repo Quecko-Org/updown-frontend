@@ -111,6 +111,20 @@ export function useUpDownWebSocket(opts: {
           });
         }
       }
+      // Real-time price updates → append to cached price history for live chart
+      if (msg.type === "price_update" && msg.data && typeof msg.data === "object") {
+        const d = msg.data as { symbol?: string; price?: string | number; time?: number };
+        if (d.symbol && d.price) {
+          const p = typeof d.price === "string" ? Number(d.price) : d.price;
+          const t = d.time ?? Date.now();
+          if (Number.isFinite(p) && p > 0) {
+            queryClient.setQueryData<unknown>(["priceHistory", d.symbol], (prev: unknown) => {
+              if (!Array.isArray(prev)) return prev;
+              return [...prev, [t, String(p)]];
+            });
+          }
+        }
+      }
       if (msg.type === "market_created" || msg.type === "market_resolved") {
         if (marketInvalidateTimerRef.current) clearTimeout(marketInvalidateTimerRef.current);
         marketInvalidateTimerRef.current = setTimeout(() => {
