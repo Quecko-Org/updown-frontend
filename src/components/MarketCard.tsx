@@ -14,7 +14,13 @@ function useCountdownRemaining(endTime: number) {
   const [left, setLeft] = useState(() => Math.max(0, endTime - Math.floor(Date.now() / 1000)));
   useEffect(() => {
     const t = setInterval(() => {
-      setLeft(Math.max(0, endTime - Math.floor(Date.now() / 1000)));
+      // Functional update + same-value short-circuit: once `left` hits 0, React
+      // skips re-rendering on subsequent ticks (no flicker from wasted renders
+      // that race with the WS-driven RESOLVED transition).
+      setLeft((prev) => {
+        const next = Math.max(0, endTime - Math.floor(Date.now() / 1000));
+        return next === prev ? prev : next;
+      });
     }, 1000);
     return () => clearInterval(t);
   }, [endTime]);
@@ -93,6 +99,15 @@ export function MarketCard({
 
   const spotLine = useMemo(() => {
     const isResolved = market.status === "RESOLVED" || market.status === "CLAIMED";
+    // Fix 1a: once the countdown has hit 0:00 (or backend flipped status),
+    // the live spot no longer reflects anything meaningful for this market.
+    // Show "Awaiting settlement…" rather than a ticking spot until the
+    // settlementPrice arrives — avoids the "wrong copy at the boundary"
+    // where the live price kept flickering under the "Resolving…" banner.
+    const resolving = effectiveStatus !== "ACTIVE" && !isResolved;
+    if (resolving) {
+      return { text: "Awaiting settlement…", className: "text-muted" };
+    }
 
     let displayPrice: number | null = null;
     if (isResolved && market.settlementPrice) {
@@ -113,7 +128,7 @@ export function MarketCard({
       text: `${formatUsdInt(displayPrice)} ${arrow} ${sign}${formatUsdInt(Math.abs(diff))} (${sign}${pct.toFixed(2)}%)`,
       className: up ? "text-success" : "text-down",
     };
-  }, [spotUsd, strikeNum, market.status, market.settlementPrice]);
+  }, [spotUsd, strikeNum, market.status, market.settlementPrice, effectiveStatus]);
 
   const resolvedOrClaimed =
     (market.status === "RESOLVED" || market.status === "CLAIMED") && market.winner != null && market.winner !== 0;

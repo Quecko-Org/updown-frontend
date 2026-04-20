@@ -205,10 +205,12 @@ export async function getOrders(
 
 export type BalanceResponse = {
   wallet: string;
+  smartAccountAddress: string;
   available: string;
   inOrders: string;
-  totalDeposited: string;
-  totalWithdrawn: string;
+  /** Total on-chain USDT held by the smart account, synced by SmartAccountBalanceSync. */
+  cachedBalance: string;
+  balanceLastSyncedAt: string | null;
   withdrawNonce: number;
 };
 

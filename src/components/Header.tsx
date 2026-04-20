@@ -138,11 +138,42 @@ export function Header() {
           <div className="flex items-center gap-2">
             {isWalletConnected && walletAddress && (
               <>
-                {/* Balance chip */}
+                {/* Balance chip — hover for inOrders / total breakdown (Polymarket-parity portfolio glance). */}
                 <div className="hidden items-center gap-2 sm:flex">
-                  <span className="rounded-[12px] border border-border bg-surface-muted px-3 py-1.5 font-mono text-sm font-semibold tabular-nums text-foreground">
-                    ${formatUsdt(bal?.available ?? "0")}
-                  </span>
+                  <div className="group relative">
+                    <span
+                      className="block cursor-default rounded-[12px] border border-border bg-surface-muted px-3 py-1.5 font-mono text-sm font-semibold tabular-nums text-foreground"
+                      aria-describedby="balance-breakdown"
+                    >
+                      ${formatUsdt(bal?.available ?? "0")}
+                    </span>
+                    <div
+                      id="balance-breakdown"
+                      role="tooltip"
+                      className="pointer-events-none absolute right-0 top-full z-50 mt-2 hidden min-w-[200px] rounded-[12px] border border-border bg-white p-3 text-xs shadow-card-hover group-hover:block"
+                    >
+                      <dl className="space-y-1.5">
+                        <div className="flex items-baseline justify-between gap-4">
+                          <dt className="text-muted">Available</dt>
+                          <dd className="font-mono font-semibold tabular-nums text-foreground">
+                            ${formatUsdt(bal?.available ?? "0")}
+                          </dd>
+                        </div>
+                        <div className="flex items-baseline justify-between gap-4">
+                          <dt className="text-muted">In orders</dt>
+                          <dd className="font-mono tabular-nums text-foreground">
+                            ${formatUsdt(bal?.inOrders ?? "0")}
+                          </dd>
+                        </div>
+                        <div className="flex items-baseline justify-between gap-4 border-t border-border pt-1.5">
+                          <dt className="font-semibold text-foreground">Total</dt>
+                          <dd className="font-mono font-semibold tabular-nums text-foreground">
+                            ${formatUsdt(bal?.cachedBalance ?? "0")}
+                          </dd>
+                        </div>
+                      </dl>
+                    </div>
+                  </div>
                   <span className="rounded-[12px] border border-border bg-white px-3 py-1.5 font-mono text-xs text-muted">
                     {getFormattedAddress(walletAddress)}
                   </span>
