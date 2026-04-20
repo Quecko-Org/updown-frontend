@@ -3,15 +3,24 @@
 import { useEffect, useRef } from "react";
 import { useSetAtom } from "jotai";
 import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { wsConnectedAtom, wsLastEventAtAtom } from "@/store/atoms";
 import { wsStreamUrl } from "@/lib/env";
-import type { BalanceResponse, OrderBookResponse } from "@/lib/api";
+import type { BalanceResponse, MarketListItem, OrderBookResponse } from "@/lib/api";
+import { buildTerminalOrderToast, type OrderUpdateLike } from "@/lib/derivations";
 
 type WsPayload = {
   type: string;
   channel?: string;
   data?: unknown;
 };
+
+/** Keys we accept as a market identifier in the market cache (list uses `address`). */
+function matchesMarketKey(m: Partial<MarketListItem> & { marketId?: string }, needle: Partial<MarketListItem> & { marketId?: string }) {
+  if (needle.address && m.address) return m.address.toLowerCase() === needle.address.toLowerCase();
+  if (needle.marketId && m.marketId) return m.marketId === needle.marketId;
+  return false;
+}
 
 function walletChannels(walletLower: string) {
   return [`orders:${walletLower}`, `balance:${walletLower}`] as const;
@@ -70,6 +79,38 @@ export function useUpDownWebSocket(opts: {
           });
         }
       }
+      if (msg.type === "market_created" && msg.data && typeof msg.data === "object") {
+        // Optimistically prepend the new market to any cached markets list so the
+        // card appears in ~1ms instead of ~1s. Authoritative refetch still lands below.
+        const incoming = msg.data as Partial<MarketListItem> & { marketId?: string };
+        if (incoming.address || incoming.marketId) {
+          queryClient.setQueriesData<MarketListItem[] | undefined>({ queryKey: ["markets"] }, (old) => {
+            if (!Array.isArray(old)) return old;
+            if (old.some((m) => matchesMarketKey(m, incoming))) return old;
+            return [incoming as MarketListItem, ...old];
+          });
+        }
+      }
+      if (msg.type === "market_resolved" && msg.data && typeof msg.data === "object") {
+        // Flip the in-cache market to RESOLVED (or TRADING_ENDED if winner not yet set)
+        // so MarketCard stops showing UP/DOWN buttons immediately on resolve.
+        const incoming = msg.data as Partial<MarketListItem> & { marketId?: string };
+        if (incoming.address || incoming.marketId) {
+          queryClient.setQueriesData<MarketListItem[] | undefined>({ queryKey: ["markets"] }, (old) => {
+            if (!Array.isArray(old)) return old;
+            return old.map((m) =>
+              matchesMarketKey(m, incoming)
+                ? {
+                    ...m,
+                    status: incoming.status ?? "RESOLVED",
+                    settlementPrice: incoming.settlementPrice ?? m.settlementPrice,
+                    winner: incoming.winner ?? m.winner,
+                  }
+                : m
+            );
+          });
+        }
+      }
       if (msg.type === "market_created" || msg.type === "market_resolved") {
         if (marketInvalidateTimerRef.current) clearTimeout(marketInvalidateTimerRef.current);
         marketInvalidateTimerRef.current = setTimeout(() => {
@@ -80,6 +121,13 @@ export function useUpDownWebSocket(opts: {
             queryClient.invalidateQueries({ queryKey: ["market", ma.toLowerCase()] });
           }
         }, 1000);
+      }
+      if (msg.type === "order_update" && msg.data && typeof msg.data === "object") {
+        const t = buildTerminalOrderToast(msg.data as OrderUpdateLike, w);
+        if (t) {
+          if (t.kind === "info") toast.info(t.message, { id: t.id });
+          else toast.success(t.message, { id: t.id });
+        }
       }
       setWsLastEventAt(Date.now());
     } catch {

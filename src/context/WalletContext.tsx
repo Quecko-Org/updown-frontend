@@ -41,6 +41,7 @@ import {
   userPublicClient,
   apiConfigAtom,
   sessionReadyAtom,
+  sessionRestoreFailedAtom,
 } from "@/store/atoms";
 import { getConfig, registerSmartAccount } from "@/lib/api";
 import {
@@ -77,6 +78,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const smartAccountClientValue = useAtomValue(userSmartAccountClient);
   const [, setPubClient] = useAtom(userPublicClient);
   const [sessionReady, setSessionReady] = useAtom(sessionReadyAtom);
+  const [, setSessionRestoreFailed] = useAtom(sessionRestoreFailedAtom);
 
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState("");
@@ -327,8 +329,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     });
     setLoadingStep("");
     setIsLoading(false);
-    if (ok) toast.success("Trading session renewed");
-  }, [address, smartAccount, smartAccountClientValue, syncScopedSessionAndRegister]);
+    if (ok) {
+      setSessionRestoreFailed(false);
+      toast.dismiss("session-restore-fail");
+      toast.success("Trading session renewed");
+    }
+  }, [address, smartAccount, smartAccountClientValue, syncScopedSessionAndRegister, setSessionRestoreFailed]);
 
   const closeSignModal = useCallback(() => {
     setShowSignModal(false);
@@ -352,15 +358,41 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setIsLoading(true);
       setLoadingStep("Reconnecting…");
       try {
-        const ok = await syncScopedSessionAndRegister({
+        const first = await syncScopedSessionAndRegister({
           eoaAddress: address,
           saAddress: smartAccount,
           saClient: smartAccountClientValue,
           showToasts: false,
         });
-        if (!cancelled && !ok) {
-          console.error("Session restore: register failed (toasts suppressed)");
-        }
+        if (cancelled) return;
+        if (first) return;
+
+        // Single retry with 2s backoff — covers brief backend deploys / network blips.
+        await new Promise((r) => setTimeout(r, 2000));
+        if (cancelled) return;
+        const second = await syncScopedSessionAndRegister({
+          eoaAddress: address,
+          saAddress: smartAccount,
+          saClient: smartAccountClientValue,
+          showToasts: false,
+        });
+        if (cancelled) return;
+        if (second) return;
+
+        // Both attempts failed. Surface the failure so the user can act, instead of
+        // staring at a silent "Reconnecting…" with trading blocked.
+        console.error("Session restore failed after retry — showing re-authorize CTA");
+        setSessionRestoreFailed(true);
+        toast.error("Couldn't restore your trading session. Please re-authorize.", {
+          id: "session-restore-fail",
+          duration: Infinity,
+          action: {
+            label: "Re-authorize",
+            onClick: () => {
+              void reauthorizeSession();
+            },
+          },
+        });
       } finally {
         if (!cancelled) {
           setIsLoading(false);
@@ -380,6 +412,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     sessionReady,
     createSmartAccountFn,
     syncScopedSessionAndRegister,
+    setSessionRestoreFailed,
+    reauthorizeSession,
   ]);
 
   useEffect(() => {

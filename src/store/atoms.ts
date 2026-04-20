@@ -13,6 +13,13 @@ export const apiConfigAtom = atom<ApiConfig | null>(null);
 /** True after scoped session grant + backend register succeeded (or restored via register). */
 export const sessionReadyAtom = atom<boolean>(false);
 
+/**
+ * True when a silent session restore attempt failed after retry. Drives the visible
+ * "Re-authorize" CTA so the user knows why trading is blocked instead of staring at a
+ * frozen spinner (prior behavior: only a console.error).
+ */
+export const sessionRestoreFailedAtom = atom<boolean>(false);
+
 export const wsConnectedAtom = atom(false);
 
 /** Last time a WebSocket message was handled (ms since epoch); for stale UI hints. */

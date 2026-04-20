@@ -2,6 +2,7 @@ import { LocalAccountSigner } from "@aa-sdk/core";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { toFunctionSelector, toHex } from "viem";
 import { getSessionExpirySec } from "@/config/environment";
+import { isValidPermissionsContext } from "@/lib/derivations";
 import { saveIndexKey, getIndexKey } from "@/utils/indexDb";
 import { handleCheckSession } from "@/utils/walletHelpers";
 
@@ -126,16 +127,21 @@ export async function grantScopedSessionIfNeeded(
       permissions: permissionsPayload,
     });
 
-    if (process.env.NODE_ENV === "development") {
-      console.log("[grantPermissions] response shape:", response);
-    }
-
     const r = response as { context?: string; permissionsContext?: string } | null;
     const fromContext = r?.context != null && r.context !== "" ? String(r.context) : "";
     const fromAlt = r?.permissionsContext != null && r.permissionsContext !== "" ? String(r.permissionsContext) : "";
-    // TODO(grant-permissions-shape): If both empty, check dev console "[grantPermissions] response shape" and map the real field; placeholder avoids crash.
-    const permissionsContext =
-      fromContext || fromAlt || JSON.stringify(response ?? {});
+    const candidate = fromContext || fromAlt;
+    if (!isValidPermissionsContext(candidate)) {
+      console.error("[grantPermissions] No hex context in Alchemy response — SDK shape may have changed.", {
+        hasContext: Boolean(fromContext),
+        hasAlt: Boolean(fromAlt),
+        responseKeys: response && typeof response === "object" ? Object.keys(response as object) : null,
+      });
+      throw new Error(
+        "Alchemy did not return a permissions context (expected 0x-prefixed hex). Try reconnecting your wallet."
+      );
+    }
+    const permissionsContext: `0x${string}` = candidate;
 
     localStorage.setItem("sessionExpiryTime", String(expirySec));
     await saveIndexKey("sessionKeyData", {

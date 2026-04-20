@@ -7,6 +7,7 @@ import { estimateTotalFee, formatShareCentsLabel, sharePriceBpsFromImpliedUp } f
 import { formatStrikeUsd, marketDurationLabel, parseStrikeUsdNumber } from "@/lib/format";
 import type { PricePoint } from "@/lib/priceChart";
 import { cn } from "@/lib/cn";
+import { deriveEffectiveStatus } from "@/lib/derivations";
 import { marketPathFromAddress } from "@/lib/marketKey";
 
 function useCountdownRemaining(endTime: number) {
@@ -61,6 +62,10 @@ export function MarketCard({
   const router = useRouter();
   const marketHref = marketPathFromAddress(market.address);
   const cd = useCountdownRemaining(market.endTime);
+  // Countdown-driven client-side state flip: at 0:00 the card shows "Resolving…"
+  // even before the backend flips market.status to TRADING_ENDED. Prevents the
+  // up-to-5-min dead-zone where UP/DOWN buttons on an expired market are still clickable.
+  const effectiveStatus = deriveEffectiveStatus(market.status, cd);
   const strikeLabel = formatStrikeUsd(market.strikePrice);
   const strikeNum = parseStrikeUsdNumber(market.strikePrice);
   const quotes = bestFromList(market);
@@ -127,7 +132,7 @@ export function MarketCard({
       className={cn(
         "panel-dense group min-h-0 cursor-pointer transition-colors",
         "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand",
-        market.status === "ACTIVE"
+        effectiveStatus === "ACTIVE"
           ? "border-2 border-brand/40 shadow-sm hover:border-brand/60"
           : "border border-border opacity-70 hover:opacity-90",
       )}
@@ -137,10 +142,10 @@ export function MarketCard({
         <span
           className={cn(
             "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide",
-            market.status === "ACTIVE" ? "bg-success-soft text-success-dark" : "bg-surface-muted text-muted",
+            effectiveStatus === "ACTIVE" ? "bg-success-soft text-success-dark" : "bg-surface-muted text-muted",
           )}
         >
-          {market.status}
+          {effectiveStatus}
         </span>
       </div>
       <p className="mt-2 text-sm font-semibold text-foreground">
@@ -150,7 +155,7 @@ export function MarketCard({
         {market.status === "RESOLVED" || market.status === "CLAIMED" ? "Settled: " : ""}
         {spotLine.text}
       </p>
-      {market.status === "ACTIVE" ? (
+      {effectiveStatus === "ACTIVE" ? (
         <div className="mt-2 flex gap-2">
           <button
             type="button"
@@ -186,14 +191,14 @@ export function MarketCard({
           {market.winner === 1 ? "▲ UP Won" : "▼ DOWN Won"}
         </div>
       ) : null}
-      {market.status === "TRADING_ENDED" ? (
+      {effectiveStatus === "TRADING_ENDED" ? (
         <div className="mt-2 rounded-lg bg-surface-muted py-2 text-center text-sm font-semibold text-muted">
           Resolving…
         </div>
       ) : null}
       <div className="mt-2 flex items-end justify-between gap-2 border-t border-border pt-2 text-xs">
         <div>
-          {market.status === "ACTIVE" ? (
+          {effectiveStatus === "ACTIVE" ? (
             <>
               <span className="font-mono font-bold tabular-nums text-foreground">{cd}</span>
               <span className="text-muted"> remaining</span>
