@@ -173,6 +173,8 @@ export type OrderRow = {
   amount: string;
   filledAmount: string;
   status: "OPEN" | "PARTIALLY_FILLED" | "FILLED" | "CANCELLED";
+  /** Present on CANCELLED rows when the backend knows why. */
+  reason?: string;
   createdAt: string;
   updatedAt: string;
 };
