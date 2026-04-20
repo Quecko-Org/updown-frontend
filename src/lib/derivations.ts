@@ -37,17 +37,25 @@ export type TerminalToast =
 
 /**
  * Return the toast (or null) that should fire when an `order_update` WS message
- * arrives. We only toast for the connected wallet AND only on terminal transitions
- * (CANCELLED with / without fills, FILLED). PARTIALLY_FILLED stays quiet while the
- * order may still receive more fills.
+ * arrives. Terminal transitions only — CANCELLED (with / without fills) or FILLED.
+ * PARTIALLY_FILLED stays quiet while the order may still receive more fills.
+ *
+ * Wallet-scoped filtering happens at the WebSocket channel subscription layer
+ * (`orders:${maker}`), so we DO NOT re-check maker here. Requiring `data.maker`
+ * to match broke the toast path when the backend omitted `maker` from the
+ * broadcast payload — see sibling backend fix. Keeping this guard optional means
+ * older server builds missing the field still surface toasts correctly.
  */
 export function buildTerminalOrderToast(
   data: OrderUpdateLike,
   connectedWallet: string | null | undefined,
 ): TerminalToast {
   if (!data || !data.status) return null;
-  if (!connectedWallet || !data.maker) return null;
-  if (data.maker.toLowerCase() !== connectedWallet.toLowerCase()) return null;
+  if (!connectedWallet) return null;
+  // Defensive belt-and-suspenders: if the server DID send `maker`, still require
+  // it to match. Drops cross-wallet frames in the (vanishingly rare) case the
+  // hub ever fan-outs a wrong channel to us.
+  if (data.maker && data.maker.toLowerCase() !== connectedWallet.toLowerCase()) return null;
 
   const id = `${data.id ?? "order"}-terminal`;
   const filled = data.filledAmount ?? "0";
@@ -67,4 +75,23 @@ export function buildTerminalOrderToast(
     return { kind: "success", message: `Order filled: ${fmtUsd(amount)}.`, id };
   }
   return null;
+}
+
+/**
+ * Validate a cents-denominated LIMIT price input (1-99¢). Input comes from a
+ * text field so we tolerate whitespace + trailing decimals; output is an integer
+ * in the [1, 99] range plus an optional error string.
+ */
+export function validateLimitPriceCents(raw: string | number): {
+  value: number | null;
+  error: string | null;
+} {
+  const trimmed = typeof raw === "string" ? raw.trim() : String(raw).trim();
+  if (trimmed === "") return { value: null, error: "Enter a price (1-99¢)" };
+  const n = Number(trimmed);
+  if (!Number.isFinite(n)) return { value: null, error: "Not a number" };
+  if (!Number.isInteger(n)) return { value: null, error: "Whole cents only (1-99)" };
+  if (n < 1) return { value: null, error: "Price must be at least 1¢" };
+  if (n > 99) return { value: null, error: "Price must be at most 99¢" };
+  return { value: n, error: null };
 }

@@ -162,6 +162,45 @@ export async function getTrades(wallet: string, limit = 50, offset = 0): Promise
   return parseJson<TradeRow[]>(res);
 }
 
+export type OrderRow = {
+  orderId: string;
+  maker: string;
+  market: string;
+  option: number;
+  side: number;
+  type: number;
+  price: number;
+  amount: string;
+  filledAmount: string;
+  status: "OPEN" | "PARTIALLY_FILLED" | "FILLED" | "CANCELLED";
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type OrdersListResponse = {
+  orders: OrderRow[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export async function getOrders(
+  wallet: string,
+  query: { limit?: number; offset?: number; status?: string | string[]; market?: string } = {},
+): Promise<OrdersListResponse> {
+  const params: Record<string, string | number | undefined> = {
+    limit: query.limit ?? 50,
+    offset: query.offset ?? 0,
+    market: query.market,
+  };
+  // `status` accepts repeated param values on the backend; URL builder only
+  // takes a single value per key, so join into a CSV as a practical shim.
+  if (Array.isArray(query.status)) params.status = query.status.join(",");
+  else if (query.status) params.status = query.status;
+  const res = await fetch(url(`/orders/${wallet}`, params));
+  return parseJson<OrdersListResponse>(res);
+}
+
 export type BalanceResponse = {
   wallet: string;
   available: string;

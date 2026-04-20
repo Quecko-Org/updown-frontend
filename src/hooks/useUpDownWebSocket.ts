@@ -71,11 +71,17 @@ export function useUpDownWebSocket(opts: {
       const m = marketAddressRef.current;
       if (msg.type === "orderbook_update" && m && msg.data && typeof msg.data === "object") {
         const d = msg.data as { option?: number; snapshot?: OrderBookResponse["up"] };
-        if (d.option === 1 || d.option === 2) {
+        if ((d.option === 1 || d.option === 2) && d.snapshot) {
           queryClient.setQueryData<OrderBookResponse>(["orderbook", m.toLowerCase()], (prev) => {
-            if (!prev) return prev;
+            // Cold-cache seeding: prior version bailed on `!prev`, which dropped
+            // every update arriving before the initial GET /orderbook hydrated.
+            // With Fix 1b + hotfix #18 the book now changes fast, so that drop
+            // window swallowed real orders on fresh market-detail loads. Seed
+            // the counterpart side as empty; initial fetch reconciles shortly.
+            const emptySnapshot: OrderBookResponse["up"] = { bids: [], asks: [] };
+            const base: OrderBookResponse = prev ?? { up: emptySnapshot, down: emptySnapshot };
             const key = d.option === 1 ? "up" : "down";
-            return { ...prev, [key]: d.snapshot ?? prev[key] };
+            return { ...base, [key]: d.snapshot ?? base[key] };
           });
         }
       }
