@@ -12,6 +12,7 @@ import { parseCompositeMarketKey } from "@/lib/marketKey";
 import { MarketPriceChart } from "@/components/MarketPriceChart";
 import { TradeForm } from "@/components/TradeForm";
 import { OrderBookPanel } from "@/components/OrderBook";
+import { MyOrdersOnMarket } from "@/components/MyOrdersOnMarket";
 import { EmptyState } from "@/components/EmptyState";
 import { CancelAllMarketOrders } from "@/components/CancelAllMarketOrders";
 import { WalletConnectorList } from "@/components/WalletConnectorList";
@@ -181,6 +182,10 @@ export function MarketPageClient({ address }: { address: string }) {
         </div>
         <div className="lg:sticky lg:top-20">
           <TradeForm marketAddress={marketKey} />
+          {/* Hotfix #20 Fix E: resting BUY UP / SELL DOWN orders are hidden by the
+              unified orderbook ladder; show them explicitly here with an inline
+              Cancel button so the trader can see + manage their own liquidity. */}
+          <MyOrdersOnMarket marketComposite={marketKey} />
         </div>
       </div>
 

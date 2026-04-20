@@ -5,7 +5,10 @@ export function formatUserFacingError(e: unknown): string {
     if (/user rejected|denied|4001|rejected the request/i.test(m)) {
       return "Cancelled in wallet.";
     }
-    if (/insufficient funds|insufficient balance/i.test(m)) {
+    // Tightened: match USDT-balance shortfalls only. The SELL pre-check throws
+    // "Insufficient shares to sell…" and we want that message surfaced verbatim,
+    // not rewritten as a USDT balance issue (Shoaib BUG 3 false-match cause).
+    if (/insufficient\s+(funds|usdt|balance)/i.test(m) && !/insufficient\s+shares/i.test(m)) {
       return "Insufficient USDT balance for this action.";
     }
     if (/network|fetch failed|failed to fetch|ECONNREFUSED/i.test(m)) {

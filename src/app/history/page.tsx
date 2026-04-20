@@ -8,6 +8,7 @@ import Link from "next/link";
 import { getMarket, getOrders, getTrades, type TradeRow } from "@/lib/api";
 import { formatUsdt } from "@/lib/format";
 import { EmptyState } from "@/components/EmptyState";
+import { CancelOrderButton } from "@/components/CancelOrderButton";
 import { cn } from "@/lib/cn";
 import { marketPathFromAddress } from "@/lib/marketKey";
 import { sessionReadyAtom, userSmartAccount } from "@/store/atoms";
@@ -118,6 +119,7 @@ export default function HistoryPage() {
                   <th className="hidden px-4 py-3 sm:table-cell">Price</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="hidden px-4 py-3 md:table-cell">Placed</th>
+                  <th className="px-4 py-3"></th>
                 </tr>
               </thead>
               <tbody>
@@ -163,6 +165,11 @@ export default function HistoryPage() {
                     </td>
                     <td className="hidden px-4 py-3 text-muted md:table-cell">
                       {new Date(o.createdAt).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {o.status === "OPEN" || o.status === "PARTIALLY_FILLED" ? (
+                        <CancelOrderButton orderId={o.orderId} />
+                      ) : null}
                     </td>
                   </tr>
                 ))}

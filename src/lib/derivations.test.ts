@@ -127,6 +127,68 @@ describe("buildTerminalOrderToast (Fix 2c + P1 hotfix relaxed maker guard)", () 
     );
     expect(t?.kind).toBe("success");
   });
+
+  // Hotfix #20 Fix G: reason-aware copy. Tests pin exact strings so they match
+  // the user-visible toast assertions in QA.
+  describe("reason-aware copy (hotfix #20 Fix G)", () => {
+    const base = { id: "x", maker: wallet, amount: "5000000", filledAmount: "0" };
+
+    it("MARKET_ENDED → distinct copy (Shoaib BUG 3 exact fix)", () => {
+      const t = buildTerminalOrderToast(
+        { ...base, status: "CANCELLED", reason: "MARKET_ENDED" },
+        wallet,
+      );
+      expect(t?.message).toBe("Market ended — your order was cancelled, balance returned.");
+    });
+
+    it("EXPIRED → expired copy", () => {
+      const t = buildTerminalOrderToast(
+        { ...base, status: "CANCELLED", reason: "EXPIRED" },
+        wallet,
+      );
+      expect(t?.message).toMatch(/expired/i);
+    });
+
+    it("USER_CANCEL → user-initiated copy", () => {
+      const t = buildTerminalOrderToast(
+        { ...base, status: "CANCELLED", reason: "USER_CANCEL" },
+        wallet,
+      );
+      expect(t?.message).toBe("Order cancelled — balance returned.");
+    });
+
+    it("KILL_SWITCH → bulk-cancel copy", () => {
+      const t = buildTerminalOrderToast(
+        { ...base, status: "CANCELLED", reason: "KILL_SWITCH" },
+        wallet,
+      );
+      expect(t?.message).toMatch(/All your orders on this market/);
+    });
+
+    it("SESSION_EXPIRED → session copy", () => {
+      const t = buildTerminalOrderToast(
+        { ...base, status: "CANCELLED", reason: "SESSION_EXPIRED" },
+        wallet,
+      );
+      expect(t?.message).toMatch(/Session expired/i);
+    });
+
+    it("NO_LIQUIDITY falls through to prior default copy", () => {
+      const t = buildTerminalOrderToast(
+        { ...base, status: "CANCELLED", reason: "NO_LIQUIDITY" },
+        wallet,
+      );
+      expect(t?.message).toBe("No liquidity matched — order cancelled, balance returned.");
+    });
+
+    it("missing reason still renders (backend rollback compat)", () => {
+      const t = buildTerminalOrderToast(
+        { ...base, status: "CANCELLED" },
+        wallet,
+      );
+      expect(t?.message).toBe("No liquidity matched — order cancelled, balance returned.");
+    });
+  });
 });
 
 describe("validateLimitPriceCents (Fix A price input)", () => {

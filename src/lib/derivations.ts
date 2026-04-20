@@ -22,12 +22,26 @@ export function isValidPermissionsContext(value: unknown): value is `0x${string}
   return typeof value === "string" && value.length > 2 && value.startsWith("0x");
 }
 
+/**
+ * Mirrors the backend `CancelReason` enum attached to `order_update` frames on
+ * CANCELLED transitions. Frontend routes toast copy on this value instead of
+ * collapsing every cancel into "no liquidity matched".
+ */
+export type CancelReason =
+  | "NO_LIQUIDITY"
+  | "MARKET_ENDED"
+  | "EXPIRED"
+  | "USER_CANCEL"
+  | "KILL_SWITCH"
+  | "SESSION_EXPIRED";
+
 export type OrderUpdateLike = {
   id?: string;
   maker?: string;
   amount?: string;
   filledAmount?: string;
   status?: string;
+  reason?: CancelReason | string;
 };
 
 export type TerminalToast =
@@ -62,6 +76,30 @@ export function buildTerminalOrderToast(
   const amount = data.amount ?? "0";
 
   if (data.status === "CANCELLED") {
+    const reason = data.reason as CancelReason | undefined;
+    // Reason-specific copy. Older backend builds that don't send a reason fall
+    // through to the "no liquidity" / "partial-then-cancelled" defaults below,
+    // preserving prior behavior so a backend rollback doesn't break UX.
+    if (reason === "MARKET_ENDED") {
+      return {
+        kind: "info",
+        message: "Market ended — your order was cancelled, balance returned.",
+        id,
+      };
+    }
+    if (reason === "EXPIRED") {
+      return { kind: "info", message: "Order expired — balance returned.", id };
+    }
+    if (reason === "USER_CANCEL") {
+      return { kind: "info", message: "Order cancelled — balance returned.", id };
+    }
+    if (reason === "KILL_SWITCH") {
+      return { kind: "info", message: "All your orders on this market were cancelled.", id };
+    }
+    if (reason === "SESSION_EXPIRED") {
+      return { kind: "info", message: "Session expired — order cancelled, balance returned.", id };
+    }
+    // NO_LIQUIDITY (default for MARKET/IOC no-fill) OR no reason sent.
     if (!filled || filled === "0") {
       return { kind: "info", message: "No liquidity matched — order cancelled, balance returned.", id };
     }
