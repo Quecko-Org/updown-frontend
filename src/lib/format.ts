@@ -17,6 +17,20 @@ export function parseUsdtToAtomic(dollars: string): bigint {
   return parseUnits(normalized || "0", USDT_DECIMALS);
 }
 
+/** Short "$X.XX" USD label from a USDT atomic amount (6 decimals) string or bigint. */
+export function fmtUsd(raw: string | bigint | undefined | null): string {
+  if (raw == null) return "$0.00";
+  try {
+    const v = typeof raw === "bigint" ? raw : BigInt(raw || "0");
+    const s = formatUnits(v, USDT_DECIMALS);
+    const n = Number(s);
+    if (!Number.isFinite(n)) return "$0.00";
+    return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  } catch {
+    return "$0.00";
+  }
+}
+
 /** Format on-chain probability price (often 18 decimals) for display. */
 /** Time left for a market; no raw seconds in the string. */
 export function formatTimeRemainingNoSeconds(seconds: number): string {

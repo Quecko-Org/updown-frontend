@@ -6,7 +6,7 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { getBalance, getDmmStatus } from "@/lib/api";
-import { sessionReadyAtom, userSmartAccount } from "@/store/atoms";
+import { sessionReadyAtom, sessionRestoreFailedAtom, userSmartAccount } from "@/store/atoms";
 import { formatUsdt } from "@/lib/format";
 import { DepositModal } from "./DepositModal";
 import { WithdrawModal } from "./WithdrawModal";
@@ -39,6 +39,7 @@ export function Header() {
 
   const smartAccount = useAtomValue(userSmartAccount);
   const sessionReady = useAtomValue(sessionReadyAtom);
+  const sessionRestoreFailed = useAtomValue(sessionRestoreFailedAtom);
 
   const [depositOpen, setDepositOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
@@ -165,11 +166,16 @@ export function Header() {
                 {smartAccount && !sessionReady ? (
                   <button
                     type="button"
-                    className="hidden rounded-[12px] border border-brand bg-brand-subtle px-3 py-2 text-sm font-semibold text-brand transition-colors hover:opacity-90 disabled:opacity-50 sm:inline-flex"
+                    className={cn(
+                      "hidden rounded-[12px] px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-50 sm:inline-flex",
+                      sessionRestoreFailed
+                        ? "animate-pulse border-2 border-down bg-down/10 text-down hover:bg-down/20"
+                        : "border border-brand bg-brand-subtle text-brand hover:opacity-90",
+                    )}
                     disabled={isLoading}
                     onClick={() => void reauthorizeSession()}
                   >
-                    Re-authorize
+                    {sessionRestoreFailed ? "⚠ Re-authorize" : "Re-authorize"}
                   </button>
                 ) : null}
                 <button
@@ -284,14 +290,19 @@ export function Header() {
                   {smartAccount && !sessionReady ? (
                     <button
                       type="button"
-                      className="flex-1 rounded-[12px] border border-brand bg-brand-subtle py-2 text-sm font-semibold text-brand disabled:opacity-50"
+                      className={cn(
+                        "flex-1 rounded-[12px] py-2 text-sm font-semibold disabled:opacity-50",
+                        sessionRestoreFailed
+                          ? "animate-pulse border-2 border-down bg-down/10 text-down"
+                          : "border border-brand bg-brand-subtle text-brand",
+                      )}
                       disabled={isLoading}
                       onClick={() => {
                         void reauthorizeSession();
                         setMobileMenuOpen(false);
                       }}
                     >
-                      Re-authorize
+                      {sessionRestoreFailed ? "⚠ Re-authorize" : "Re-authorize"}
                     </button>
                   ) : null}
                   <button
