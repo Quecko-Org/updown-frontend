@@ -44,6 +44,53 @@ export type OrderUpdateLike = {
   reason?: CancelReason | string;
 };
 
+/** Minimal shape of an order row in the `["orders", wallet]` React Query cache. */
+type OrderListRow = {
+  orderId: string;
+  status: string;
+  filledAmount: string;
+  reason?: string;
+  [k: string]: unknown;
+};
+
+type OrderListPage = {
+  orders: OrderListRow[];
+  total?: number;
+  limit?: number;
+  offset?: number;
+};
+
+/**
+ * Merge an incoming `order_update` WS frame into the cached orders-list response
+ * so the UI reflects a fill / cancel in real time without waiting for a 20s
+ * poll. Returns a new list reference when an order was matched & updated,
+ * otherwise the input reference (React Query will no-op identity-equal updates).
+ *
+ * Only patches fields present in the update; matching is by `order.orderId ===
+ * update.id`. Backend WS currently sends `id` (see MatchingEngine emits),
+ * cache rows store `orderId` (see GET /orders/:wallet response).
+ */
+export function applyOrderUpdateToList(
+  list: OrderListPage | undefined,
+  update: OrderUpdateLike,
+): OrderListPage | undefined {
+  if (!list || !Array.isArray(list.orders)) return list;
+  const incomingId = update.id;
+  if (!incomingId) return list;
+  let mutated = false;
+  const nextOrders = list.orders.map((o) => {
+    if (o.orderId !== incomingId) return o;
+    mutated = true;
+    return {
+      ...o,
+      ...(update.status ? { status: String(update.status) } : {}),
+      ...(update.filledAmount != null ? { filledAmount: String(update.filledAmount) } : {}),
+      ...(update.reason != null ? { reason: String(update.reason) } : {}),
+    };
+  });
+  return mutated ? { ...list, orders: nextOrders } : list;
+}
+
 export type TerminalToast =
   | { kind: "info"; message: string; id: string }
   | { kind: "success"; message: string; id: string }

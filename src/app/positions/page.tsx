@@ -98,13 +98,27 @@ export default function PositionsPage() {
                 <span className="text-muted"> · Avg {p.avgPrice} bps</span>
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
-              {(p.marketStatus === "RESOLVED" || p.marketStatus === "CLAIMED") && (
+            <div className="flex flex-wrap items-center gap-2">
+              {/*
+               * CLAIMED = relayer auto-claimed (status flips to CLAIMED together
+               * with claimedByRelayer=true in ClaimService). Show a confirmation
+               * badge — no button, nothing to do.
+               * RESOLVED (without CLAIMED yet) = settlement winner known but the
+               * relayer path hasn't credited yet — keep a manual nudge button
+               * as the fallback for relayer-failure cases.
+               */}
+              {p.marketStatus === "CLAIMED" && (
+                <span className="rounded-[12px] border border-success/30 bg-success/10 px-3 py-1.5 text-sm font-semibold text-success">
+                  Auto-claimed ✓
+                </span>
+              )}
+              {p.marketStatus === "RESOLVED" && (
                 <button
                   type="button"
                   className="btn-primary !text-sm"
                   disabled={claim.isPending}
                   onClick={() => claim.mutate(p.market)}
+                  title="Nudge the relayer to credit winnings for this market."
                 >
                   Claim / sync
                 </button>

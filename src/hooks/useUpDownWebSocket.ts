@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { wsConnectedAtom, wsLastEventAtAtom } from "@/store/atoms";
 import { wsStreamUrl } from "@/lib/env";
 import type { BalanceResponse, MarketListItem, OrderBookResponse } from "@/lib/api";
-import { buildTerminalOrderToast, type OrderUpdateLike } from "@/lib/derivations";
+import { applyOrderUpdateToList, buildTerminalOrderToast, type OrderUpdateLike } from "@/lib/derivations";
 
 type WsPayload = {
   type: string;
@@ -143,7 +143,17 @@ export function useUpDownWebSocket(opts: {
         }, 1000);
       }
       if (msg.type === "order_update" && msg.data && typeof msg.data === "object") {
-        const t = buildTerminalOrderToast(msg.data as OrderUpdateLike, w);
+        const update = msg.data as OrderUpdateLike;
+        // Fix 1b: merge the update into every ["orders", wallet, ...] cache so
+        // history / MyOrdersOnMarket reflect fills instantly instead of waiting
+        // for the 20s refetch. `setQueriesData` matches by prefix, so this
+        // covers both the unfiltered history list and any status-filtered list.
+        if (w) {
+          queryClient.setQueriesData({ queryKey: ["orders", w.toLowerCase()] }, (old) =>
+            applyOrderUpdateToList(old as Parameters<typeof applyOrderUpdateToList>[0], update),
+          );
+        }
+        const t = buildTerminalOrderToast(update, w);
         if (t) {
           if (t.kind === "info") toast.info(t.message, { id: t.id });
           else toast.success(t.message, { id: t.id });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyOrderUpdateToList,
   buildTerminalOrderToast,
   deriveEffectiveStatus,
   isValidPermissionsContext,
@@ -220,5 +221,74 @@ describe("validateLimitPriceCents (Fix A price input)", () => {
 
   it("accepts number type (not just string)", () => {
     expect(validateLimitPriceCents(42)).toEqual({ value: 42, error: null });
+  });
+});
+
+describe("applyOrderUpdateToList (Fix 1b event-based order cache merge)", () => {
+  const baseRow = (over: Record<string, unknown> = {}) => ({
+    orderId: "abc",
+    maker: "0xabc",
+    market: "0xmkt",
+    option: 1,
+    side: 0,
+    type: 0,
+    price: 5500,
+    amount: "25000000",
+    filledAmount: "0",
+    status: "OPEN",
+    createdAt: "2026-04-20T00:00:00Z",
+    updatedAt: "2026-04-20T00:00:00Z",
+    ...over,
+  });
+
+  it("updates status + filledAmount on the matching row", () => {
+    const list = { orders: [baseRow(), baseRow({ orderId: "xyz" })], total: 2, limit: 50, offset: 0 };
+    const next = applyOrderUpdateToList(list, { id: "abc", status: "FILLED", filledAmount: "25000000" });
+    expect(next).not.toBe(list);
+    expect(next!.orders[0].status).toBe("FILLED");
+    expect(next!.orders[0].filledAmount).toBe("25000000");
+    expect(next!.orders[1]).toBe(list.orders[1]); // untouched row reference preserved
+  });
+
+  it("returns the same list reference when no order matches (React Query no-op)", () => {
+    const list = { orders: [baseRow()], total: 1, limit: 50, offset: 0 };
+    const next = applyOrderUpdateToList(list, { id: "no-such-id", status: "FILLED" });
+    expect(next).toBe(list);
+  });
+
+  it("carries reason through on CANCELLED transitions", () => {
+    const list = { orders: [baseRow()], total: 1, limit: 50, offset: 0 };
+    const next = applyOrderUpdateToList(list, { id: "abc", status: "CANCELLED", reason: "USER_CANCEL" });
+    expect(next!.orders[0].status).toBe("CANCELLED");
+    expect(next!.orders[0].reason).toBe("USER_CANCEL");
+  });
+
+  it("only updates fields present in the payload (partial merges)", () => {
+    const list = { orders: [baseRow({ status: "PARTIALLY_FILLED", filledAmount: "5000000" })], total: 1, limit: 50, offset: 0 };
+    const next = applyOrderUpdateToList(list, { id: "abc", filledAmount: "15000000" });
+    expect(next!.orders[0].status).toBe("PARTIALLY_FILLED"); // unchanged
+    expect(next!.orders[0].filledAmount).toBe("15000000");
+  });
+
+  it("returns input unchanged when list is undefined (WS arrived before hydrate)", () => {
+    const next = applyOrderUpdateToList(undefined, { id: "abc", status: "FILLED" });
+    expect(next).toBeUndefined();
+  });
+
+  it("returns input unchanged when update has no id", () => {
+    const list = { orders: [baseRow()], total: 1, limit: 50, offset: 0 };
+    const next = applyOrderUpdateToList(list, { status: "FILLED" });
+    expect(next).toBe(list);
+  });
+});
+
+describe("deriveEffectiveStatus edge cases", () => {
+  it("treats an empty backend status as the passthrough — don't flip anything", () => {
+    expect(deriveEffectiveStatus("", "0:00")).toBe("");
+  });
+
+  it("only flips the exact 0:00 string; any non-zero countdown keeps ACTIVE", () => {
+    expect(deriveEffectiveStatus("ACTIVE", "0:00")).toBe("TRADING_ENDED");
+    expect(deriveEffectiveStatus("ACTIVE", "0:01")).toBe("ACTIVE");
   });
 });
