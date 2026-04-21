@@ -110,39 +110,21 @@ function TimeframeRowWithToggle({
           No {pairShort} markets for {tfLabel(tf)}
         </p>
       ) : (
-        <div className="space-y-3">
-          {/* Active: full-size, front-row. Only ever one per pair+timeframe. */}
-          {active.length > 0 && (
-            <div className="flex gap-3 overflow-x-auto">
-              {active.map((m) => (
-                <div key={m.address} className="w-[360px] shrink-0">
-                  <MarketCard market={m} btcPoints={pricePoints} spotUsd={spot} feeConfig={feeConfig} />
-                </div>
-              ))}
+        /* Single horizontal row per timeframe: live markets lead full-size
+           on the left, resolved markets trail smaller and dimmed to the
+           right in the same flow. Overflow scrolls — no second row below,
+           no hairline divider breaking the line up. */
+        <div className="flex gap-3 overflow-x-auto pb-2">
+          {active.map((m) => (
+            <div key={m.address} className="w-[360px] shrink-0">
+              <MarketCard market={m} btcPoints={pricePoints} spotUsd={spot} feeConfig={feeConfig} />
             </div>
-          )}
-          {/* Resolved: smaller, dimmed, shown under a divider so the eye
-              hits live markets first. */}
-          {resolved.length > 0 && (
-            <div className="pt-2" style={{ borderTop: "1px solid var(--border-0)" }}>
-              <div className="mb-2 flex items-center gap-3">
-                <span className="pp-micro">Resolved</span>
-                <span className="pp-caption" style={{ color: "var(--fg-3)" }}>
-                  Last {resolved.length}
-                </span>
-              </div>
-              <div
-                className="flex gap-3 overflow-x-auto pb-2"
-                style={{ opacity: 0.72 }}
-              >
-                {resolved.map((m) => (
-                  <div key={m.address} className="w-[280px] shrink-0">
-                    <MarketCard market={m} btcPoints={pricePoints} spotUsd={spot} feeConfig={feeConfig} />
-                  </div>
-                ))}
-              </div>
+          ))}
+          {resolved.map((m) => (
+            <div key={m.address} className="w-[280px] shrink-0" style={{ opacity: 0.72 }}>
+              <MarketCard market={m} btcPoints={pricePoints} spotUsd={spot} feeConfig={feeConfig} />
             </div>
-          )}
+          ))}
         </div>
       )}
     </div>
