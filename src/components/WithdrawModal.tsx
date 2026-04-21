@@ -159,7 +159,7 @@ export function WithdrawModal({ open, onClose }: Props) {
           value={amountStr}
           onChange={(e) => onAmountChange(e.target.value)}
           placeholder="0.00"
-          className="mt-1 w-full rounded-[12px] border border-border bg-white px-3 py-2.5 text-foreground transition-colors focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+          className="mt-1 w-full rounded-[12px] border border-border bg-surface-muted px-3 py-2.5 text-foreground transition-colors focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
         />
         {bal && (
           <p className="mt-2 text-xs text-muted">

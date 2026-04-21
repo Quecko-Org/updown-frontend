@@ -1,14 +1,11 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Sans } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "@/components/AppShell";
 import { ClientProviders } from "./ClientProviders";
 
-const ibmPlex = IBM_Plex_Sans({
-  variable: "--font-ibm-plex",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
+// Geist + Geist Mono are loaded via the @import in design-tokens.css (Google
+// Fonts CDN). Self-hosted Bebas Neue + Lemon Milk are declared via @font-face
+// in the same file. No Next/font loader needed for Phase 1.
 
 export const metadata: Metadata = {
   title: "PulsePairs",
@@ -23,7 +20,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${ibmPlex.variable} min-h-screen bg-background font-sans text-foreground antialiased`}>
+      <body className="min-h-screen bg-background font-sans text-foreground antialiased">
         <ClientProviders>
           <AppShell>{children}</AppShell>
         </ClientProviders>

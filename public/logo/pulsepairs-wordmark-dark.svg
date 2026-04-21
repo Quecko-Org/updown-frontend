@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 40" fill="none">
+  
+  <g>
+    <path d="M4 28 L10 20 L14 24 L22 14" stroke="oklch(74% 0.18 155)" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter"></path>
+    <path d="M24 14 L30 22 L34 18 L42 28" stroke="oklch(68% 0.22 25)" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter"></path>
+  </g>
+  
+  <text x="54" y="27" font-family="Geist, ui-sans-serif, system-ui" font-size="18" font-weight="600" letter-spacing="-0.4" fill="oklch(97% 0.005 250)">PulsePairs</text>
+</svg>

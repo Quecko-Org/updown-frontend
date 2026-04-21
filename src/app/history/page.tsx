@@ -126,7 +126,7 @@ export default function HistoryPage() {
                 {orders.map((o) => (
                   <tr
                     key={o.orderId}
-                    className="border-b border-border/80 last:border-0 odd:bg-white even:bg-surface-muted/40"
+                    className="border-b border-border/80 last:border-0 even:bg-surface-muted/40"
                   >
                     <td className="px-4 py-3">
                       <Link href={marketPathFromAddress(o.market)} className="font-medium text-brand hover:underline">
@@ -206,7 +206,7 @@ export default function HistoryPage() {
             {trades?.map((t) => (
               <tr
                 key={t.tradeId}
-                className="border-b border-border/80 last:border-0 odd:bg-white even:bg-surface-muted/40"
+                className="border-b border-border/80 last:border-0 even:bg-surface-muted/40"
               >
                 <td className="px-4 py-3">
                   <Link href={marketPathFromAddress(t.market)} className="font-medium text-brand hover:underline">
@@ -241,7 +241,7 @@ export default function HistoryPage() {
       <div className="flex flex-wrap gap-3">
         <button
           type="button"
-          className="rounded-[12px] border border-border bg-white px-4 py-2 text-sm font-semibold text-foreground transition-colors hover:border-brand hover:text-brand disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-[12px] border border-border bg-surface-muted px-4 py-2 text-sm font-semibold text-foreground transition-colors hover:border-brand hover:text-brand disabled:cursor-not-allowed disabled:opacity-40"
           disabled={offset === 0}
           onClick={() => setOffset((o) => Math.max(0, o - PAGE))}
         >
@@ -249,7 +249,7 @@ export default function HistoryPage() {
         </button>
         <button
           type="button"
-          className="rounded-[12px] border border-border bg-white px-4 py-2 text-sm font-semibold text-foreground transition-colors hover:border-brand hover:text-brand disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-[12px] border border-border bg-surface-muted px-4 py-2 text-sm font-semibold text-foreground transition-colors hover:border-brand hover:text-brand disabled:cursor-not-allowed disabled:opacity-40"
           disabled={!trades || trades.length < PAGE}
           onClick={() => setOffset((o) => o + PAGE)}
         >
