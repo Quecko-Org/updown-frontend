@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAtomValue } from "jotai";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getMarkets, getPriceHistory, type ApiConfig, type MarketListItem } from "@/lib/api";
+import { getMarkets, getPriceHistory, getStats, type ApiConfig, type MarketListItem } from "@/lib/api";
 import { MarketCard } from "@/components/MarketCard";
 import { normalizePriceHistoryData, type PricePoint } from "@/lib/priceChart";
 import { apiConfigAtom } from "@/store/atoms";
 import { cn } from "@/lib/cn";
+import { formatUsdt } from "@/lib/format";
 
 const PAIRS = ["BTC-USD", "ETH-USD"] as const;
 const TFS = [300, 900, 3600] as const;
@@ -61,46 +62,66 @@ function TimeframeRowWithToggle({
   const loading = selectedPair === "BTC-USD" ? btcLoading : ethLoading;
   const pairShort = selectedPair === "BTC-USD" ? "BTC" : "ETH";
 
-  const cards = [data.active, ...data.history].filter(Boolean) as MarketListItem[];
-  const visible = cards.slice(0, MAX_CARDS_PER_ROW);
+  // Separate active (live trading) from resolved so they render in two
+  // visually distinct rows. A single mixed row made it hard to see at a
+  // glance which markets were live.
+  const active = data.active ? [data.active] : [];
+  const resolved = data.history.slice(0, MAX_CARDS_PER_ROW);
 
   return (
     <div>
-      <div className="mb-2 flex items-center gap-3">
-        <h2 className="text-sm font-bold uppercase tracking-wide text-muted">{tfLabel(tf)}</h2>
-        <div className="flex rounded-md border border-border p-0.5">
-          <button
-            type="button"
-            className={cn(
-              "rounded px-2 py-0.5 text-xs font-semibold transition-colors",
-              selectedPair === "BTC-USD" ? "bg-brand text-white" : "text-muted hover:text-foreground",
-            )}
-            onClick={() => setSelectedPair("BTC-USD")}
-          >
-            BTC
-          </button>
-          <button
-            type="button"
-            className={cn(
-              "rounded px-2 py-0.5 text-xs font-semibold transition-colors",
-              selectedPair === "ETH-USD" ? "bg-brand text-white" : "text-muted hover:text-foreground",
-            )}
-            onClick={() => setSelectedPair("ETH-USD")}
-          >
-            ETH
-          </button>
+      <div className="pp-mrow__hd">
+        <div className="pp-mrow__tflabel">
+          <span className="pp-mrow__tf">{tfLabel(tf)}</span>
+        </div>
+        <div className="pp-mrow__hd-right">
+          <span className="pp-mrow__count">
+            <span className="pp-tabular">{active.length}</span>{" "}
+            <span className="pp-caption">open</span>
+            <span className="pp-mrow__dot">·</span>
+            <span className="pp-tabular">{resolved.length}</span>{" "}
+            <span className="pp-caption">resolved</span>
+          </span>
+          <div className="pp-tab">
+            <button
+              type="button"
+              className={cn("pp-tab__btn", selectedPair === "BTC-USD" && "pp-tab__btn--on")}
+              onClick={() => setSelectedPair("BTC-USD")}
+            >
+              BTC
+            </button>
+            <button
+              type="button"
+              className={cn("pp-tab__btn", selectedPair === "ETH-USD" && "pp-tab__btn--on")}
+              onClick={() => setSelectedPair("ETH-USD")}
+            >
+              ETH
+            </button>
+          </div>
         </div>
       </div>
       {loading ? (
-        <div className="h-[200px] animate-pulse rounded-lg border border-border bg-surface-muted/30" />
-      ) : visible.length === 0 ? (
-        <p className="text-xs text-muted">
+        <div
+          className="h-[180px] rounded-[6px] border"
+          style={{ background: "var(--bg-1)", borderColor: "var(--border-0)" }}
+        />
+      ) : active.length === 0 && resolved.length === 0 ? (
+        <p className="pp-caption">
           No {pairShort} markets for {tfLabel(tf)}
         </p>
       ) : (
+        /* Single horizontal row per timeframe: live markets lead full-size
+           on the left, resolved markets trail smaller and dimmed to the
+           right in the same flow. Overflow scrolls — no second row below,
+           no hairline divider breaking the line up. */
         <div className="flex gap-3 overflow-x-auto pb-2">
-          {visible.map((m) => (
-            <div key={m.address} className="w-[300px] shrink-0">
+          {active.map((m) => (
+            <div key={m.address} className="w-[360px] shrink-0">
+              <MarketCard market={m} btcPoints={pricePoints} spotUsd={spot} feeConfig={feeConfig} />
+            </div>
+          ))}
+          {resolved.map((m) => (
+            <div key={m.address} className="w-[280px] shrink-0" style={{ opacity: 0.72 }}>
               <MarketCard market={m} btcPoints={pricePoints} spotUsd={spot} feeConfig={feeConfig} />
             </div>
           ))}
@@ -189,8 +210,51 @@ export default function HomePage() {
     return () => timers.forEach(clearTimeout);
   }, [activeEndTimes, qc]);
 
+  const { data: stats } = useQuery({
+    queryKey: ["stats"],
+    queryFn: getStats,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+    retry: 1,
+  });
+
+  // Settled-24h: markets from our existing queries that are already RESOLVED
+  // or CLAIMED. Backend /stats doesn't expose this count yet, so we derive it
+  // client-side from the already-fetched market rows.
+  const settledCount = useMemo(() => {
+    let n = 0;
+    for (const q of marketQueries) {
+      for (const m of q.data ?? []) {
+        if (m.status === "RESOLVED" || m.status === "CLAIMED") n++;
+      }
+    }
+    return n;
+  }, [marketQueries]);
+
+  const volumeLabel = stats ? `$${formatUsdt(stats.totalVolume)}` : "—";
+  const openMarkets = stats?.activeMarketsCount ?? null;
+  const traders = stats?.totalTraders ?? null;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
+      <div className="pp-statsrail">
+        <div className="pp-statsrail__cell">
+          <span className="pp-micro">24h volume</span>
+          <span className="pp-price-xl">{volumeLabel}</span>
+        </div>
+        <div className="pp-statsrail__cell">
+          <span className="pp-micro">Open markets</span>
+          <span className="pp-price-xl">{openMarkets != null ? openMarkets : "—"}</span>
+        </div>
+        <div className="pp-statsrail__cell">
+          <span className="pp-micro">Settled 24h</span>
+          <span className="pp-price-xl">{settledCount}</span>
+        </div>
+        <div className="pp-statsrail__cell">
+          <span className="pp-micro">Traders 24h</span>
+          <span className="pp-price-xl">{traders != null ? traders : "—"}</span>
+        </div>
+      </div>
       {TFS.map((tf, ti) => (
         <TimeframeRowWithToggle
           key={tf}

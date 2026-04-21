@@ -11,6 +11,11 @@ export const metadata: Metadata = {
   title: "PulsePairs",
   description: "PulsePairs",
   applicationName: "PulsePairs",
+  icons: {
+    icon: [
+      { url: "/logo/pulsepairs-mark.svg", type: "image/svg+xml" },
+    ],
+  },
 };
 
 export default function RootLayout({

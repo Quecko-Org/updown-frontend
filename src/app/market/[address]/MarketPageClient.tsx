@@ -94,7 +94,7 @@ export function MarketPageClient({ address }: { address: string }) {
   if (!parsed) {
     return (
       <div className="space-y-4">
-        <Link href="/" className="text-xs font-semibold text-brand hover:underline">
+        <Link href="/" className="pp-back">
           ← Markets
         </Link>
         <EmptyState
@@ -108,7 +108,10 @@ export function MarketPageClient({ address }: { address: string }) {
 
   if (isLoading || !market) {
     return (
-      <div className="flex min-h-[30vh] items-center justify-center rounded-lg border border-dashed border-border text-xs text-muted">
+      <div
+        className="flex min-h-[30vh] items-center justify-center rounded-[6px] border border-dashed pp-caption"
+        style={{ borderColor: "var(--border-0)" }}
+      >
         Loading…
       </div>
     );
@@ -116,58 +119,78 @@ export function MarketPageClient({ address }: { address: string }) {
 
   const strikeLabel = formatStrikeUsd(market.strikePrice);
   const strikeNum = parseStrikeUsdNumber(market.strikePrice);
-  const pairLabel = (market.pairSymbol ?? market.pairId).replace("-", " / ");
-  const heroTitle = `${pairLabel} · ${marketDurationLabel(market.duration)}`;
+  const pairBase = (market.pairSymbol ?? market.pairId).split("-")[0] ?? "BTC";
+  const pairLabel = `${pairBase}/USD`;
+  const tfLabel = marketDurationLabel(market.duration);
+  const heroTitle = `${pairLabel} · ${tfLabel}`;
 
-  const currentLabel =
+  const directionLabel =
     strikeNum == null || spotUsd == null
-      ? "Currently —"
+      ? "—"
       : spotUsd >= strikeNum
-        ? "Currently UP ▲"
-        : "Currently DOWN ▼";
+        ? "UP ▲"
+        : "DOWN ▼";
+  const directionColor =
+    strikeNum == null || spotUsd == null
+      ? "var(--fg-2)"
+      : spotUsd >= strikeNum
+        ? "var(--up)"
+        : "var(--down)";
 
   const showCancelAll = !!eoa && dmmStatus?.isDmm;
 
   return (
-    <div className="space-y-4">
-      <Link href="/" className="text-xs font-semibold text-brand hover:underline">
+    <div>
+      <Link href="/" className="pp-back">
         ← Markets
       </Link>
 
-      <header className="space-y-1">
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <h1 className="font-display text-xl font-bold tracking-tight text-foreground sm:text-2xl">{heroTitle}</h1>
-          {showCancelAll ? <CancelAllMarketOrders marketComposite={marketKey} /> : null}
+      {/* Title row + meta */}
+      <header
+        className="flex flex-wrap items-start justify-between gap-4 border-b pb-4"
+        style={{ borderColor: "var(--border-0)" }}
+      >
+        <div className="min-w-0 flex-1">
+          <h1 className="pp-h1">{heroTitle}</h1>
+          <div className="mt-3 flex flex-wrap items-baseline gap-x-6 gap-y-2">
+            <span className="flex flex-col gap-1">
+              <span className="pp-micro">Strike</span>
+              <span className="pp-price-md">{strikeLabel}</span>
+            </span>
+            <span className="flex flex-col gap-1">
+              <span className="pp-micro">Ends in</span>
+              <span className="pp-price-md">{endsIn}</span>
+            </span>
+            <span className="flex flex-col gap-1">
+              <span className="pp-micro">Currently</span>
+              <span className="pp-price-md" style={{ color: directionColor }}>
+                {directionLabel}
+              </span>
+            </span>
+            <span className="flex flex-col gap-1">
+              <span className="pp-micro">Status</span>
+              <span className="pp-chip pp-chip--cd">
+                <span className="pp-tabular">
+                  {market.status === "CLAIMED" ? "RESOLVED" : market.status}
+                </span>
+              </span>
+            </span>
+          </div>
         </div>
-        <p className="flex flex-wrap items-center gap-x-1 text-xs text-muted">
-          <span>
-            Price to Beat: <span className="font-semibold text-foreground">{strikeLabel}</span>
-          </span>
-          <span aria-hidden>·</span>
-          <span>
-            Ends in <span className="font-mono font-semibold text-foreground">{endsIn}</span>
-          </span>
-          <span aria-hidden>·</span>
-          <span
-            className={cn(
-              "font-semibold",
-              strikeNum == null || spotUsd == null
-                ? "text-muted"
-                : spotUsd >= strikeNum
-                  ? "text-success"
-                  : "text-down",
-            )}
-          >
-            {currentLabel}
-          </span>
-        </p>
-        <details className="text-[10px] text-muted">
-          <summary className="cursor-pointer select-none hover:text-foreground">Contract</summary>
-          <p className="mt-1 break-all font-mono">{market.address}</p>
-        </details>
+        {showCancelAll ? <CancelAllMarketOrders marketComposite={marketKey} /> : null}
       </header>
 
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_minmax(280px,380px)] lg:items-start">
+      {/* Contract hash */}
+      <details className="mt-2">
+        <summary className="pp-hash cursor-pointer select-none" style={{ color: "var(--fg-2)" }}>
+          Contract
+        </summary>
+        <p className="pp-hash mt-1 break-all" style={{ color: "var(--fg-2)" }}>
+          {market.address}
+        </p>
+      </details>
+
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_minmax(300px,380px)] lg:items-start">
         <div className="min-w-0 space-y-3">
           <MarketPriceChart
             symbol={chartSymbol}
@@ -176,29 +199,29 @@ export function MarketPageClient({ address }: { address: string }) {
             strikePriceRaw={market.strikePrice}
           />
           <section>
-            <h2 className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">Order book</h2>
+            <h2 className="pp-micro mb-2">Order book</h2>
             <OrderBookPanel marketId={marketKey} />
           </section>
         </div>
         <div className="lg:sticky lg:top-20">
           <TradeForm marketAddress={marketKey} />
-          {/* Hotfix #20 Fix E: resting BUY UP / SELL DOWN orders are hidden by the
-              unified orderbook ladder; show them explicitly here with an inline
-              Cancel button so the trader can see + manage their own liquidity. */}
+          {/* Resting BUY UP / SELL DOWN hidden by the unified ladder; surfaced here
+              so the trader can see + cancel their own liquidity. */}
           <MyOrdersOnMarket marketComposite={marketKey} />
         </div>
       </div>
 
-      <section>
-        <h2 className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">Your positions</h2>
+      {/* Your positions */}
+      <section className="mt-6">
+        <h2 className="pp-h2">Your positions</h2>
         {!smartAccount && (
           <EmptyState
             icon="wallet"
-            title="Connect wallet to see your positions"
+            title="Connect wallet"
             subtitle="Link your wallet to see holdings for this market."
-            className="min-h-0 py-6"
+            className="min-h-0 py-6 mt-3"
           >
-            <WalletConnectorList className="w-full max-w-xs rounded-lg border border-border bg-surface-muted p-2" />
+            <WalletConnectorList className="w-full max-w-xs" />
           </EmptyState>
         )}
         {smartAccount && localPositions.length === 0 && (
@@ -206,35 +229,50 @@ export function MarketPageClient({ address }: { address: string }) {
             icon="trade"
             title="No position here"
             subtitle="Place a trade using the form above."
-            className="min-h-0 py-6"
+            className="min-h-0 py-6 mt-3"
           />
         )}
-        <ul className="mt-2 space-y-2">
-          {localPositions.map((p) => (
-            <li
-              key={`${p.market}-${p.option}`}
-              className={cn(
-                "panel-dense flex flex-wrap items-center justify-between gap-2",
-                p.option === 1 && "border-l-2 border-l-success",
-                p.option === 2 && "border-l-2 border-l-down"
-              )}
-            >
-              <span
-                className={cn(
-                  "rounded px-1.5 py-0.5 text-xs font-bold",
-                  p.option === 1 ? "bg-success-soft text-success-dark" : "bg-down-soft text-down"
-                )}
-              >
-                {p.optionLabel}
-              </span>
-              <span className="text-xs text-muted">
-                Shares <span className="font-mono font-semibold text-foreground">{formatUsdt(p.shares)}</span>
-              </span>
-              <span className="text-xs text-muted">Avg {p.avgPrice} bps</span>
-              <span className="text-[10px] font-medium uppercase text-muted">{p.marketStatus}</span>
-            </li>
-          ))}
-        </ul>
+        {localPositions.length > 0 && (
+          <div
+            className="mt-3 overflow-hidden overflow-x-auto rounded-[6px] border"
+            style={{ borderColor: "var(--border-0)", background: "var(--bg-1)" }}
+          >
+            <table className="pp-table min-w-full">
+              <thead>
+                <tr>
+                  <th>Side</th>
+                  <th className="r">Shares</th>
+                  <th className="r">Avg price</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {localPositions.map((p) => (
+                  <tr key={`${p.market}-${p.option}`}>
+                    <td>
+                      <span className={cn(p.option === 1 ? "pp-chip-up" : "pp-chip-down")}>
+                        {p.optionLabel}
+                      </span>
+                    </td>
+                    <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
+                      ${formatUsdt(p.shares)}
+                    </td>
+                    <td className="r pp-tabular" style={{ color: "var(--fg-2)" }}>
+                      {p.avgPrice} bps
+                    </td>
+                    <td>
+                      <span className="pp-chip pp-chip--cd">
+                        <span className="pp-tabular">
+                          {p.marketStatus === "CLAIMED" ? "RESOLVED" : p.marketStatus}
+                        </span>
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
     </div>
   );

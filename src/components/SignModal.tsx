@@ -20,7 +20,7 @@ export function SignModal({ open, onSign, onCancel }: Props) {
         onClick={onCancel}
       />
       <div className={cn("card-kraken relative z-10 w-full max-w-md p-6 shadow-card-hover")}>
-        <h2 className="font-display text-xl font-bold tracking-tight text-foreground">Verify wallet</h2>
+        <h2 className="pp-h2">Verify wallet</h2>
         <p className="mt-2 text-sm leading-relaxed text-muted">
           Sign a message with your wallet to create your smart account and enable trading.
         </p>

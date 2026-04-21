@@ -19,7 +19,6 @@ function formatAtomicUsdtSafe(raw: string | undefined): string {
 }
 
 export default function RebatesPage() {
-  // DMM rebates API is keyed by EOA (program identity), not smart account.
   const { address, isConnected } = useAccount();
   const qc = useQueryClient();
 
@@ -63,14 +62,14 @@ export default function RebatesPage() {
     <div className="space-y-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="font-display text-3xl font-bold tracking-tight text-foreground">Rebates</h1>
-          <p className="mt-2 max-w-xl text-sm text-muted">
+          <h1 className="pp-h1">Rebates</h1>
+          <p className="pp-caption mt-1 max-w-xl">
             Accumulated maker rebates for your wallet. Claim sends an on-chain or relayer settlement per API behavior.
           </p>
         </div>
         <button
           type="button"
-          className="btn-primary shrink-0"
+          className="pp-btn pp-btn--primary pp-btn--md shrink-0"
           disabled={claim.isPending || isLoading || isError}
           onClick={() => claim.mutate()}
         >
@@ -78,9 +77,7 @@ export default function RebatesPage() {
         </button>
       </div>
 
-      {isLoading && (
-        <div className="py-12 text-center text-sm text-muted">Loading rebates…</div>
-      )}
+      {isLoading && <div className="py-8 text-center pp-caption">Loading rebates…</div>}
       {isError && (
         <EmptyState
           icon="list"
@@ -88,56 +85,66 @@ export default function RebatesPage() {
           subtitle="The rebates API may be unavailable or your wallet may not be enrolled in the DMM program."
         />
       )}
+
       {!isLoading && !isError && (
         <>
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="card-kraken p-5">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted">Accumulated</p>
-              <p className="mt-2 font-mono text-2xl font-bold tabular-nums text-foreground">
-                ${formatAtomicUsdtSafe(accumulated)}
+            <div className="pp-panel">
+              <p className="pp-micro">Accumulated</p>
+              <p className="pp-price-xl mt-2">${formatAtomicUsdtSafe(accumulated)}</p>
+              <p className="pp-hash mt-1" style={{ color: "var(--fg-2)" }}>
+                USDT (raw from API)
               </p>
-              <p className="mt-1 text-xs text-muted">USDT (raw from API)</p>
             </div>
             {totalClaimed != null && (
-              <div className="card-kraken p-5">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted">Total claimed</p>
-                <p className="mt-2 font-mono text-2xl font-bold tabular-nums text-brand">
-                  ${formatAtomicUsdtSafe(totalClaimed)}
-                </p>
+              <div className="pp-panel">
+                <p className="pp-micro">Total claimed</p>
+                <p className="pp-price-xl mt-2">${formatAtomicUsdtSafe(totalClaimed)}</p>
               </div>
             )}
           </div>
 
           <section className="space-y-3">
-            <h2 className="font-display border-b border-border pb-2 text-lg font-bold text-foreground">
-              Claim history
-            </h2>
+            <h2 className="pp-h2">Claim history</h2>
             {history.length === 0 ? (
-              <p className="text-sm text-muted">No claim records returned yet.</p>
+              <p className="pp-caption">No claim records returned yet.</p>
             ) : (
-              <ul className="space-y-2">
-                {history.map((row, i) => (
-                  <li
-                    key={`${row.claimedAt ?? i}-${row.txHash ?? ""}`}
-                    className="card-kraken flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm"
-                  >
-                    <span className="font-mono text-foreground">
-                      {row.amount != null ? `$${formatAtomicUsdtSafe(row.amount)}` : "—"}
-                    </span>
-                    <span className="text-muted">{row.claimedAt ?? "—"}</span>
-                    {row.txHash ? (
-                      <span className="font-mono text-xs text-brand">{row.txHash.slice(0, 10)}…</span>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
+              <div
+                className="overflow-hidden overflow-x-auto rounded-[6px] border"
+                style={{ borderColor: "var(--border-0)", background: "var(--bg-1)" }}
+              >
+                <table className="pp-table min-w-full">
+                  <thead>
+                    <tr>
+                      <th className="r">Amount</th>
+                      <th>Claimed at</th>
+                      <th>Tx</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.map((row, i) => (
+                      <tr key={`${row.claimedAt ?? i}-${row.txHash ?? ""}`}>
+                        <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
+                          {row.amount != null ? `$${formatAtomicUsdtSafe(row.amount)}` : "—"}
+                        </td>
+                        <td className="pp-hash" style={{ color: "var(--fg-2)" }}>
+                          {row.claimedAt ?? "—"}
+                        </td>
+                        <td className="pp-hash" style={{ color: "var(--fg-0)" }}>
+                          {row.txHash ? `${row.txHash.slice(0, 10)}…` : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </section>
         </>
       )}
 
-      <p className="text-sm text-muted">
-        <Link href="/fees" className="font-semibold text-brand hover:underline">
+      <p className="pp-caption">
+        <Link href="/fees" className="hover:underline" style={{ color: "var(--fg-0)" }}>
           Fee structure →
         </Link>
       </p>

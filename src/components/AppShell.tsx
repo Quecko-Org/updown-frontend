@@ -47,8 +47,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <Header />
       <main
         className={cn(
-          "mx-auto w-full px-4 pb-12 pt-4 sm:px-6 lg:px-8",
-          isMarketPage ? "max-w-7xl" : "max-w-6xl",
+          "mx-auto w-full px-4 pb-12 pt-6 sm:px-6 lg:px-8",
+          isMarketPage ? "max-w-[1440px]" : "max-w-[1280px]",
         )}
       >
         {children}

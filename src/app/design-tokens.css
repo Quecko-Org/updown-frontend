@@ -14,7 +14,8 @@
        woff2 when ready").
    ========================================================================== */
 
-@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap");
+/* Geist + Geist Mono @import is declared in globals.css to satisfy the
+   CSS spec requirement that all @import rules precede other statements. */
 
 /* Lemon Milk — display-only (marketing / hero surfaces). DO NOT use for UI
    body, numerics, or any in-app surface. Reserved for --font-display. */

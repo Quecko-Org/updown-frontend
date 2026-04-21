@@ -22,94 +22,116 @@ export default function FeesPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="font-display text-2xl font-bold tracking-tight text-foreground sm:text-3xl">Fees</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
-          PulsePairs charges platform and maker fees on matched volume. When the protocol uses{" "}
-          <span className="font-semibold text-foreground">probability-weighted</span> fees (same model as Polymarket),
-          the effective rate scales with the share price:{" "}
-          <span className="font-semibold text-foreground">
+        <h1 className="pp-h1">Fees</h1>
+        <p className="pp-body mt-2 max-w-2xl" style={{ color: "var(--fg-2)" }}>
+          PulsePairs charges platform and maker fees on matched volume. Under probability-weighted fees, the effective
+          rate scales with share price:{" "}
+          <span style={{ color: "var(--fg-0)", fontWeight: 500 }}>
             fees peak at {(peakBps / 100).toFixed(2)}% near a 50/50 market
           </span>{" "}
-          and taper toward <span className="font-semibold text-foreground">near zero</span> at extreme prices (e.g. 10¢
-          or 90¢), because weight = 4 × price × (1 − price) in fraction form.
+          and taper toward near zero at extremes (10¢, 90¢). Weight = 4 × price × (1 − price) in fraction form.
         </p>
       </div>
 
-      <section className="panel-dense space-y-3 p-4">
-        <h2 className="text-sm font-bold text-foreground">Effective fee examples</h2>
-        <p className="text-xs text-muted">
+      <section
+        className="pp-panel space-y-3"
+        style={{ padding: "16px" }}
+      >
+        <h2 className="pp-h2">Effective fee examples</h2>
+        <p className="pp-caption">
           Combined platform ({platform} bps) + maker ({maker} bps) = {totalBps} bps before weighting. Values below are
-          effective bps after the probability weight (integer math, aligned with backend).
+          effective bps after the probability weight.
         </p>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[280px] border-collapse text-left text-xs">
+          <table className="pp-table min-w-[280px]" style={{ width: "auto", maxWidth: 520 }}>
+            <colgroup>
+              <col style={{ width: 140 }} />
+              <col style={{ width: 200 }} />
+              <col style={{ width: 180 }} />
+            </colgroup>
             <thead>
-              <tr className="border-b border-border text-muted">
-                <th className="py-2 pr-3 font-semibold">Share price</th>
-                <th className="py-2 pr-3 font-semibold">Effective fee (bps)</th>
-                <th className="py-2 font-semibold">On $100 trade</th>
+              <tr>
+                <th>Share price</th>
+                <th className="r">Effective fee (bps)</th>
+                <th className="r">On $100 trade</th>
               </tr>
             </thead>
-            <tbody className="font-mono text-foreground">
+            <tbody>
               {TABLE_CENTS.map((cents) => {
                 const priceBps = cents * 100;
                 const eff = effectiveFeeBpsAtSharePrice(totalBps, priceBps);
                 const feeUsd = (100 * eff) / 10_000;
                 return (
-                  <tr key={cents} className="border-b border-border/70">
-                    <td className="py-1.5 pr-3">{formatShareCentsLabel(priceBps)}</td>
-                    <td className="py-1.5 pr-3">{eff}</td>
-                    <td className="py-1.5">${feeUsd.toFixed(2)}</td>
+                  <tr key={cents}>
+                    <td className="pp-tabular" style={{ color: "var(--fg-0)" }}>
+                      {formatShareCentsLabel(priceBps)}
+                    </td>
+                    <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
+                      {eff}
+                    </td>
+                    <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
+                      ${feeUsd.toFixed(2)}
+                    </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
-        <p className="text-[10px] text-muted">
-          Live values: <code className="rounded bg-surface-muted px-1">GET /config</code> (
-          <code className="rounded bg-surface-muted px-1">feeModel</code>,{" "}
-          <code className="rounded bg-surface-muted px-1">peakFeeBps</code>).
+        <p className="pp-hash" style={{ color: "var(--fg-2)" }}>
+          Live values: GET /config (feeModel, peakFeeBps).
         </p>
       </section>
 
-      <section className="panel-dense space-y-3 p-4">
-        <h2 className="text-sm font-bold text-foreground">Designated market makers (DMM)</h2>
-        <p className="text-xs leading-relaxed text-muted">
-          Market makers who meet program requirements can earn rebates on filled maker volume. Rebates are shown in the
+      <section className="pp-panel space-y-3" style={{ padding: "16px" }}>
+        <h2 className="pp-h2">Designated market makers</h2>
+        <p className="pp-body" style={{ color: "var(--fg-2)" }}>
+          Market makers who meet program requirements earn rebates on filled maker volume. Rebates are shown in the
           trade form when your wallet is approved.
         </p>
-        <p className="text-xs">
-          <Link href="/rebates" className="font-semibold text-brand hover:underline">
+        <p>
+          <Link
+            href="/rebates"
+            className="hover:underline"
+            style={{ color: "var(--fg-0)", fontWeight: 500 }}
+          >
             Rebates dashboard →
           </Link>
         </p>
       </section>
 
-      <section className="panel-dense space-y-3 p-4">
-        <h2 className="text-sm font-bold text-foreground">Order types</h2>
-        <dl className="space-y-3 text-xs">
+      <section className="pp-panel space-y-3" style={{ padding: "16px" }}>
+        <h2 className="pp-h2">Order types</h2>
+        <dl className="space-y-3">
           <div>
-            <dt className="font-semibold text-foreground">LIMIT</dt>
-            <dd className="mt-0.5 text-muted">Rests on the book at your price (basis points).</dd>
+            <dt className="pp-body-strong">LIMIT</dt>
+            <dd className="pp-body mt-0.5" style={{ color: "var(--fg-2)" }}>
+              Rests on the book at your price (basis points).
+            </dd>
           </div>
           <div>
-            <dt className="font-semibold text-foreground">MARKET</dt>
-            <dd className="mt-0.5 text-muted">Matches immediately against the best available liquidity.</dd>
+            <dt className="pp-body-strong">MARKET</dt>
+            <dd className="pp-body mt-0.5" style={{ color: "var(--fg-2)" }}>
+              Matches immediately against the best available liquidity.
+            </dd>
           </div>
           <div>
-            <dt className="font-semibold text-foreground">POST_ONLY</dt>
-            <dd className="mt-0.5 text-muted">Maker-only: rejected if it would cross and fill immediately.</dd>
+            <dt className="pp-body-strong">POST-ONLY</dt>
+            <dd className="pp-body mt-0.5" style={{ color: "var(--fg-2)" }}>
+              Maker-only. Rejected if it would cross and fill immediately.
+            </dd>
           </div>
           <div>
-            <dt className="font-semibold text-foreground">IOC</dt>
-            <dd className="mt-0.5 text-muted">Fills now; remainder canceled.</dd>
+            <dt className="pp-body-strong">IOC</dt>
+            <dd className="pp-body mt-0.5" style={{ color: "var(--fg-2)" }}>
+              Fills what is available now. Remainder cancels.
+            </dd>
           </div>
         </dl>
       </section>
 
-      <p className="text-xs text-muted">
-        <Link href="/" className="font-semibold text-brand hover:underline">
+      <p className="pp-caption">
+        <Link href="/" className="hover:underline" style={{ color: "var(--fg-0)" }}>
           ← Markets
         </Link>
       </p>
