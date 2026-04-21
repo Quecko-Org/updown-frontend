@@ -26,7 +26,7 @@ export function CancelAllMarketOrders({ marketComposite }: { marketComposite: st
     <>
       <button
         type="button"
-        className="rounded-[12px] bg-red-600 px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+        className="pp-btn pp-btn--down pp-btn--md"
         onClick={() => setOpen(true)}
       >
         Cancel all
@@ -37,7 +37,7 @@ export function CancelAllMarketOrders({ marketComposite }: { marketComposite: st
         title="Cancel all orders?"
         message="Cancel all your orders in this market?"
         confirmLabel="Cancel all"
-        confirmClassName="rounded-[12px] bg-red-600 px-4 py-3 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
+        confirmClassName="pp-btn pp-btn--down pp-btn--md"
         loading={cancel.isPending}
         onConfirm={() => cancel.mutate()}
       />

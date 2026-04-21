@@ -12,6 +12,11 @@ import { EmptyState } from "@/components/EmptyState";
 import { marketPathFromAddress } from "@/lib/marketKey";
 import { sessionReadyAtom, userSmartAccount } from "@/store/atoms";
 
+function shortenMarket(addr: string): string {
+  if (addr.length <= 22) return addr;
+  return `${addr.slice(0, 12)}…${addr.slice(-8)}`;
+}
+
 export default function PositionsPage() {
   const { isConnected, address: walletAddress } = useAccount();
   const smartAccount = useAtomValue(userSmartAccount);
@@ -37,99 +42,117 @@ export default function PositionsPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  if (!isConnected) {
-    return (
-      <div className="flex min-h-[50vh] flex-col items-center justify-center">
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="pp-h1">Positions</h1>
+        <p className="pp-caption mt-1">Open exposure per market. Winnings credit via the relayer.</p>
+      </div>
+
+      {!isConnected && (
         <EmptyState
           icon="wallet"
           title="Connect your wallet"
-          subtitle="Connect with the button in the header to view your open positions and claim resolved markets."
+          subtitle="Connect with the button in the header to view open positions and claim resolved markets."
         />
-      </div>
-    );
-  }
+      )}
 
-  if (isLoading) {
-    return (
-      <div className="flex min-h-[40vh] items-center justify-center text-sm text-muted">Loading positions…</div>
-    );
-  }
+      {isConnected && isLoading && (
+        <div className="py-8 text-center pp-caption">Loading positions…</div>
+      )}
 
-  return (
-    <div className="space-y-8">
-      <h1 className="font-display text-3xl font-bold tracking-tight text-foreground">Positions</h1>
-      {!data?.length && (
+      {isConnected && !isLoading && !data?.length && (
         <EmptyState
           icon="trade"
           title="No open positions"
-          subtitle="When you buy UP or DOWN on a market, your exposure will show here. Browse markets from the home page to get started."
+          subtitle="When you buy UP or DOWN on a market, your exposure will show here."
         />
       )}
-      <ul className="space-y-4">
-        {data?.map((p) => (
-          <li
-            key={`${p.market}-${p.option}`}
-            className={cn(
-              "card-kraken flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between",
-              p.option === 1 && "border-l-4 border-l-success",
-              p.option === 2 && "border-l-4 border-l-down"
-            )}
-          >
-            <div>
-              <Link href={marketPathFromAddress(p.market)} className="font-display text-lg font-bold text-brand hover:underline">
-                {p.market.length > 22
-                  ? `${p.market.slice(0, 12)}…${p.market.slice(-10)}`
-                  : p.market}
-              </Link>
-              <p className="mt-1 text-sm text-muted">
-                <span
-                  className={cn(
-                    "mr-2 font-semibold",
-                    p.option === 1 ? "text-success-dark" : "text-down"
-                  )}
-                >
-                  {p.optionLabel}
-                </span>
-                · {p.marketStatus}
-              </p>
-              <p className="mt-2 text-sm text-foreground">
-                Shares{" "}
-                <span className="font-mono font-semibold">{formatUsdt(p.shares)}</span>
-                <span className="text-muted"> · Avg {p.avgPrice} bps</span>
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {/*
-               * CLAIMED = relayer auto-claimed (status flips to CLAIMED together
-               * with claimedByRelayer=true in ClaimService). Show a confirmation
-               * badge — no button, nothing to do.
-               * RESOLVED (without CLAIMED yet) = settlement winner known but the
-               * relayer path hasn't credited yet — keep a manual nudge button
-               * as the fallback for relayer-failure cases.
-               */}
-              {p.marketStatus === "CLAIMED" && (
-                <span className="rounded-[12px] border border-success/30 bg-success/10 px-3 py-1.5 text-sm font-semibold text-success">
-                  Auto-claimed ✓
-                </span>
-              )}
-              {p.marketStatus === "RESOLVED" && (
-                <button
-                  type="button"
-                  className="btn-primary !text-sm"
-                  disabled={claim.isPending}
-                  onClick={() => claim.mutate(p.market)}
-                  title="Nudge the relayer to credit winnings for this market."
-                >
-                  Claim / sync
-                </button>
-              )}
-            </div>
-          </li>
-        ))}
-      </ul>
-      <p className="text-xs leading-relaxed text-muted">
-        Winnings are credited by the relayer after resolution. Claim nudges the backend relayer path for
-        resolved markets.
+
+      {!!data?.length && (
+        <div
+          className="overflow-hidden overflow-x-auto rounded-[6px] border"
+          style={{ borderColor: "var(--border-0)", background: "var(--bg-1)" }}
+        >
+          <table className="pp-table min-w-full">
+            <thead>
+              <tr>
+                <th>Market</th>
+                <th>Side</th>
+                <th>Status</th>
+                <th className="r">Shares</th>
+                <th className="r">Avg price</th>
+                <th className="r">&nbsp;</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.map((p) => (
+                <tr key={`${p.market}-${p.option}`}>
+                  <td>
+                    <Link
+                      href={marketPathFromAddress(p.market)}
+                      className="hover:underline"
+                      style={{ color: "var(--fg-0)" }}
+                    >
+                      <span className="pp-hash">{shortenMarket(p.market)}</span>
+                    </Link>
+                  </td>
+                  <td>
+                    <span className={cn(p.option === 1 ? "pp-chip-up" : "pp-chip-down")}>
+                      {p.optionLabel}
+                    </span>
+                  </td>
+                  <td>
+                    <span
+                      className={cn(
+                        p.marketStatus === "CLAIMED" && "pp-chip-status--filled",
+                        p.marketStatus === "RESOLVED" && "pp-chip-status--open",
+                        p.marketStatus === "ACTIVE" && "pp-chip-status--open",
+                        p.marketStatus !== "CLAIMED" &&
+                          p.marketStatus !== "RESOLVED" &&
+                          p.marketStatus !== "ACTIVE" &&
+                          "pp-chip-status--cancelled",
+                        "pp-chip-status",
+                      )}
+                    >
+                      {p.marketStatus}
+                    </span>
+                  </td>
+                  <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
+                    ${formatUsdt(p.shares)}
+                  </td>
+                  <td className="r pp-tabular" style={{ color: "var(--fg-2)" }}>
+                    {p.avgPrice} bps
+                  </td>
+                  <td className="r">
+                    {/*
+                     * CLAIMED = relayer auto-claimed. Show confirmation chip.
+                     * RESOLVED (not yet CLAIMED) = keep manual "Claim" as relayer-failure fallback.
+                     */}
+                    {p.marketStatus === "CLAIMED" && (
+                      <span className="pp-chip-status pp-chip-status--filled">Auto-claimed</span>
+                    )}
+                    {p.marketStatus === "RESOLVED" && (
+                      <button
+                        type="button"
+                        className="pp-btn pp-btn--secondary pp-btn--sm"
+                        disabled={claim.isPending}
+                        onClick={() => claim.mutate(p.market)}
+                        title="Nudge the relayer to credit winnings for this market."
+                      >
+                        Claim
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <p className="pp-caption">
+        Winnings are credited by the relayer after resolution. Claim nudges the backend path for resolved markets.
       </p>
     </div>
   );

@@ -345,6 +345,7 @@
 .pp-table th { text-align: left; padding: 8px 12px; font-family: var(--font-sans); font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-2); border-bottom: 1px solid var(--border-0); }
 .pp-table th.r { text-align: right; }
 .pp-table td { padding: 10px 12px; border-bottom: 1px solid var(--border-0); font-family: var(--font-sans); font-size: 13px; color: var(--fg-0); }
+.pp-table td.pp-tabular, .pp-table td.pp-hash, .pp-table td.pp-price-md { font-family: var(--font-mono); font-variant-numeric: tabular-nums slashed-zero; }
 .pp-table td.r { text-align: right; }
 .pp-table tr:last-child td { border-bottom: 0; }
 .pp-pair { display: flex; align-items: center; gap: 6px; font-family: var(--font-sans); }
@@ -391,3 +392,29 @@
 
 /* ---------- fees ---------- */
 .pp-fees { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+
+/* ---------- directional + status chips (dense tables, order rows) ---------- */
+.pp-chip-up, .pp-chip-down, .pp-chip-status {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: var(--font-sans); font-size: 10px; font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase;
+  padding: 3px 7px; border-radius: 3px; border: 1px solid transparent;
+  white-space: nowrap;
+}
+.pp-chip-up   { background: var(--up-bg);   color: var(--up);   border-color: var(--up-border); }
+.pp-chip-down { background: var(--down-bg); color: var(--down); border-color: var(--down-border); }
+
+.pp-chip-status--open     { background: var(--bg-1); color: var(--fg-0); border-color: var(--border-1); }
+.pp-chip-status--filled   { background: var(--up-bg); color: var(--up); border-color: var(--up-border); }
+.pp-chip-status--cancelled{ background: var(--bg-2); color: var(--fg-2); border-color: var(--border-0); }
+.pp-chip-status--partial  { background: var(--warn-bg); color: var(--warn); border-color: oklch(80% 0.15 85 / 0.4); }
+
+/* ---------- dense header/section labels ---------- */
+.pp-section-label {
+  font-family: var(--font-sans); font-size: 11px; font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--fg-2);
+}
+
+/* ---------- nav link (explicit 14px 500 spec) ---------- */
+.pp-hdr__navlink { font-size: 14px; font-weight: 500; }

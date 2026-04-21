@@ -98,7 +98,7 @@ export function WithdrawModal({ open, onClose }: Props) {
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
         <button type="button" className="absolute inset-0 bg-overlay" aria-label="Close" onClick={onClose} />
         <div className={cn("card-kraken relative z-10 w-full max-w-md p-6 shadow-card-hover")}>
-          <h2 className="font-display text-xl font-bold text-foreground">Withdraw USDT</h2>
+          <h2 className="pp-h2">Withdraw USDT</h2>
           <p className="mt-2 text-sm text-muted">Please complete connection first</p>
           <button type="button" className="btn-secondary mt-6 w-full" onClick={onClose}>
             Close
@@ -149,8 +149,8 @@ export function WithdrawModal({ open, onClose }: Props) {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <button type="button" className="absolute inset-0 bg-overlay" aria-label="Close" onClick={onClose} />
       <div className={cn("card-kraken relative z-10 w-full max-w-md p-6 shadow-card-hover")}>
-        <h2 className="font-display text-xl font-bold text-foreground">Withdraw USDT</h2>
-        <p className="mt-2 text-sm text-muted">
+        <h2 className="pp-h2">Withdraw USDT</h2>
+        <p className="pp-body mt-2" style={{ color: "var(--fg-2)" }}>
           Send USDT from your smart account to your connected wallet. This uses a sponsored user operation signed by
           your wallet (owner), not the trading session key.
         </p>

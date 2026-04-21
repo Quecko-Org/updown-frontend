@@ -22,7 +22,7 @@ export function DepositModal({ open, onClose, depositAddress }: Props) {
         onClick={onClose}
       />
       <div className={cn("card-kraken relative z-10 w-full max-w-md p-6 shadow-card-hover")}>
-        <h2 className="font-display text-xl font-bold tracking-tight text-foreground">Deposit USDT</h2>
+        <h2 className="pp-h2">Deposit USDT</h2>
         <p className="mt-2 text-sm leading-relaxed text-muted">
           Send USDT on Arbitrum to your smart account address below. Funds are controlled only by you — the backend
           can only use them for trades you authorize. Balance updates after confirmations.
@@ -38,7 +38,7 @@ export function DepositModal({ open, onClose, depositAddress }: Props) {
           className="btn-primary mt-6 w-full"
           onClick={() => {
             navigator.clipboard.writeText(depositAddress);
-            toast.success("Address copied!");
+            toast.success("Address copied");
           }}
         >
           Copy address

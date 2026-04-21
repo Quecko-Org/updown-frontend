@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
@@ -83,8 +84,11 @@ export function Header() {
     <>
       {/* Full-screen loading overlay */}
       {isLoading && (
-        <div className="fixed inset-0 z-[90] flex flex-col items-center justify-center gap-3 bg-background/80 backdrop-blur-sm">
-          <div className="h-10 w-10 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+        <div
+          className="fixed inset-0 z-[90] flex flex-col items-center justify-center gap-3"
+          style={{ background: "oklch(14% 0.01 250 / 0.82)", backdropFilter: "blur(4px)" }}
+        >
+          <span className="pp-spin h-8 w-8" />
           {loadingStep && (
             <p className="max-w-xs text-center text-sm font-medium text-foreground">{loadingStep}</p>
           )}
@@ -93,28 +97,27 @@ export function Header() {
 
       <SignModal open={showSignModal} onSign={() => void handleSign()} onCancel={closeSignModal} />
 
-      <header className="sticky top-0 z-40 border-b border-border bg-background/85 shadow-card backdrop-blur-sm">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
-          {/* Logo */}
-          <Link
-            href="/"
-            className="font-display text-xl font-bold tracking-tight text-brand transition-opacity hover:opacity-90"
-          >
-            PulsePairs
+      <header className="pp-hdr">
+        <div className="pp-hdr__inner">
+          {/* Brand — SVG wordmark (mark + "PulsePairs" text baked into the SVG) */}
+          <Link href="/" className="pp-hdr__brand" aria-label="PulsePairs — markets">
+            <Image
+              src="/logo/pulsepairs-wordmark-dark.svg"
+              alt="PulsePairs"
+              width={154}
+              height={28}
+              priority
+              style={{ height: 28, width: "auto" }}
+            />
           </Link>
 
           {/* Desktop nav */}
-          <nav className="hidden items-center gap-1 sm:flex">
+          <nav className="pp-hdr__nav hidden sm:flex">
             {NAV.map((n) => (
               <Link
                 key={n.href}
                 href={n.href}
-                className={cn(
-                  "rounded-[12px] px-3 py-2 text-sm font-medium transition-colors",
-                  navActive(n.href)
-                    ? "bg-brand-subtle text-brand"
-                    : "text-foreground hover:bg-surface-muted hover:text-brand",
-                )}
+                className={cn("pp-hdr__navlink", navActive(n.href) && "pp-hdr__navlink--on")}
               >
                 {n.label}
               </Link>
@@ -122,66 +125,68 @@ export function Header() {
             {isWalletConnected && dmmStatus?.isDmm ? (
               <Link
                 href="/rebates"
-                className={cn(
-                  "rounded-[12px] px-3 py-2 text-sm font-medium transition-colors",
-                  pathname === "/rebates"
-                    ? "bg-brand-subtle text-brand"
-                    : "text-foreground hover:bg-surface-muted hover:text-brand",
-                )}
+                className={cn("pp-hdr__navlink", pathname === "/rebates" && "pp-hdr__navlink--on")}
               >
                 Rebates
               </Link>
             ) : null}
           </nav>
 
-          {/* Right side: balance + actions */}
-          <div className="flex items-center gap-2">
+          {/* Right: balance + actions */}
+          <div className="pp-hdr__right">
             {isWalletConnected && walletAddress && (
               <>
-                {/* Balance chip — hover for inOrders / total breakdown (Polymarket-parity portfolio glance). */}
-                <div className="hidden items-center gap-2 sm:flex">
-                  <div className="group relative">
-                    <span
-                      className="block cursor-default rounded-[12px] border border-border bg-surface-muted px-3 py-1.5 font-mono text-sm font-semibold tabular-nums text-foreground"
-                      aria-describedby="balance-breakdown"
-                    >
-                      ${formatUsdt(bal?.available ?? "0")}
-                    </span>
+                {/* Balance + address chip — hover for in-orders / total breakdown. */}
+                <div className="group relative hidden sm:block">
+                  <span className="pp-walletchip" aria-describedby="balance-breakdown">
+                    <span className="pp-walletchip__dot" />
+                    <span className="pp-walletchip__bal">${formatUsdt(bal?.available ?? "0")}</span>
+                    <span className="pp-walletchip__sep" />
+                    <span className="pp-walletchip__addr">{getFormattedAddress(walletAddress)}</span>
+                  </span>
+                  <div
+                    id="balance-breakdown"
+                    role="tooltip"
+                    className="pointer-events-none absolute right-0 top-full z-50 mt-2 hidden min-w-[220px] group-hover:block"
+                  >
                     <div
-                      id="balance-breakdown"
-                      role="tooltip"
-                      className="pointer-events-none absolute right-0 top-full z-50 mt-2 hidden min-w-[200px] rounded-[12px] border border-border bg-surface-muted p-3 text-xs shadow-card-hover group-hover:block"
+                      className="rounded-[6px] border p-3"
+                      style={{
+                        background: "var(--bg-1)",
+                        borderColor: "var(--border-0)",
+                        boxShadow: "var(--shadow-popover)",
+                      }}
                     >
-                      <dl className="space-y-1.5">
+                      <dl className="space-y-1.5 text-xs">
                         <div className="flex items-baseline justify-between gap-4">
-                          <dt className="text-muted">Available</dt>
-                          <dd className="font-mono font-semibold tabular-nums text-foreground">
+                          <dt style={{ color: "var(--fg-2)" }}>Available</dt>
+                          <dd className="pp-tabular" style={{ color: "var(--fg-0)", fontWeight: 500 }}>
                             ${formatUsdt(bal?.available ?? "0")}
                           </dd>
                         </div>
                         <div className="flex items-baseline justify-between gap-4">
-                          <dt className="text-muted">In orders</dt>
-                          <dd className="font-mono tabular-nums text-foreground">
+                          <dt style={{ color: "var(--fg-2)" }}>In orders</dt>
+                          <dd className="pp-tabular" style={{ color: "var(--fg-0)" }}>
                             ${formatUsdt(bal?.inOrders ?? "0")}
                           </dd>
                         </div>
-                        <div className="flex items-baseline justify-between gap-4 border-t border-border pt-1.5">
-                          <dt className="font-semibold text-foreground">Total</dt>
-                          <dd className="font-mono font-semibold tabular-nums text-foreground">
+                        <div
+                          className="flex items-baseline justify-between gap-4 pt-1.5"
+                          style={{ borderTop: "1px solid var(--border-0)" }}
+                        >
+                          <dt style={{ color: "var(--fg-0)", fontWeight: 600 }}>Total</dt>
+                          <dd className="pp-tabular" style={{ color: "var(--fg-0)", fontWeight: 500 }}>
                             ${formatUsdt(bal?.cachedBalance ?? "0")}
                           </dd>
                         </div>
                       </dl>
                     </div>
                   </div>
-                  <span className="rounded-[12px] border border-border bg-surface-muted px-3 py-1.5 font-mono text-xs text-muted">
-                    {getFormattedAddress(walletAddress)}
-                  </span>
                 </div>
-                {/* Action buttons */}
+
                 <button
                   type="button"
-                  className="rounded-[12px] bg-brand px-3 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                  className="pp-btn pp-btn--primary pp-btn--sm"
                   onClick={() => setDepositOpen(true)}
                   disabled={!depositAddress}
                 >
@@ -189,7 +194,7 @@ export function Header() {
                 </button>
                 <button
                   type="button"
-                  className="hidden rounded-[12px] border border-border bg-surface-muted px-3 py-2 text-sm font-semibold text-foreground transition-colors hover:border-neutral sm:inline-flex"
+                  className="pp-btn pp-btn--secondary pp-btn--sm hidden sm:inline-flex"
                   onClick={() => setWithdrawOpen(true)}
                 >
                   Withdraw
@@ -198,20 +203,18 @@ export function Header() {
                   <button
                     type="button"
                     className={cn(
-                      "hidden rounded-[12px] px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-50 sm:inline-flex",
-                      sessionRestoreFailed
-                        ? "animate-pulse border-2 border-down bg-down/10 text-down hover:bg-down/20"
-                        : "border border-brand bg-brand-subtle text-brand hover:opacity-90",
+                      "pp-btn pp-btn--sm hidden sm:inline-flex",
+                      sessionRestoreFailed ? "pp-btn--down" : "pp-btn--secondary",
                     )}
                     disabled={isLoading}
                     onClick={() => void reauthorizeSession()}
                   >
-                    {sessionRestoreFailed ? "⚠ Re-authorize" : "Re-authorize"}
+                    Re-authorize
                   </button>
                 ) : null}
                 <button
                   type="button"
-                  className="hidden rounded-[12px] border border-border px-3 py-2 text-sm font-medium text-muted transition-colors hover:border-brand hover:text-brand sm:inline-flex"
+                  className="pp-btn pp-btn--ghost pp-btn--sm hidden sm:inline-flex"
                   onClick={() => void disconnectWallet()}
                 >
                   Disconnect
@@ -223,7 +226,7 @@ export function Header() {
               <div className="relative" ref={connectRef}>
                 <button
                   type="button"
-                  className="rounded-[12px] bg-brand px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                  className="pp-btn pp-btn--primary pp-btn--md"
                   disabled={isLoading}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -233,11 +236,15 @@ export function Header() {
                   {isLoading ? "Connecting…" : "Connect wallet"}
                 </button>
                 {connectOpen && (
-                  <div className="absolute right-0 top-full z-50 mt-2 min-w-[220px] rounded-[12px] border border-border bg-surface-muted py-1 shadow-card-hover">
-                    <WalletConnectorList
-                      onPick={() => setConnectOpen(false)}
-                      buttonClassName="block"
-                    />
+                  <div
+                    className="absolute right-0 top-full z-50 mt-2 min-w-[220px] rounded-[6px] border py-1"
+                    style={{
+                      background: "var(--bg-1)",
+                      borderColor: "var(--border-0)",
+                      boxShadow: "var(--shadow-overlay)",
+                    }}
+                  >
+                    <WalletConnectorList onPick={() => setConnectOpen(false)} buttonClassName="block" />
                   </div>
                 )}
               </div>
@@ -246,11 +253,19 @@ export function Header() {
             {/* Mobile hamburger */}
             <button
               type="button"
-              className="ml-1 rounded-[12px] p-2 text-foreground transition-colors hover:bg-surface-muted sm:hidden"
+              className="pp-btn pp-btn--ghost pp-btn--sm ml-1 sm:hidden"
               onClick={() => setMobileMenuOpen((o) => !o)}
               aria-label="Menu"
             >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              >
                 {mobileMenuOpen ? (
                   <>
                     <path d="M18 6 6 18" />
@@ -270,7 +285,10 @@ export function Header() {
 
         {/* Mobile menu */}
         {mobileMenuOpen && (
-          <div className="border-t border-border bg-background px-4 pb-4 pt-2 sm:hidden">
+          <div
+            className="px-4 pb-4 pt-2 sm:hidden"
+            style={{ background: "var(--bg-0)", borderTop: "1px solid var(--border-0)" }}
+          >
             <nav className="flex flex-col gap-1">
               {NAV.map((n) => (
                 <Link
@@ -278,10 +296,8 @@ export function Header() {
                   href={n.href}
                   onClick={() => setMobileMenuOpen(false)}
                   className={cn(
-                    "rounded-[12px] px-3 py-2.5 text-sm font-medium transition-colors",
-                    navActive(n.href)
-                      ? "bg-brand-subtle text-brand"
-                      : "text-foreground hover:bg-surface-muted",
+                    "pp-hdr__navlink",
+                    navActive(n.href) && "pp-hdr__navlink--on",
                   )}
                 >
                   {n.label}
@@ -292,10 +308,8 @@ export function Header() {
                   href="/rebates"
                   onClick={() => setMobileMenuOpen(false)}
                   className={cn(
-                    "rounded-[12px] px-3 py-2.5 text-sm font-medium transition-colors",
-                    pathname === "/rebates"
-                      ? "bg-brand-subtle text-brand"
-                      : "text-foreground hover:bg-surface-muted",
+                    "pp-hdr__navlink",
+                    pathname === "/rebates" && "pp-hdr__navlink--on",
                   )}
                 >
                   Rebates
@@ -303,18 +317,19 @@ export function Header() {
               ) : null}
             </nav>
             {isWalletConnected && walletAddress && (
-              <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3">
+              <div className="mt-3 flex flex-col gap-2 pt-3" style={{ borderTop: "1px solid var(--border-0)" }}>
                 <div className="flex items-center justify-between">
-                  <span className="font-mono text-xs text-muted">{getFormattedAddress(walletAddress)}</span>
-                  <span className="font-mono text-sm font-semibold text-foreground">
-                    ${formatUsdt(bal?.available ?? "0")}
-                  </span>
+                  <span className="pp-walletchip__addr">{getFormattedAddress(walletAddress)}</span>
+                  <span className="pp-walletchip__bal">${formatUsdt(bal?.available ?? "0")}</span>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    className="flex-1 rounded-[12px] border border-border bg-surface-muted py-2 text-sm font-semibold text-foreground"
-                    onClick={() => { setWithdrawOpen(true); setMobileMenuOpen(false); }}
+                    className="pp-btn pp-btn--secondary pp-btn--sm flex-1"
+                    onClick={() => {
+                      setWithdrawOpen(true);
+                      setMobileMenuOpen(false);
+                    }}
                   >
                     Withdraw
                   </button>
@@ -322,10 +337,8 @@ export function Header() {
                     <button
                       type="button"
                       className={cn(
-                        "flex-1 rounded-[12px] py-2 text-sm font-semibold disabled:opacity-50",
-                        sessionRestoreFailed
-                          ? "animate-pulse border-2 border-down bg-down/10 text-down"
-                          : "border border-brand bg-brand-subtle text-brand",
+                        "pp-btn pp-btn--sm flex-1",
+                        sessionRestoreFailed ? "pp-btn--down" : "pp-btn--secondary",
                       )}
                       disabled={isLoading}
                       onClick={() => {
@@ -333,13 +346,16 @@ export function Header() {
                         setMobileMenuOpen(false);
                       }}
                     >
-                      {sessionRestoreFailed ? "⚠ Re-authorize" : "Re-authorize"}
+                      Re-authorize
                     </button>
                   ) : null}
                   <button
                     type="button"
-                    className="flex-1 rounded-[12px] border border-border py-2 text-sm font-medium text-muted"
-                    onClick={() => { void disconnectWallet(); setMobileMenuOpen(false); }}
+                    className="pp-btn pp-btn--ghost pp-btn--sm flex-1"
+                    onClick={() => {
+                      void disconnectWallet();
+                      setMobileMenuOpen(false);
+                    }}
                   >
                     Disconnect
                   </button>

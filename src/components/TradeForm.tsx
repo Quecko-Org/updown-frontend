@@ -37,17 +37,8 @@ const PRESETS = [5, 25, 50, 100, 500];
 const ORDER_TYPES: { id: OrderApiType; label: string; tooltip?: string }[] = [
   { id: "LIMIT", label: "Limit" },
   { id: "MARKET", label: "Market" },
-  {
-    id: "POST_ONLY",
-    label: "Post-only",
-    tooltip:
-      "Your order will only rest on the book. If it would fill immediately, it's rejected.",
-  },
-  {
-    id: "IOC",
-    label: "IOC",
-    tooltip: "Fill what's available now, cancel the remainder.",
-  },
+  { id: "POST_ONLY", label: "Post-only", tooltip: "Maker-only. Rejected if it would cross and fill immediately." },
+  { id: "IOC", label: "IOC", tooltip: "Fill what's available now. Cancel the remainder." },
 ];
 
 function InfoTip({ text }: { text: string }) {
@@ -55,10 +46,11 @@ function InfoTip({ text }: { text: string }) {
     <span className="inline-flex align-middle" title={text}>
       <span className="sr-only">{text}</span>
       <svg
-        className="ml-0.5 inline h-3.5 w-3.5 text-muted"
+        className="ml-0.5 inline h-3 w-3"
         viewBox="0 0 12 12"
         fill="currentColor"
         aria-hidden
+        style={{ color: "var(--fg-2)" }}
       >
         <path d="M6 0a6 6 0 100 12A6 6 0 006 0zm.75 9H5.25V5.25h1.5V9zm0-5.25H5.25v-1h1.5v1z" />
       </svg>
@@ -76,10 +68,6 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const [dollars, setDollars] = useState(25);
   const [orderSide, setOrderSide] = useState<0 | 1>(0);
   const [orderType, setOrderType] = useState<OrderApiType>("LIMIT");
-  // Fix A: user-controlled LIMIT price in whole cents (1-99). `null` = fall
-  // back to auto-derived limitPrice (best-ask + 50bps / best-bid - 50bps).
-  // Cleared on context change (orderType / side / market) so the default
-  // re-seeds correctly; user then edits to cross-match against another trader.
   const [userPriceCentsInput, setUserPriceCentsInput] = useState<string>("");
   const qc = useQueryClient();
   const connectSectionRef = useRef<HTMLDivElement>(null);
@@ -147,19 +135,13 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     return 5000;
   }, [market, orderType, side]);
 
-  // Reset user-override when the context the auto-derivation depends on changes
-  // — prevents a stale 55¢ input from leaking into a BUY on a new market.
   useEffect(() => {
     setUserPriceCentsInput("");
   }, [orderType, side, marketKey]);
 
-  // Effective LIMIT price in bps: user override when present + valid, else
-  // auto-derivation. MARKET orders ignore this (priceNum = 0 below).
   const userPriceParsed = validateLimitPriceCents(userPriceCentsInput);
   const userOverrideActive = userPriceCentsInput !== "" && userPriceParsed.value != null;
-  const limitPrice = userOverrideActive
-    ? (userPriceParsed.value as number) * 100
-    : autoLimitPrice;
+  const limitPrice = userOverrideActive ? (userPriceParsed.value as number) * 100 : autoLimitPrice;
   const autoCentsDisplay = Math.round(autoLimitPrice / 100);
   const priceInputInvalid = userPriceCentsInput !== "" && userPriceParsed.value == null;
 
@@ -186,6 +168,19 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     sharePriceBps,
   });
 
+  // Best-book price for each side — shown inside the UP/DOWN tabs so trader
+  // has a single line of truth without glancing at the book ladder.
+  const upCents = useMemo(() => {
+    if (!market) return null;
+    const p = market.orderBook.up.bestAsk?.price ?? market.orderBook.up.bestBid?.price;
+    return p != null ? Math.round(p / 100) : null;
+  }, [market]);
+  const downCents = useMemo(() => {
+    if (!market) return null;
+    const p = market.orderBook.down.bestAsk?.price ?? market.orderBook.down.bestBid?.price;
+    return p != null ? Math.round(p / 100) : null;
+  }, [market]);
+
   const submit = useMutation({
     mutationFn: async () => {
       if (!address || !cfg || !parsedKey) throw new Error("Connect wallet");
@@ -195,20 +190,11 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       const max = parseUsdtToAtomic("500");
       if (amount < min || amount > max) throw new Error("Amount must be $5–$500");
 
-      // Fix A: if the user typed a price, it must validate (1-99¢ whole
-      // cents). Don't ask the user to sign garbage only to have the backend
-      // reject.
       if (orderType !== "MARKET" && userPriceCentsInput !== "") {
         const v = validateLimitPriceCents(userPriceCentsInput);
         if (v.value == null) throw new Error(v.error ?? "Invalid price");
       }
 
-      // Fix B: pre-check share ownership BEFORE asking the user to sign. The
-      // backend (P1 Batch B) correctly returns 400 "Insufficient shares to
-      // sell" — but prompting a wallet popup first and THEN showing the error
-      // is a dumb flow. Fetch the current positions and reject client-side.
-      // This is a non-blocking soft guard: if the request races or fails,
-      // the backend still enforces the invariant.
       if (orderSide === 1 /* SELL */) {
         try {
           const positions = await getPositions(address);
@@ -220,12 +206,10 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             throw new Error(
               match
                 ? `Insufficient shares to sell. You own $${(Number(owned) / 1e6).toFixed(2)} of ${side === 1 ? "UP" : "DOWN"}.`
-                : `Insufficient shares to sell — you don't own any ${side === 1 ? "UP" : "DOWN"} shares on this market.`,
+                : `Insufficient shares to sell. You don't own any ${side === 1 ? "UP" : "DOWN"} shares on this market.`,
             );
           }
         } catch (e) {
-          // Only bubble our own "Insufficient shares" error. A network failure
-          // on /positions shouldn't block the order — backend validates again.
           if (e instanceof Error && e.message.startsWith("Insufficient shares")) throw e;
           console.warn("[TradeForm] positions precheck failed, proceeding to sign:", e);
         }
@@ -271,8 +255,6 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       qc.invalidateQueries({ queryKey: ["positions", sa] });
       qc.invalidateQueries({ queryKey: ["balance", addrLower] });
       qc.invalidateQueries({ queryKey: ["orderbook", marketKey.toLowerCase()] });
-      // Fix D: refresh any "my orders" view so a newly-placed LIMIT/POST_ONLY
-      // appears in the history/open-orders list inside ~500ms of placement.
       qc.invalidateQueries({ queryKey: ["orders", addrLower] });
     },
     onError: (e: Error) => toast.error(formatUserFacingError(e)),
@@ -291,74 +273,63 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const rebateBps = dmmStatus?.isDmm ? apiConfig?.dmmRebateBps : undefined;
 
   return (
-    <div className="panel-dense px-3 py-3">
-      <h3 className="text-xs font-bold uppercase tracking-wide text-muted">Trade</h3>
-      <div className="mt-2 flex rounded-lg border border-border p-0.5">
+    <div className="pp-panel pp-trade">
+      <span className="pp-micro">Trade</span>
+
+      {/* Buy / Sell segmented */}
+      <div className="pp-seg">
         <button
           type="button"
-          className={cn(
-            "flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
-            orderSide === 0 ? "bg-brand text-white" : "text-muted hover:text-foreground",
-          )}
+          className={cn("pp-seg__btn", orderSide === 0 && "pp-seg__btn--on")}
           onClick={() => setOrderSide(0)}
         >
           Buy
         </button>
         <button
           type="button"
-          className={cn(
-            "flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
-            orderSide === 1 ? "bg-brand text-white" : "text-muted hover:text-foreground",
-          )}
+          className={cn("pp-seg__btn", orderSide === 1 && "pp-seg__btn--on")}
           onClick={() => setOrderSide(1)}
         >
           Sell
         </button>
       </div>
-      <div className="mt-2 flex gap-1.5">
+
+      {/* UP / DOWN */}
+      <div className="pp-trade__ud">
         <button
           type="button"
-          className={cn(
-            "flex-1 rounded-[10px] py-2.5 text-sm font-semibold transition-colors",
-            side === 1
-              ? "bg-success text-white shadow-sm"
-              : "bg-surface-muted text-foreground hover:bg-success-soft",
-          )}
+          className={cn("pp-trade__udbtn", side === 1 && "pp-trade__udbtn--up-on")}
           onClick={() => {
             setSide(1);
             if (!isConnected) scrollToConnect();
           }}
         >
-          UP
+          <span>▲ UP</span>
+          <span className="pp-tabular">{upCents != null ? `${upCents}¢` : "—"}</span>
         </button>
         <button
           type="button"
-          className={cn(
-            "flex-1 rounded-[10px] py-2.5 text-sm font-semibold transition-colors",
-            side === 2
-              ? "bg-down text-white shadow-sm"
-              : "bg-surface-muted text-foreground hover:bg-down-soft",
-          )}
+          className={cn("pp-trade__udbtn", side === 2 && "pp-trade__udbtn--down-on")}
           onClick={() => {
             setSide(2);
             if (!isConnected) scrollToConnect();
           }}
         >
-          DOWN
+          <span>▼ DOWN</span>
+          <span className="pp-tabular">{downCents != null ? `${downCents}¢` : "—"}</span>
         </button>
       </div>
+
+      {/* Order type */}
       <div className="mt-3">
-        <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">Order type</p>
-        <div className="flex flex-wrap gap-2">
+        <span className="pp-micro">Order type</span>
+        <div className="pp-seg mt-1">
           {ORDER_TYPES.map((ot) => (
             <button
               key={ot.id}
               type="button"
               title={ot.tooltip}
-              className={cn(
-                "inline-flex items-center rounded-[12px] px-3 py-2 text-xs font-semibold transition-colors",
-                orderType === ot.id ? "bg-brand-subtle text-brand" : "text-muted hover:bg-surface-muted",
-              )}
+              className={cn("pp-seg__btn", orderType === ot.id && "pp-seg__btn--on")}
               onClick={() => setOrderType(ot.id)}
             >
               {ot.label}
@@ -367,62 +338,12 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
           ))}
         </div>
       </div>
-      <div className="mt-3">
-        <label className="text-[10px] font-medium text-muted">Size (USDT)</label>
-        <input
-          type="range"
-          min={5}
-          max={500}
-          step={1}
-          value={dollars}
-          onChange={(e) => setDollars(Number(e.target.value))}
-          className="mt-1 w-full accent-brand"
-        />
-        <div className="mt-2 flex flex-wrap gap-2">
-          {PRESETS.map((p) => (
-            <button
-              key={p}
-              type="button"
-              className="rounded-[12px] border border-border px-3 py-1.5 text-xs font-semibold text-foreground transition-colors hover:border-brand hover:text-brand"
-              onClick={() => setDollars(p)}
-            >
-              ${p}
-            </button>
-          ))}
-        </div>
-        <p className="mt-1 text-center text-base font-bold tabular-nums text-foreground">${dollars}</p>
-      </div>
-      <p className="mt-2 text-xs font-semibold text-foreground">
-        If {side === 1 ? "UP" : "DOWN"} wins:{" "}
-        <span className="text-success">+${payoutIfWin.toFixed(2)}</span>{" "}
-        <span className="font-normal text-muted">(est., after fees)</span>
-      </p>
-      <div className="mt-1.5 space-y-1 text-[10px] text-muted">
-        <p className="text-foreground">
-          Fee:{" "}
-          <span className="font-semibold">
-            ${feeUsdDisplay.toFixed(2)} ({effectivePercentOfNotional.toFixed(2)}% at {shareCentsLabel})
-          </span>{" "}
-          <InfoTip
-            text={`Peak fee: ${peakFeePct}% at 50¢ (combined platform + maker bps). Fees scale down toward 0¢ and 100¢ — same probability weight as Polymarket.`}
-          />
-        </p>
-        <p className="text-muted">
-          Peak fee {(peakFeeBps / 100).toFixed(2)}% at 50¢ — lower when the book is far from 50/50.
-        </p>
-        {rebateBps != null && rebateBps > 0 && (
-          <p className="font-medium text-success-dark">
-            You&apos;ll earn {(rebateBps / 100).toFixed(2)}% rebate on this fill
-          </p>
-        )}
-      </div>
+
+      {/* Limit price */}
       {orderType !== "MARKET" && (
         <div className="mt-3">
-          <label
-            className="block text-[10px] font-bold uppercase tracking-wide text-muted"
-            htmlFor="limit-price-cents"
-          >
-            Limit price (¢ per share)
+          <label className="pp-micro" htmlFor="limit-price-cents">
+            Limit price · cents
           </label>
           <div className="mt-1 flex items-center gap-2">
             <input
@@ -436,27 +357,78 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
               value={userPriceCentsInput}
               onChange={(e) => setUserPriceCentsInput(e.target.value)}
               className={cn(
-                "w-20 rounded-lg border px-2 py-1.5 text-center font-mono text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-brand/40",
-                priceInputInvalid ? "border-down" : "border-border",
+                "pp-input pp-input--mono w-24 text-center",
+                priceInputInvalid && "pp-input--invalid",
               )}
               aria-invalid={priceInputInvalid}
               aria-describedby="limit-price-hint"
             />
-            <span className="text-xs text-muted">
+            <span className="pp-caption">
               {userOverrideActive
                 ? `= ${limitPrice} bps`
-                : `auto (${autoCentsDisplay}¢ / ${autoLimitPrice} bps)`}
+                : `auto ${autoCentsDisplay}¢ (${autoLimitPrice} bps)`}
             </span>
           </div>
-          <p id="limit-price-hint" className="mt-1 text-[10px] text-muted">
+          <p id="limit-price-hint" className="pp-caption mt-1">
             {priceInputInvalid
               ? userPriceParsed.error
               : userOverrideActive
                 ? "Your price overrides the auto-derived default."
-                : "Leave blank to use the auto-derived default above."}
+                : "Leave blank to use the auto-derived default."}
           </p>
         </div>
       )}
+
+      {/* Size */}
+      <div className="mt-3">
+        <span className="pp-micro">Size · USDT</span>
+        <input
+          type="range"
+          className="pp-range"
+          min={5}
+          max={500}
+          step={1}
+          value={dollars}
+          onChange={(e) => setDollars(Number(e.target.value))}
+        />
+        <div className="pp-trade__size">${dollars}</div>
+        <div className="pp-trade__presets">
+          {PRESETS.map((p) => (
+            <button
+              key={p}
+              type="button"
+              className="pp-trade__preset"
+              onClick={() => setDollars(p)}
+            >
+              ${p}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Summary */}
+      <div className="pp-trade__summary">
+        <div>
+          If {side === 1 ? "UP" : "DOWN"} wins:{" "}
+          <span className={side === 1 ? "pp-up" : "pp-down"}>+${payoutIfWin.toFixed(2)}</span>{" "}
+          <span className="pp-caption">(est., after fees)</span>
+        </div>
+        <div className="pp-caption">
+          Fee: <span className="pp-tabular" style={{ color: "var(--fg-0)" }}>
+            ${feeUsdDisplay.toFixed(2)} ({effectivePercentOfNotional.toFixed(2)}% at {shareCentsLabel})
+          </span>
+          <InfoTip
+            text={`Peak ${peakFeePct}% at 50¢. Probability-weighted, tapers at extremes.`}
+          />
+        </div>
+        {rebateBps != null && rebateBps > 0 && (
+          <div className="pp-caption pp-up" style={{ fontWeight: 500 }}>
+            Earns {(rebateBps / 100).toFixed(2)}% rebate on this fill
+          </div>
+        )}
+      </div>
+
+      {/* Submit / connect */}
       {isConnected ? (
         <button
           type="button"
@@ -473,21 +445,25 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
                 ? (userPriceParsed.error ?? "Fix price before submitting")
                 : undefined
           }
-          className="btn-primary mt-3 w-full disabled:opacity-50"
+          className={cn(
+            "pp-btn pp-btn--lg pp-trade__cta",
+            side === 1 ? "pp-btn--up" : "pp-btn--down",
+          )}
           onClick={() => submit.mutate()}
         >
           {submit.isPending
             ? "Signing…"
-            : `${orderSide === 0 ? "Buy" : "Sell"} ${side === 1 ? "UP" : "DOWN"}`}
+            : `${orderSide === 0 ? "Buy" : "Sell"} ${side === 1 ? "UP" : "DOWN"} · ${orderType === "MARKET" ? "MKT" : `${Math.round(limitPrice / 100)}¢`}`}
         </button>
       ) : (
         <div
           ref={connectSectionRef}
-          className="mt-3 rounded-lg border border-border bg-surface-muted/30 p-3"
+          className="mt-3 rounded-[6px] border p-3"
+          style={{ background: "var(--bg-0)", borderColor: "var(--border-0)" }}
         >
-          <p className="text-center text-sm font-bold text-foreground">Connect wallet to trade</p>
-          <p className="mt-1 text-center text-xs text-muted">
-            Choose a wallet to sign in. You can adjust side and size first.
+          <p className="pp-body-strong text-center">Connect wallet to trade</p>
+          <p className="pp-caption mt-1 text-center">
+            Choose a wallet to sign in. Adjust side and size first.
           </p>
           <WalletConnectorList className="mt-3" />
         </div>
@@ -499,9 +475,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
 export function TradeForm({ marketAddress }: { marketAddress: string }) {
   return (
     <Suspense
-      fallback={
-        <div className="panel-dense px-3 py-6 text-center text-xs text-muted">Loading…</div>
-      }
+      fallback={<div className="pp-panel pp-caption text-center">Loading…</div>}
     >
       <TradeFormInner marketAddress={marketAddress} />
     </Suspense>

@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ApiConfig, MarketListItem } from "@/lib/api";
@@ -26,23 +27,18 @@ function useCountdownRemaining(endTime: number) {
   }, [endTime]);
   const m = Math.floor(left / 60);
   const s = left % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
+  return { label: `${m}:${s.toString().padStart(2, "0")}`, urgent: left > 0 && left < 60 };
 }
 
-function bestFromList(m: MarketListItem): { mode: "prices"; bid: string; ask: string } | { mode: "empty" } {
+function centsFromRaw(raw: string): number | null {
   try {
-    const up = BigInt(m.upPrice);
-    const down = BigInt(m.downPrice);
-    if (up === BigInt(0) && down === BigInt(0)) return { mode: "empty" };
-    const upP = Number(up) / 1e18;
-    const downP = Number(down) / 1e18;
-    if (!Number.isFinite(upP) || !Number.isFinite(downP)) return { mode: "empty" };
-    const upC = `${(upP * 100).toFixed(0)}¢`;
-    const downC = `${(downP * 100).toFixed(0)}¢`;
-    if (upC === "0¢" && downC === "0¢") return { mode: "empty" };
-    return { mode: "prices", bid: `UP ${upC}`, ask: `DOWN ${downC}` };
+    const v = BigInt(raw);
+    if (v === BigInt(0)) return null;
+    const p = Number(v) / 1e18;
+    if (!Number.isFinite(p)) return null;
+    return Math.round(p * 100);
   } catch {
-    return { mode: "empty" };
+    return null;
   }
 }
 
@@ -51,6 +47,11 @@ function formatUsdInt(n: number): string {
 }
 
 const NOTIONAL_PREVIEW = 25;
+
+function pairIconSlug(pairSymbol: string | undefined, pairId: string): string {
+  const base = (pairSymbol ?? pairId).split("-")[0]?.toLowerCase() ?? "btc";
+  return ["btc", "eth"].includes(base) ? base : "btc";
+}
 
 export function MarketCard({
   market,
@@ -67,16 +68,17 @@ export function MarketCard({
   void btcPoints;
   const router = useRouter();
   const marketHref = marketPathFromAddress(market.address);
-  const cd = useCountdownRemaining(market.endTime);
-  // Countdown-driven client-side state flip: at 0:00 the card shows "Resolving…"
-  // even before the backend flips market.status to TRADING_ENDED. Prevents the
-  // up-to-5-min dead-zone where UP/DOWN buttons on an expired market are still clickable.
-  const effectiveStatus = deriveEffectiveStatus(market.status, cd);
+  const { label: cdLabel, urgent: cdUrgent } = useCountdownRemaining(market.endTime);
+  const effectiveStatus = deriveEffectiveStatus(market.status, cdLabel);
   const strikeLabel = formatStrikeUsd(market.strikePrice);
   const strikeNum = parseStrikeUsdNumber(market.strikePrice);
-  const quotes = bestFromList(market);
-  const pairLabel = (market.pairSymbol ?? market.pairId).replace("-", " / ");
-  const title = `${pairLabel} · ${marketDurationLabel(market.duration)}`;
+  const pairBase = (market.pairSymbol ?? market.pairId).split("-")[0] ?? "BTC";
+  const pairLabel = `${pairBase}/USD`;
+  const tfLabel = marketDurationLabel(market.duration);
+  const iconSlug = pairIconSlug(market.pairSymbol, market.pairId);
+
+  const upCents = centsFromRaw(market.upPrice);
+  const downCents = centsFromRaw(market.downPrice);
 
   const feePreview = useMemo(() => {
     if (!feeConfig) return null;
@@ -97,155 +99,198 @@ export function MarketCard({
     };
   }, [feeConfig, market.upPrice, market.downPrice]);
 
-  const spotLine = useMemo(() => {
-    const isResolved = market.status === "RESOLVED" || market.status === "CLAIMED";
-    // Fix 1a: once the countdown has hit 0:00 (or backend flipped status),
-    // the live spot no longer reflects anything meaningful for this market.
-    // Show "Awaiting settlement…" rather than a ticking spot until the
-    // settlementPrice arrives — avoids the "wrong copy at the boundary"
-    // where the live price kept flickering under the "Resolving…" banner.
-    const resolving = effectiveStatus !== "ACTIVE" && !isResolved;
-    if (resolving) {
-      return { text: "Awaiting settlement…", className: "text-muted" };
-    }
+  const isResolved = market.status === "RESOLVED" || market.status === "CLAIMED";
+  const resolving = !isResolved && effectiveStatus !== "ACTIVE";
 
-    let displayPrice: number | null = null;
-    if (isResolved && market.settlementPrice) {
-      displayPrice = parseStrikeUsdNumber(market.settlementPrice);
-    } else {
-      displayPrice = spotUsd;
-    }
+  const displayPrice: number | null = useMemo(() => {
+    if (resolving) return null;
+    if (isResolved && market.settlementPrice) return parseStrikeUsdNumber(market.settlementPrice);
+    return spotUsd;
+  }, [spotUsd, market.settlementPrice, isResolved, resolving]);
 
-    if (displayPrice == null || strikeNum == null) {
-      return { text: "—", className: "text-muted" };
-    }
-    const diff = displayPrice - strikeNum;
-    const pct = strikeNum !== 0 ? (diff / strikeNum) * 100 : 0;
-    const up = diff >= 0;
-    const arrow = up ? "▲" : "▼";
-    const sign = diff >= 0 ? "+" : "";
-    return {
-      text: `${formatUsdInt(displayPrice)} ${arrow} ${sign}${formatUsdInt(Math.abs(diff))} (${sign}${pct.toFixed(2)}%)`,
-      className: up ? "text-success" : "text-down",
-    };
-  }, [spotUsd, strikeNum, market.status, market.settlementPrice, effectiveStatus]);
+  const diffUsd = displayPrice != null && strikeNum != null ? displayPrice - strikeNum : null;
+  const diffPct = diffUsd != null && strikeNum ? (diffUsd / strikeNum) * 100 : null;
+  const deltaUp = diffUsd != null && diffUsd >= 0;
 
-  const resolvedOrClaimed =
-    (market.status === "RESOLVED" || market.status === "CLAIMED") && market.winner != null && market.winner !== 0;
+  const resolvedOrClaimed = isResolved && market.winner != null && market.winner !== 0;
+  const resolvedUp = market.winner === 1;
 
+  const onOpen = () => router.push(marketHref);
+
+  // ---------------------------- RESOLVED / CLAIMED ----------------------------
+  if (resolvedOrClaimed) {
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onOpen}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onOpen();
+          }
+        }}
+        className="pp-tile pp-tile--closed"
+      >
+        <div className="pp-tile__top">
+          <div className="pp-tile__ticker">
+            <Image src={`/icons/crypto/${iconSlug}.svg`} alt="" width={16} height={16} />
+            <span className="pp-tile__pair">
+              {pairLabel} · <span style={{ color: "var(--fg-2)" }}>{tfLabel}</span>
+            </span>
+          </div>
+          <span className="pp-chip pp-chip--closed">{market.status}</span>
+        </div>
+
+        <div className={cn("pp-tile__outcome", resolvedUp ? "pp-tile__outcome--up" : "pp-tile__outcome--down")}>
+          <span className="pp-tile__outcome-arrow">{resolvedUp ? "▲" : "▼"}</span>
+          <span className="pp-tile__outcome-label">{resolvedUp ? "UP won" : "DOWN won"}</span>
+        </div>
+
+        <div className="pp-tile__settlegrid">
+          <div>
+            <span className="pp-micro">Strike</span>
+            <span className="pp-tile__num">{strikeLabel}</span>
+          </div>
+          <div>
+            <span className="pp-micro">Settled</span>
+            <span className="pp-tile__num">
+              {market.settlementPrice ? formatStrikeUsd(market.settlementPrice) : "—"}
+            </span>
+          </div>
+          <div>
+            <span className="pp-micro">Δ</span>
+            <span className={cn("pp-tile__num", deltaUp ? "pp-up" : "pp-down")}>
+              {diffPct != null
+                ? `${deltaUp ? "+" : "−"}${Math.abs(diffPct).toFixed(2)}%`
+                : "—"}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---------------------------- ACTIVE / RESOLVING ----------------------------
   return (
     <div
       role="button"
       tabIndex={0}
-      onClick={() => router.push(marketHref)}
+      onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          router.push(marketHref);
+          onOpen();
         }
       }}
-      className={cn(
-        "panel-dense group min-h-0 cursor-pointer transition-colors",
-        "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand",
-        effectiveStatus === "ACTIVE"
-          ? "border-2 border-brand/40 shadow-sm hover:border-brand/60"
-          : "border border-border opacity-70 hover:opacity-90",
-      )}
+      className="pp-tile"
     >
-      <div className="flex items-start justify-between gap-2">
-        <h2 className="font-display text-base font-bold leading-tight text-foreground sm:text-lg">{title}</h2>
-        <span
-          className={cn(
-            "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide",
-            effectiveStatus === "ACTIVE" ? "bg-success-soft text-success-dark" : "bg-surface-muted text-muted",
-          )}
-        >
-          {effectiveStatus}
-        </span>
+      <div className="pp-tile__top">
+        <div className="pp-tile__ticker">
+          <Image src={`/icons/crypto/${iconSlug}.svg`} alt="" width={16} height={16} />
+          <span className="pp-tile__pair">
+            {pairLabel} · <span style={{ color: "var(--fg-2)" }}>{tfLabel}</span>
+          </span>
+        </div>
+        {effectiveStatus === "ACTIVE" ? (
+          <span className={cn("pp-chip pp-chip--cd", cdUrgent && "pp-chip--cd-urgent")}>
+            <span className="pp-chip__pulse" />
+            <span className="pp-tabular">{cdLabel}</span>
+          </span>
+        ) : (
+          <span className="pp-chip pp-chip--closed">{effectiveStatus}</span>
+        )}
       </div>
-      <p className="mt-2 text-sm font-semibold text-foreground">
-        Price to Beat: <span className="tabular-nums">{strikeLabel}</span>
-      </p>
-      <p className={cn("mt-1 text-sm font-semibold tabular-nums", spotLine.className)}>
-        {market.status === "RESOLVED" || market.status === "CLAIMED" ? "Settled: " : ""}
-        {spotLine.text}
-      </p>
+
+      <div className="pp-tile__pricerow">
+        <div className={cn("pp-tile__spot", deltaUp ? "pp-up" : "pp-down")}>
+          {displayPrice != null
+            ? displayPrice.toLocaleString("en-US", {
+                style: "currency",
+                currency: "USD",
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })
+            : "—"}
+        </div>
+        <div className="pp-tile__stripe">
+          <span className="pp-micro">Strike</span>
+          <span className="pp-price-md">{strikeLabel}</span>
+          {diffUsd != null && diffPct != null ? (
+            <span className={cn("pp-tile__delta", deltaUp ? "pp-up" : "pp-down")}>
+              {deltaUp ? "▲" : "▼"} {deltaUp ? "+" : ""}
+              {formatUsdInt(Math.abs(diffUsd))} ({deltaUp ? "+" : "−"}
+              {Math.abs(diffPct).toFixed(2)}%)
+            </span>
+          ) : (
+            <span className="pp-tile__delta" style={{ color: "var(--fg-2)" }}>
+              {resolving ? "Awaiting settlement" : "—"}
+            </span>
+          )}
+        </div>
+      </div>
+
       {effectiveStatus === "ACTIVE" ? (
-        <div className="mt-2 flex gap-2">
+        <div className="pp-tile__ladder">
           <button
             type="button"
-            className="flex-1 rounded-lg bg-success/10 py-2 text-center text-sm font-bold text-success transition-colors hover:bg-success/20"
+            className="pp-tile__side pp-tile__side--up"
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
               router.push(`${marketHref}?side=1&amount=25`);
             }}
           >
-            ▲ UP
+            <span className="pp-tile__side-label">▲ UP</span>
+            <span className="pp-tile__side-price">{upCents != null ? `${upCents}¢` : "—"}</span>
           </button>
           <button
             type="button"
-            className="flex-1 rounded-lg bg-down/10 py-2 text-center text-sm font-bold text-down transition-colors hover:bg-down/20"
+            className="pp-tile__side pp-tile__side--down"
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
               router.push(`${marketHref}?side=2&amount=25`);
             }}
           >
-            ▼ DOWN
+            <span className="pp-tile__side-label">▼ DOWN</span>
+            <span className="pp-tile__side-price">{downCents != null ? `${downCents}¢` : "—"}</span>
           </button>
         </div>
       ) : null}
-      {resolvedOrClaimed ? (
+
+      {resolving ? (
         <div
-          className={cn(
-            "mt-2 rounded-lg py-2 text-center text-sm font-bold",
-            market.winner === 1 ? "bg-success/10 text-success" : "bg-down/10 text-down",
-          )}
+          className="pp-tile__outcome"
+          style={{ background: "var(--bg-2)", color: "var(--fg-2)" }}
         >
-          {market.winner === 1 ? "▲ UP Won" : "▼ DOWN Won"}
+          <span className="pp-tile__outcome-label">Awaiting settlement</span>
         </div>
       ) : null}
-      {effectiveStatus === "TRADING_ENDED" ? (
-        <div className="mt-2 rounded-lg bg-surface-muted py-2 text-center text-sm font-semibold text-muted">
-          Resolving…
-        </div>
-      ) : null}
-      <div className="mt-2 flex items-end justify-between gap-2 border-t border-border pt-2 text-xs">
-        <div>
-          {effectiveStatus === "ACTIVE" ? (
-            <>
-              <span className="font-mono font-bold tabular-nums text-foreground">{cd}</span>
-              <span className="text-muted"> remaining</span>
-            </>
-          ) : (
-            <span className="text-xs text-muted">Ended</span>
-          )}
-        </div>
-        <div className="text-right">
-          {quotes.mode === "empty" ? (
-            <span className="text-muted">No orders yet</span>
-          ) : (
-            <span className="text-foreground">
-              <span className="font-semibold text-success">{quotes.bid}</span>
-              <span className="text-muted"> / </span>
-              <span className="font-semibold text-down">{quotes.ask}</span>
-            </span>
-          )}
-        </div>
-      </div>
-      {feePreview ? (
-        <p
-          className="mt-1.5 border-t border-border pt-1.5 text-[10px] text-muted"
-          title={`Peak ~${feePreview.peakPct}% at 50¢`}
-        >
-          Fee on ${NOTIONAL_PREVIEW}:{" "}
-          <span className="font-medium text-foreground">
-            ~${feePreview.feeUsd.toFixed(2)} ({feePreview.effectivePercentOfNotional.toFixed(2)}% at{" "}
-            {feePreview.shareLabel})
+
+      <div className="pp-tile__foot">
+        {effectiveStatus === "ACTIVE" ? (
+          <span className="pp-caption">
+            <span className="pp-tabular" style={{ color: "var(--fg-0)" }}>
+              {cdLabel}
+            </span>{" "}
+            remaining
           </span>
-        </p>
-      ) : null}
+        ) : (
+          <span className="pp-caption">Ended</span>
+        )}
+        {feePreview ? (
+          <span
+            className="pp-caption"
+            title={`Peak ~${feePreview.peakPct}% at 50¢`}
+          >
+            Fee on ${NOTIONAL_PREVIEW}:{" "}
+            <span className="pp-tabular" style={{ color: "var(--fg-0)" }}>
+              ~${feePreview.feeUsd.toFixed(2)}
+            </span>
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }

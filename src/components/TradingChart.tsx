@@ -38,7 +38,7 @@ export function TradingChart({ symbol = "BTC" }: { symbol?: string }) {
   return (
     <div className="card-kraken flex min-h-[220px] flex-col p-5">
       <div className="flex items-baseline justify-between border-b border-border pb-3">
-        <h3 className="font-display text-lg font-bold text-foreground">{symbol} spot</h3>
+        <h3 className="pp-h3">{symbol} spot</h3>
         {showSpot && (
           <span className="font-mono text-lg font-bold tabular-nums text-brand">
             {last!.p.toLocaleString(undefined, { maximumFractionDigits: 2 })}

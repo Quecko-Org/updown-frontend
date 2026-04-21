@@ -122,7 +122,7 @@ export function MarketPriceChart({
     <div className="panel-dense flex min-h-[240px] flex-col">
       <div className="flex flex-wrap items-start justify-between gap-2 border-b border-border px-2 py-1.5 text-xs">
         <span className="font-semibold text-foreground">
-          Price to Beat: <span className="text-foreground">{strikeLabel}</span>
+          Strike: <span className="text-foreground">{strikeLabel}</span>
         </span>
         <span className={cnText(geom?.above)}>{headerRight}</span>
       </div>

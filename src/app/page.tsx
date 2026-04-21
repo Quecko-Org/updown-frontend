@@ -66,41 +66,42 @@ function TimeframeRowWithToggle({
 
   return (
     <div>
-      <div className="mb-2 flex items-center gap-3">
-        <h2 className="text-sm font-bold uppercase tracking-wide text-muted">{tfLabel(tf)}</h2>
-        <div className="flex rounded-md border border-border p-0.5">
-          <button
-            type="button"
-            className={cn(
-              "rounded px-2 py-0.5 text-xs font-semibold transition-colors",
-              selectedPair === "BTC-USD" ? "bg-brand text-white" : "text-muted hover:text-foreground",
-            )}
-            onClick={() => setSelectedPair("BTC-USD")}
-          >
-            BTC
-          </button>
-          <button
-            type="button"
-            className={cn(
-              "rounded px-2 py-0.5 text-xs font-semibold transition-colors",
-              selectedPair === "ETH-USD" ? "bg-brand text-white" : "text-muted hover:text-foreground",
-            )}
-            onClick={() => setSelectedPair("ETH-USD")}
-          >
-            ETH
-          </button>
+      <div className="pp-mrow__hd">
+        <div className="pp-mrow__tflabel">
+          <span className="pp-mrow__tf">{tfLabel(tf)}</span>
+        </div>
+        <div className="pp-mrow__hd-right">
+          <div className="pp-tab">
+            <button
+              type="button"
+              className={cn("pp-tab__btn", selectedPair === "BTC-USD" && "pp-tab__btn--on")}
+              onClick={() => setSelectedPair("BTC-USD")}
+            >
+              BTC
+            </button>
+            <button
+              type="button"
+              className={cn("pp-tab__btn", selectedPair === "ETH-USD" && "pp-tab__btn--on")}
+              onClick={() => setSelectedPair("ETH-USD")}
+            >
+              ETH
+            </button>
+          </div>
         </div>
       </div>
       {loading ? (
-        <div className="h-[200px] animate-pulse rounded-lg border border-border bg-surface-muted/30" />
+        <div
+          className="h-[180px] rounded-[6px] border"
+          style={{ background: "var(--bg-1)", borderColor: "var(--border-0)" }}
+        />
       ) : visible.length === 0 ? (
-        <p className="text-xs text-muted">
+        <p className="pp-caption">
           No {pairShort} markets for {tfLabel(tf)}
         </p>
       ) : (
         <div className="flex gap-3 overflow-x-auto pb-2">
           {visible.map((m) => (
-            <div key={m.address} className="w-[300px] shrink-0">
+            <div key={m.address} className="w-[320px] shrink-0">
               <MarketCard market={m} btcPoints={pricePoints} spotUsd={spot} feeConfig={feeConfig} />
             </div>
           ))}
@@ -190,7 +191,13 @@ export default function HomePage() {
   }, [activeEndTimes, qc]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
+      <div>
+        <h1 className="pp-h1">Markets</h1>
+        <p className="pp-caption mt-1">
+          Short-duration UP/DOWN direction markets on BTC and ETH. Settled on Arbitrum.
+        </p>
+      </div>
       {TFS.map((tf, ti) => (
         <TimeframeRowWithToggle
           key={tf}

@@ -58,12 +58,8 @@ export function CancelOrderButton({
         setPending(true);
         cancel.mutate();
       }}
-      className={cn(
-        "rounded-md px-2 py-1 text-xs font-semibold transition-colors",
-        "border border-border text-muted hover:border-down hover:text-down",
-        "disabled:cursor-not-allowed disabled:opacity-40",
-        className,
-      )}
+      className={cn("pp-btn pp-btn--ghost pp-btn--sm", className)}
+      style={{ color: "var(--fg-2)" }}
       title={address ? "Cancel this order" : "Connect wallet to cancel"}
     >
       {cancel.isPending || pending ? "Cancelling…" : "Cancel"}
