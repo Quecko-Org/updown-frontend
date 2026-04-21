@@ -286,6 +286,13 @@ export type RegisterSmartAccountRequest = {
   sessionKey: `0x${string}`;
   sessionExpiry: number;
   permissionsContext: string;
+  /**
+   * Option C — SEC1 uncompressed P-256 public key (0x04 + 64 hex bytes).
+   * Optional so Option B rows still register. Presence marks the wallet as
+   * Option-C-capable; backend routes it through the non-custodial path
+   * once `OPTION_C_ENABLED` flips.
+   */
+  sessionPublicKey?: `0x${string}`;
   sessionScope: {
     settlementAddress: string;
     functionSelector: `0x${string}`;

@@ -1,10 +1,12 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { useAtomValue } from "jotai";
 import { useAccount } from "wagmi";
 import { getOrders, type OrderRow } from "@/lib/api";
 import { formatUsdt } from "@/lib/format";
 import { cn } from "@/lib/cn";
+import { pendingSignRequestsAtom } from "@/store/atoms";
 import { CancelOrderButton } from "./CancelOrderButton";
 
 /**
@@ -31,6 +33,22 @@ export function MyOrdersOnMarket({ marketComposite }: { marketComposite: string 
   const rows: OrderRow[] = (ordersResp?.orders ?? []).filter(
     (o) => o.market.toLowerCase() === mKey,
   );
+
+  // Option C: any in-flight sign request for this market flips matching
+  // orders (same option) to show a PENDING badge in addition to their
+  // current status. Correlation is coarse (market + option, not orderId)
+  // because fills aggregate across a buyer's orders at settle time — good
+  // enough to give the user a visible "your settlement is in progress"
+  // cue rather than looking stuck at PARTIAL.
+  const pendingSignRequests = useAtomValue(pendingSignRequestsAtom);
+  const pendingByOption = new Set<number>();
+  for (const req of pendingSignRequests.values()) {
+    // `req.market` is the settlement-contract address (uint256 hex); the
+    // panel filters by composite marketKey (addr-marketId). Different
+    // keys, so match on option only when there's any pending sign — the
+    // PENDING hint is a "heads up" rather than a per-order source of truth.
+    pendingByOption.add(req.option);
+  }
 
   if (!isConnected || rows.length === 0) return null;
 
@@ -82,6 +100,14 @@ export function MyOrdersOnMarket({ marketComposite }: { marketComposite: string 
                   >
                     {o.status === "PARTIALLY_FILLED" ? "PARTIAL" : o.status}
                   </span>
+                  {pendingByOption.has(o.option) && (
+                    <span
+                      className="pp-chip-status pp-chip-status--partial ml-1"
+                      title="A fill for this option is currently awaiting on-chain settlement"
+                    >
+                      PENDING
+                    </span>
+                  )}
                 </td>
                 <td className="r">
                   <CancelOrderButton orderId={o.orderId} />
