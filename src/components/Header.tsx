@@ -83,7 +83,7 @@ export function Header() {
     <>
       {/* Full-screen loading overlay */}
       {isLoading && (
-        <div className="fixed inset-0 z-[90] flex flex-col items-center justify-center gap-3 bg-white/80 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[90] flex flex-col items-center justify-center gap-3 bg-background/80 backdrop-blur-sm">
           <div className="h-10 w-10 animate-spin rounded-full border-2 border-brand border-t-transparent" />
           {loadingStep && (
             <p className="max-w-xs text-center text-sm font-medium text-foreground">{loadingStep}</p>
@@ -93,7 +93,7 @@ export function Header() {
 
       <SignModal open={showSignModal} onSign={() => void handleSign()} onCancel={closeSignModal} />
 
-      <header className="sticky top-0 z-40 border-b border-border bg-white/95 shadow-card backdrop-blur-sm">
+      <header className="sticky top-0 z-40 border-b border-border bg-background/85 shadow-card backdrop-blur-sm">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
           {/* Logo */}
           <Link
@@ -150,7 +150,7 @@ export function Header() {
                     <div
                       id="balance-breakdown"
                       role="tooltip"
-                      className="pointer-events-none absolute right-0 top-full z-50 mt-2 hidden min-w-[200px] rounded-[12px] border border-border bg-white p-3 text-xs shadow-card-hover group-hover:block"
+                      className="pointer-events-none absolute right-0 top-full z-50 mt-2 hidden min-w-[200px] rounded-[12px] border border-border bg-surface-muted p-3 text-xs shadow-card-hover group-hover:block"
                     >
                       <dl className="space-y-1.5">
                         <div className="flex items-baseline justify-between gap-4">
@@ -174,7 +174,7 @@ export function Header() {
                       </dl>
                     </div>
                   </div>
-                  <span className="rounded-[12px] border border-border bg-white px-3 py-1.5 font-mono text-xs text-muted">
+                  <span className="rounded-[12px] border border-border bg-surface-muted px-3 py-1.5 font-mono text-xs text-muted">
                     {getFormattedAddress(walletAddress)}
                   </span>
                 </div>
@@ -189,7 +189,7 @@ export function Header() {
                 </button>
                 <button
                   type="button"
-                  className="hidden rounded-[12px] border border-border bg-white px-3 py-2 text-sm font-semibold text-foreground transition-colors hover:bg-surface-muted sm:inline-flex"
+                  className="hidden rounded-[12px] border border-border bg-surface-muted px-3 py-2 text-sm font-semibold text-foreground transition-colors hover:border-neutral sm:inline-flex"
                   onClick={() => setWithdrawOpen(true)}
                 >
                   Withdraw
@@ -233,7 +233,7 @@ export function Header() {
                   {isLoading ? "Connecting…" : "Connect wallet"}
                 </button>
                 {connectOpen && (
-                  <div className="absolute right-0 top-full z-50 mt-2 min-w-[220px] rounded-[12px] border border-border bg-white py-1 shadow-card-hover">
+                  <div className="absolute right-0 top-full z-50 mt-2 min-w-[220px] rounded-[12px] border border-border bg-surface-muted py-1 shadow-card-hover">
                     <WalletConnectorList
                       onPick={() => setConnectOpen(false)}
                       buttonClassName="block"
@@ -270,7 +270,7 @@ export function Header() {
 
         {/* Mobile menu */}
         {mobileMenuOpen && (
-          <div className="border-t border-border bg-white px-4 pb-4 pt-2 sm:hidden">
+          <div className="border-t border-border bg-background px-4 pb-4 pt-2 sm:hidden">
             <nav className="flex flex-col gap-1">
               {NAV.map((n) => (
                 <Link
@@ -313,7 +313,7 @@ export function Header() {
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    className="flex-1 rounded-[12px] border border-border bg-white py-2 text-sm font-semibold text-foreground"
+                    className="flex-1 rounded-[12px] border border-border bg-surface-muted py-2 text-sm font-semibold text-foreground"
                     onClick={() => { setWithdrawOpen(true); setMobileMenuOpen(false); }}
                   >
                     Withdraw

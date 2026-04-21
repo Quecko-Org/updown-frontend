@@ -1,29 +1,70 @@
 @import "tailwindcss";
+@import "./design-tokens.css";
+@import "./pp-utilities.css";
 
-/* Kraken-inspired design tokens (DESIGN.md). Use literal values in @theme so Tailwind v4 generates utilities. */
+/* ============================================================================
+   PulsePairs redesign — Phase 1 foundation (theme remap)
+   ----------------------------------------------------------------------------
+   Every legacy Tailwind token aliases onto a design-tokens.css CSS variable so
+   existing utility classes (`bg-background`, `text-foreground`, `border-border`,
+   `bg-surface-muted`, `text-brand`, `text-success`, `text-down`, etc.) keep
+   working against the new dark palette without touching a single component.
+
+   The `brand` family has no decorative accent in the new system (the spec
+   allows only UP + DOWN directional accents). We map `brand` → `--fg-0`
+   (primary text), `brand-dark` → `--fg-1`, `brand-deep` → `--fg-0`,
+   `brand-subtle` → `--bg-1`. Anywhere the old UI reached for purple now
+   renders neutral-white, which is the closest semantically-valid target per
+   the "strictly directional" rule.
+
+   Phase 2 will migrate components to the pp-* layer (imported above, inert
+   until then) and retire this legacy aliasing.
+   ========================================================================== */
+
 @theme {
-  --color-background: #ffffff;
-  --color-foreground: #101114;
-  --color-brand: #7132f5;
-  --color-brand-dark: #5741d8;
-  --color-brand-deep: #5b1ecf;
-  --color-brand-subtle: rgba(133, 91, 251, 0.16);
-  /* UP / DOWN — vibrant green / clear red (PulsePairs UI) */
-  --color-success: #22c55e;
-  --color-success-dark: #15803d;
-  --color-success-soft: rgba(34, 197, 94, 0.14);
-  --color-down: #ef4444;
-  --color-down-soft: rgba(239, 68, 68, 0.14);
-  --color-muted: #9497a9;
-  --color-neutral: #686b82;
-  --color-neutral-ink: #484b5e;
-  --color-border: #dedee5;
-  --color-surface-muted: rgba(148, 151, 169, 0.08);
-  --color-overlay: rgba(16, 17, 20, 0.45);
-  --font-sans: var(--font-ibm-plex), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-ibm-plex), ui-sans-serif, system-ui, sans-serif;
-  --shadow-card: 0 1px 0 rgba(0, 0, 0, 0.04);
-  --shadow-card-hover: 0 2px 8px rgba(0, 0, 0, 0.06);
+  /* Surfaces */
+  --color-background: oklch(14% 0.01 250);       /* --bg-0 page */
+  --color-foreground: oklch(97% 0.005 250);      /* --fg-0 primary text */
+
+  /* Brand family — neutralised (no decorative accent in the new system) */
+  --color-brand: oklch(97% 0.005 250);           /* → --fg-0 */
+  --color-brand-dark: oklch(80% 0.01 250);       /* → --fg-1 */
+  --color-brand-deep: oklch(97% 0.005 250);      /* → --fg-0 */
+  --color-brand-subtle: oklch(17% 0.01 250);     /* → --bg-1 */
+
+  /* UP → success */
+  --color-success: oklch(74% 0.18 155);          /* --up */
+  --color-success-dark: oklch(60% 0.14 155);     /* --up-dim */
+  --color-success-soft: oklch(74% 0.18 155 / 0.14); /* --up-bg */
+
+  /* DOWN */
+  --color-down: oklch(68% 0.22 25);              /* --down */
+  --color-down-soft: oklch(68% 0.22 25 / 0.14);  /* --down-bg */
+
+  /* Text variants */
+  --color-muted: oklch(62% 0.01 250);            /* --fg-2 */
+  --color-neutral: oklch(62% 0.01 250);          /* --fg-2 */
+  --color-neutral-ink: oklch(80% 0.01 250);      /* --fg-1 */
+
+  /* Chrome */
+  --color-border: oklch(26% 0.01 250);           /* --border-0 */
+  --color-surface-muted: oklch(17% 0.01 250);    /* --bg-1 (panel background) */
+  --color-overlay: rgba(0, 0, 0, 0.6);
+
+  /* Fonts — Geist for UI, Bebas Neue only for --font-display (hero marketing) */
+  --font-sans: "Geist", ui-sans-serif, -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-display: "Bebas Neue", "Lemon Milk", "Geist", ui-sans-serif, system-ui, sans-serif;
+
+  /* Shadows — spec says flat surfaces; legacy shadow tokens become no-ops.
+     shadow-card / shadow-card-hover stay defined so existing utilities don't
+     break — they just render invisibly. Actual elevation happens on modals
+     via pp-modal / var(--shadow-overlay). */
+  --shadow-card: 0 0 0 rgba(0, 0, 0, 0);
+  --shadow-card-hover: 0 0 0 rgba(0, 0, 0, 0);
+
+  /* Radii — legacy 12px button radius preserved so `rounded-[12px]` utilities
+     don't suddenly shift. Phase 2 migrates these to --r-lg (8px max per spec). */
   --radius-button: 12px;
 }
 
@@ -36,24 +77,34 @@
   }
 }
 
+/* Legacy `font-display` utility — unchanged classname, now resolves to
+   Bebas Neue via the remapped --font-display token. Letter-spacing preserved
+   so existing hero headings hold their rhythm. */
 .font-display {
   font-family: var(--font-display);
   letter-spacing: -0.02em;
 }
 
-/* Primary CTA — 12px radius, 13px 16px padding per DESIGN.md */
+/* ============================================================================
+   Legacy component utilities (btn-primary, card-kraken, panel-dense)
+   ----------------------------------------------------------------------------
+   Retained with identical API so all current consumers keep working. Internal
+   definitions swapped to dark-theme tokens: `bg-white` surfaces become
+   `bg-surface-muted` (= --bg-1), shadows flattened to no-op. Phase 2 removes
+   these in favour of pp-btn / pp-panel / pp-tile from the pp-* layer.
+   ========================================================================== */
+
 @layer components {
   .btn-primary {
-    @apply rounded-[12px] bg-brand px-4 py-[13px] text-center text-base font-semibold text-white transition-opacity hover:opacity-95 disabled:opacity-50;
+    @apply rounded-[12px] bg-foreground px-4 py-[13px] text-center text-base font-semibold text-background transition-opacity hover:opacity-90 disabled:opacity-40;
   }
   .btn-secondary {
-    @apply rounded-[12px] border border-brand-dark bg-white px-4 py-[13px] text-center text-base font-semibold text-brand-dark transition-colors hover:bg-brand-subtle disabled:opacity-50;
+    @apply rounded-[12px] border border-border bg-surface-muted px-4 py-[13px] text-center text-base font-semibold text-foreground transition-colors hover:border-neutral disabled:opacity-40;
   }
   .card-kraken {
-    @apply rounded-xl border border-border bg-white shadow-card;
+    @apply rounded-lg border border-border bg-surface-muted;
   }
-  /** Dense panels — tight info layout, minimal chrome */
   .panel-dense {
-    @apply rounded-lg border border-border bg-white px-3 py-2.5 shadow-card;
+    @apply rounded-lg border border-border bg-surface-muted px-3 py-2.5;
   }
 }

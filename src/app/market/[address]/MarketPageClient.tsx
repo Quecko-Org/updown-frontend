@@ -198,7 +198,7 @@ export function MarketPageClient({ address }: { address: string }) {
             subtitle="Link your wallet to see holdings for this market."
             className="min-h-0 py-6"
           >
-            <WalletConnectorList className="w-full max-w-xs rounded-lg border border-border bg-white p-2" />
+            <WalletConnectorList className="w-full max-w-xs rounded-lg border border-border bg-surface-muted p-2" />
           </EmptyState>
         )}
         {smartAccount && localPositions.length === 0 && (

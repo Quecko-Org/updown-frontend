@@ -107,7 +107,7 @@ export function OrderBookPanel({ marketId }: { marketId: string }) {
       {staleHint ? (
         <p className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] text-amber-950">{staleHint}</p>
       ) : null}
-      <div className="overflow-hidden rounded-lg border border-border bg-white">
+      <div className="overflow-hidden rounded-lg border border-border bg-surface-muted">
         <table className="w-full text-left text-[11px]">
           <thead>
             <tr className="border-b border-border bg-surface-muted font-semibold uppercase tracking-wide text-muted">
@@ -143,7 +143,7 @@ function BookRow({ row, maxDepth }: { row: Row; maxDepth: number }) {
   return (
     <tr className={cn("border-b border-border/50", isUp ? "bg-success-soft/35" : "bg-down-soft/40")}>
       <td className="w-16 px-1 py-0.5 align-middle">
-        <div className="h-1 w-full overflow-hidden rounded bg-white/80">
+        <div className="h-1 w-full overflow-hidden rounded bg-background/60">
           <div
             className={cn("h-full rounded-sm", isUp ? "bg-success" : "bg-down")}
             style={{ width: `${pct}%` }}
