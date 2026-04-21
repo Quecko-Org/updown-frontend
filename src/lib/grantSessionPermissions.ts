@@ -3,7 +3,12 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { toFunctionSelector, toHex } from "viem";
 import { getSessionExpirySec } from "@/config/environment";
 import { isValidPermissionsContext } from "@/lib/derivations";
+import { OPTION_C_ENABLED } from "@/lib/env";
 import { saveIndexKey, getIndexKey } from "@/utils/indexDb";
+import {
+  generateAndStoreSessionKeypair,
+  deleteSessionKeypair,
+} from "@/utils/sessionKeypair";
 import { handleCheckSession } from "@/utils/walletHelpers";
 
 const ENTER_POSITION_SELECTOR = toFunctionSelector(
@@ -16,6 +21,8 @@ export type SessionKeyData = {
   sessionExpiry: number;
   permissionsContext: string;
   functionSelector: `0x${string}`;
+  /** Option C — SEC1 uncompressed P-256 pubkey; omitted under Option B. */
+  sessionPublicKey?: `0x${string}`;
 };
 
 /** Payload returned to WalletContext / register; same shape whether from IDB or fresh grant. */
@@ -24,6 +31,12 @@ export type ScopedSessionArtifact = {
   sessionExpiry: number;
   permissionsContext: string;
   functionSelector: `0x${string}`;
+  /**
+   * Option C — SEC1 uncompressed P-256 public key when the non-custodial
+   * flow is active. Undefined under Option B (the default). The matching
+   * private half lives only in IndexedDB as a non-extractable CryptoKey.
+   */
+  sessionPublicKey?: `0x${string}`;
 };
 
 type GrantClient = {
@@ -45,7 +58,10 @@ function isCompleteScopedSessionData(x: unknown): x is SessionKeyData {
     typeof o.permissionsContext === "string" &&
     o.permissionsContext.length > 0 &&
     typeof o.functionSelector === "string" &&
-    o.functionSelector.startsWith("0x")
+    o.functionSelector.startsWith("0x") &&
+    // sessionPublicKey is optional — present under Option C, absent under B.
+    (o.sessionPublicKey === undefined ||
+      (typeof o.sessionPublicKey === "string" && o.sessionPublicKey.startsWith("0x04")))
   );
 }
 
@@ -63,6 +79,7 @@ export async function readStoredScopedSessionIfValid(): Promise<ScopedSessionArt
     sessionExpiry: stored.sessionExpiry,
     permissionsContext: stored.permissionsContext,
     functionSelector: stored.functionSelector,
+    ...(stored.sessionPublicKey ? { sessionPublicKey: stored.sessionPublicKey } : {}),
   };
 }
 
@@ -88,6 +105,7 @@ export async function grantScopedSessionIfNeeded(
         sessionExpiry: stored.sessionExpiry,
         permissionsContext: stored.permissionsContext,
         functionSelector: stored.functionSelector,
+        ...(stored.sessionPublicKey ? { sessionPublicKey: stored.sessionPublicKey } : {}),
       };
     }
 
@@ -95,6 +113,19 @@ export async function grantScopedSessionIfNeeded(
     const privateKey = generatePrivateKey();
     const account = privateKeyToAccount(privateKey);
     const sessionSigner = new LocalAccountSigner(account);
+
+    // Option C: generate a non-extractable P-256 keypair in IndexedDB and
+    // use its public key as the session signer. The secp256k1 `privateKey`
+    // generated above is kept only to satisfy the register body shape
+    // (backend still requires `sessionKey`) and is never authorized on-chain
+    // under Option C — the grantPermissions `key` below points at the P-256
+    // public key instead, so the secp256k1 half is a powerless placeholder.
+    // Under Option B (flag off) the secp256k1 key is the authorized signer,
+    // matching the pre-PR flow.
+    let sessionPublicKey: `0x${string}` | undefined;
+    if (OPTION_C_ENABLED) {
+      sessionPublicKey = await generateAndStoreSessionKeypair(smartAccount);
+    }
 
     const permissionsPayload = [
       {
@@ -120,10 +151,9 @@ export async function grantScopedSessionIfNeeded(
     const response = await (smartAccountClient as GrantClient).grantPermissions({
       account: smartAccount,
       expirySec,
-      key: {
-        publicKey: await sessionSigner.getAddress(),
-        type: "secp256k1",
-      },
+      key: OPTION_C_ENABLED && sessionPublicKey
+        ? { publicKey: sessionPublicKey, type: "ecdsa" }
+        : { publicKey: await sessionSigner.getAddress(), type: "secp256k1" },
       permissions: permissionsPayload,
     });
 
@@ -150,6 +180,7 @@ export async function grantScopedSessionIfNeeded(
       sessionExpiry: expirySec,
       permissionsContext,
       functionSelector: ENTER_POSITION_SELECTOR,
+      ...(sessionPublicKey ? { sessionPublicKey } : {}),
     });
 
     return {
@@ -157,9 +188,16 @@ export async function grantScopedSessionIfNeeded(
       sessionExpiry: expirySec,
       permissionsContext,
       functionSelector: ENTER_POSITION_SELECTOR,
+      sessionPublicKey,
     };
   } catch (error) {
     console.error("Error granting scoped session permissions:", error);
+    // If grantPermissions failed mid-way under Option C, drop the orphaned
+    // keypair — it's useless without a matching on-chain grant, and leaving
+    // it behind would make the next retry think a session already exists.
+    if (OPTION_C_ENABLED) {
+      await deleteSessionKeypair(smartAccount).catch(() => undefined);
+    }
     return null;
   }
 }

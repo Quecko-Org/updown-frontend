@@ -42,6 +42,7 @@ import {
   apiConfigAtom,
   sessionReadyAtom,
   sessionRestoreFailedAtom,
+  sessionAmountUsedAtom,
 } from "@/store/atoms";
 import { getConfig, registerSmartAccount } from "@/lib/api";
 import {
@@ -79,6 +80,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [, setPubClient] = useAtom(userPublicClient);
   const [sessionReady, setSessionReady] = useAtom(sessionReadyAtom);
   const [, setSessionRestoreFailed] = useAtom(sessionRestoreFailedAtom);
+  const [, setSessionAmountUsed] = useAtom(sessionAmountUsedAtom);
 
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState("");
@@ -188,6 +190,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           sessionKey: artifact.privateKey,
           sessionExpiry: artifact.sessionExpiry,
           permissionsContext: artifact.permissionsContext,
+          ...(artifact.sessionPublicKey ? { sessionPublicKey: artifact.sessionPublicKey } : {}),
           sessionScope: {
             settlementAddress: cfg.eip712.domain.verifyingContract,
             functionSelector: artifact.functionSelector,
@@ -195,6 +198,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           },
         });
         setSessionReady(true);
+        // Option C — reset the tab-scoped "amount signed this session" counter
+        // on every successful session (re)init. Per-page-load scope is
+        // acceptable UX: the remaining-allowance preview is a soft guide, and
+        // the on-chain MA v2 module is the authority on actual cap enforcement.
+        setSessionAmountUsed("0");
         return true;
       } catch (err) {
         console.error("Register smart account failed:", err);
@@ -202,7 +210,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         return false;
       }
     },
-    [setSessionReady, setLoadingStep]
+    [setSessionReady, setLoadingStep, setSessionAmountUsed]
   );
 
   const performSign = useCallback(
