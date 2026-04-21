@@ -43,7 +43,12 @@ export default function FeesPage() {
           effective bps after the probability weight.
         </p>
         <div className="overflow-x-auto">
-          <table className="pp-table w-full min-w-[280px]">
+          <table className="pp-table min-w-[280px]" style={{ width: "auto", maxWidth: 520 }}>
+            <colgroup>
+              <col style={{ width: 140 }} />
+              <col style={{ width: 200 }} />
+              <col style={{ width: 180 }} />
+            </colgroup>
             <thead>
               <tr>
                 <th>Share price</th>

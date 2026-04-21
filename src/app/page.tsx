@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAtomValue } from "jotai";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getMarkets, getPriceHistory, type ApiConfig, type MarketListItem } from "@/lib/api";
+import { getMarkets, getPriceHistory, getStats, type ApiConfig, type MarketListItem } from "@/lib/api";
 import { MarketCard } from "@/components/MarketCard";
 import { normalizePriceHistoryData, type PricePoint } from "@/lib/priceChart";
 import { apiConfigAtom } from "@/store/atoms";
 import { cn } from "@/lib/cn";
+import { formatUsdt } from "@/lib/format";
 
 const PAIRS = ["BTC-USD", "ETH-USD"] as const;
 const TFS = [300, 900, 3600] as const;
@@ -190,13 +191,50 @@ export default function HomePage() {
     return () => timers.forEach(clearTimeout);
   }, [activeEndTimes, qc]);
 
+  const { data: stats } = useQuery({
+    queryKey: ["stats"],
+    queryFn: getStats,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+    retry: 1,
+  });
+
+  // Settled-24h: markets from our existing queries that are already RESOLVED
+  // or CLAIMED. Backend /stats doesn't expose this count yet, so we derive it
+  // client-side from the already-fetched market rows.
+  const settledCount = useMemo(() => {
+    let n = 0;
+    for (const q of marketQueries) {
+      for (const m of q.data ?? []) {
+        if (m.status === "RESOLVED" || m.status === "CLAIMED") n++;
+      }
+    }
+    return n;
+  }, [marketQueries]);
+
+  const volumeLabel = stats ? `$${formatUsdt(stats.totalVolume)}` : "—";
+  const openMarkets = stats?.activeMarketsCount ?? null;
+  const traders = stats?.totalTraders ?? null;
+
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="pp-h1">Markets</h1>
-        <p className="pp-caption mt-1">
-          Short-duration UP/DOWN direction markets on BTC and ETH. Settled on Arbitrum.
-        </p>
+      <div className="pp-statsrail">
+        <div className="pp-statsrail__cell">
+          <span className="pp-micro">24h volume</span>
+          <span className="pp-price-xl">{volumeLabel}</span>
+        </div>
+        <div className="pp-statsrail__cell">
+          <span className="pp-micro">Open markets</span>
+          <span className="pp-price-xl">{openMarkets != null ? openMarkets : "—"}</span>
+        </div>
+        <div className="pp-statsrail__cell">
+          <span className="pp-micro">Settled 24h</span>
+          <span className="pp-price-xl">{settledCount}</span>
+        </div>
+        <div className="pp-statsrail__cell">
+          <span className="pp-micro">Traders 24h</span>
+          <span className="pp-price-xl">{traders != null ? traders : "—"}</span>
+        </div>
       </div>
       {TFS.map((tf, ti) => (
         <TimeframeRowWithToggle

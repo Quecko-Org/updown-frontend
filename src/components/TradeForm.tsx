@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
@@ -34,12 +34,16 @@ import { apiConfigAtom, sessionReadyAtom, userSmartAccount } from "@/store/atoms
 
 const PRESETS = [5, 25, 50, 100, 500];
 
-const ORDER_TYPES: { id: OrderApiType; label: string; tooltip?: string }[] = [
-  { id: "LIMIT", label: "Limit" },
-  { id: "MARKET", label: "Market" },
-  { id: "POST_ONLY", label: "Post-only", tooltip: "Maker-only. Rejected if it would cross and fill immediately." },
-  { id: "IOC", label: "IOC", tooltip: "Fill what's available now. Cancel the remainder." },
+// Ordered so the compact pill's short-click (Market ↔ Limit) matches index 0 / 1;
+// long-press reveals the full list including POST_ONLY + IOC.
+const ORDER_TYPES: { id: OrderApiType; label: string; hint?: string }[] = [
+  { id: "MARKET", label: "Market", hint: "fill now" },
+  { id: "LIMIT", label: "Limit", hint: "rest on book" },
+  { id: "POST_ONLY", label: "Post-only", hint: "maker only" },
+  { id: "IOC", label: "IOC", hint: "fill or cancel" },
 ];
+
+const LONG_PRESS_MS = 400;
 
 function InfoTip({ text }: { text: string }) {
   return (
@@ -67,8 +71,49 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const [side, setSide] = useState<1 | 2>(1);
   const [dollars, setDollars] = useState(25);
   const [orderSide, setOrderSide] = useState<0 | 1>(0);
-  const [orderType, setOrderType] = useState<OrderApiType>("LIMIT");
+  const [orderType, setOrderType] = useState<OrderApiType>("MARKET");
   const [userPriceCentsInput, setUserPriceCentsInput] = useState<string>("");
+  const [otypeMenuOpen, setOtypeMenuOpen] = useState(false);
+  const otypeRef = useRef<HTMLDivElement>(null);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressFired = useRef(false);
+
+  // Short-click toggles Market ↔ Limit; long-press (>LONG_PRESS_MS) opens a
+  // popover with all four order types. Pointer events rather than mousedown
+  // so touch + mouse both route through the same handlers.
+  const handleOtypePressStart = useCallback(() => {
+    longPressFired.current = false;
+    longPressTimer.current = setTimeout(() => {
+      longPressFired.current = true;
+      setOtypeMenuOpen(true);
+    }, LONG_PRESS_MS);
+  }, []);
+  const handleOtypePressEnd = useCallback(() => {
+    if (longPressTimer.current != null) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+    if (longPressFired.current) return;
+    setOrderType((t) => (t === "MARKET" ? "LIMIT" : "MARKET"));
+  }, []);
+  const handleOtypeCancel = useCallback(() => {
+    if (longPressTimer.current != null) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  }, []);
+
+  // Dismiss the menu on outside click.
+  useEffect(() => {
+    if (!otypeMenuOpen) return;
+    function onDoc(e: MouseEvent) {
+      if (otypeRef.current && !otypeRef.current.contains(e.target as Node)) {
+        setOtypeMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [otypeMenuOpen]);
   const qc = useQueryClient();
   const connectSectionRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
@@ -272,9 +317,54 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
 
   const rebateBps = dmmStatus?.isDmm ? apiConfig?.dmmRebateBps : undefined;
 
+  const activeOtype = ORDER_TYPES.find((t) => t.id === orderType) ?? ORDER_TYPES[0]!;
+
   return (
     <div className="pp-panel pp-trade">
-      <span className="pp-micro">Trade</span>
+      {/* Order-type row: compact pill (short click toggles Market ↔ Limit,
+          long-press opens full menu). Sits above the Buy/Sell control. */}
+      <div className="flex items-center justify-between">
+        <span className="pp-micro">Trade</span>
+        <div ref={otypeRef} className="relative">
+          <button
+            type="button"
+            className="pp-otype"
+            onPointerDown={handleOtypePressStart}
+            onPointerUp={handleOtypePressEnd}
+            onPointerLeave={handleOtypeCancel}
+            onPointerCancel={handleOtypeCancel}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setOtypeMenuOpen(true);
+            }}
+            title="Click: toggle Market / Limit — hold: more types"
+          >
+            {activeOtype.label}
+            <span className="pp-otype__caret">▾</span>
+          </button>
+          {otypeMenuOpen && (
+            <div className="pp-otype-menu" style={{ right: 0, top: "calc(100% + 4px)" }}>
+              {ORDER_TYPES.map((ot) => (
+                <button
+                  key={ot.id}
+                  type="button"
+                  className={cn(
+                    "pp-otype-menu__item",
+                    orderType === ot.id && "pp-otype-menu__item--on",
+                  )}
+                  onClick={() => {
+                    setOrderType(ot.id);
+                    setOtypeMenuOpen(false);
+                  }}
+                >
+                  <span>{ot.label}</span>
+                  {ot.hint && <span className="pp-otype-menu__item-hint">{ot.hint}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Buy / Sell segmented */}
       <div className="pp-seg">
@@ -294,7 +384,10 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         </button>
       </div>
 
-      {/* UP / DOWN */}
+      {/* UP / DOWN — nested price span uses font-variant-numeric inline rather
+          than .pp-tabular so color inherits from the parent button (bg-0 on
+          active green/red, fg-1 on inactive) instead of forcing fg-1 which
+          would wash out against the solid accent when the side is selected. */}
       <div className="pp-trade__ud">
         <button
           type="button"
@@ -305,7 +398,9 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
           }}
         >
           <span>▲ UP</span>
-          <span className="pp-tabular">{upCents != null ? `${upCents}¢` : "—"}</span>
+          <span style={{ fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums" }}>
+            {upCents != null ? `${upCents}¢` : "—"}
+          </span>
         </button>
         <button
           type="button"
@@ -316,30 +411,13 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
           }}
         >
           <span>▼ DOWN</span>
-          <span className="pp-tabular">{downCents != null ? `${downCents}¢` : "—"}</span>
+          <span style={{ fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums" }}>
+            {downCents != null ? `${downCents}¢` : "—"}
+          </span>
         </button>
       </div>
 
-      {/* Order type */}
-      <div className="mt-3">
-        <span className="pp-micro">Order type</span>
-        <div className="pp-seg mt-1">
-          {ORDER_TYPES.map((ot) => (
-            <button
-              key={ot.id}
-              type="button"
-              title={ot.tooltip}
-              className={cn("pp-seg__btn", orderType === ot.id && "pp-seg__btn--on")}
-              onClick={() => setOrderType(ot.id)}
-            >
-              {ot.label}
-              {ot.tooltip ? <InfoTip text={ot.tooltip} /> : null}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Limit price */}
+      {/* Limit price — only visible when the order type rests on the book. */}
       {orderType !== "MARKET" && (
         <div className="mt-3">
           <label className="pp-micro" htmlFor="limit-price-cents">

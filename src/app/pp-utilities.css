@@ -418,3 +418,41 @@
 
 /* ---------- nav link (explicit 14px 500 spec) ---------- */
 .pp-hdr__navlink { font-size: 14px; font-weight: 500; }
+
+/* ---------- order-type pill (TradeForm) ----------
+   Compact control at the top of the trade form. Short click toggles
+   Market ↔ Limit; long-press opens a popover with Market/Limit/Post-only/IOC. */
+.pp-otype {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: transparent; border: 1px solid var(--border-0); border-radius: 4px;
+  padding: 4px 8px;
+  font-family: var(--font-sans); font-size: 11px; font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--fg-1); cursor: pointer;
+  transition: color var(--dur-micro) var(--ease), border-color var(--dur-micro) var(--ease), background var(--dur-micro) var(--ease);
+  user-select: none;
+}
+.pp-otype:hover { color: var(--fg-0); border-color: var(--border-1); }
+.pp-otype__caret { font-size: 9px; color: var(--fg-2); }
+
+.pp-otype-menu {
+  position: absolute; z-index: 40;
+  background: var(--bg-1); border: 1px solid var(--border-0); border-radius: 6px;
+  box-shadow: var(--shadow-popover);
+  padding: 4px; min-width: 160px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.pp-otype-menu__item {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: transparent; border: 0; cursor: pointer; text-align: left;
+  padding: 8px 10px; border-radius: 4px;
+  font-family: var(--font-sans); font-size: 13px; font-weight: 500;
+  color: var(--fg-0);
+}
+.pp-otype-menu__item:hover { background: var(--bg-hover); }
+.pp-otype-menu__item--on { background: var(--bg-2); }
+.pp-otype-menu__item-hint {
+  font-family: var(--font-sans); font-size: 10px; font-weight: 500;
+  letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--fg-2);
+}
