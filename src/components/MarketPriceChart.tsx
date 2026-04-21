@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getPriceHistory } from "@/lib/api";
 import { formatStrikeUsd, parseStrikeUsdNumber } from "@/lib/format";
@@ -18,6 +18,11 @@ const CHART_H = VB_H - PAD_T - PAD_B;
 
 const Y_TICKS = 5;
 const X_TICKS = 6;
+
+// Smooth endpoint motion between WS ticks (~1s cadence). 900ms CSS ease on
+// the dot's transform keeps it gliding toward the next point rather than
+// snapping, which reads as "continuous" even though the data is discrete.
+const ENDPOINT_EASE_MS = 900;
 
 function buildSeries(all: PricePoint[], startSec: number, endSec: number): PricePoint[] {
   const s = clipPointsBetween(all, startSec, endSec);
@@ -44,6 +49,48 @@ function fmtTick(secEpoch: number, windowSec: number): string {
   return `${hh}:${mm}`;
 }
 
+/**
+ * Stable Y-range hook.
+ *
+ * Polymarket's chart doesn't flinch when a tick extends the visible range by
+ * a dollar — it re-uses the prior min/max until the new datum clearly falls
+ * outside them, then expands with some room to spare. Mimicking that here
+ * via a ref keeps micro ticks from flickering the 5 gridlines every second.
+ */
+function useStableYRange(
+  seriesKey: string,
+  seriesMin: number,
+  seriesMax: number,
+  strike: number | null,
+) {
+  const stateRef = useRef<{ key: string; min: number; max: number } | null>(null);
+
+  const desiredPad = Math.max((seriesMax - seriesMin) * 0.12, seriesMax * 0.0005, 1);
+  const strikeMin = strike != null ? Math.min(seriesMin, strike) : seriesMin;
+  const strikeMax = strike != null ? Math.max(seriesMax, strike) : seriesMax;
+  const targetMin = strikeMin - desiredPad;
+  const targetMax = strikeMax + desiredPad;
+
+  const prev = stateRef.current;
+
+  if (!prev || prev.key !== seriesKey) {
+    stateRef.current = { key: seriesKey, min: targetMin, max: targetMax };
+    return { min: targetMin, max: targetMax };
+  }
+
+  // Only expand if new data pokes outside the existing frame with a buffer.
+  const buffer = (prev.max - prev.min) * 0.02;
+  let { min, max } = prev;
+  if (targetMin < prev.min - buffer) min = targetMin;
+  if (targetMax > prev.max + buffer) max = targetMax;
+
+  if (min !== prev.min || max !== prev.max) {
+    stateRef.current = { key: seriesKey, min, max };
+    return { min, max };
+  }
+  return { min: prev.min, max: prev.max };
+}
+
 export function MarketPriceChart({
   symbol,
   marketStartSec,
@@ -65,35 +112,49 @@ export function MarketPriceChart({
   const strikeLabel = formatStrikeUsd(strikePriceRaw);
 
   const allPoints = useMemo(() => normalizePriceHistoryData(data), [data]);
-  const nowSec = Math.floor(Date.now() / 1000);
   const series = useMemo(
     () => buildSeries(allPoints, marketStartSec, marketEndSec),
     [allPoints, marketStartSec, marketEndSec],
   );
+
+  // Progress indicator — advances 4x/sec. Not a data source, just lets the
+  // "now" marker (and the endpoint X, after the last real tick) slide instead
+  // of snapping once per WS push.
+  const [tickNow, setTickNow] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setTickNow(Date.now() / 1000), 250);
+    return () => clearInterval(id);
+  }, []);
+
   const windowSec = Math.max(60, marketEndSec - marketStartSec);
+
+  const priceMin = series.length ? Math.min(...series.map((p) => p.p)) : 0;
+  const priceMax = series.length ? Math.max(...series.map((p) => p.p)) : 0;
+  const seriesKey = `${symbol}:${marketStartSec}:${marketEndSec}`;
+  const yRange = useStableYRange(seriesKey, priceMin, priceMax, strikeNum);
 
   const geom = useMemo(() => {
     if (series.length < 2) return null;
-    const ps = series.map((q) => q.p);
-    const rawMin = Math.min(...ps, strikeNum ?? Infinity);
-    const rawMax = Math.max(...ps, strikeNum ?? -Infinity);
-    const padP = (rawMax - rawMin) * 0.12 || rawMax * 0.001;
-    const pMin = rawMin - padP;
-    const pMax = rawMax + padP;
-    const dp = pMax - pMin || 1;
 
+    // Lock the X axis to the market window so the chart doesn't pan as time
+    // passes — the line grows into a fixed frame instead of dragging the
+    // whole scale with it, which is what Polymarket does.
     const t0 = marketStartSec;
-    const t1 = Math.max(marketEndSec, series[series.length - 1]!.t, nowSec);
+    const t1 = marketEndSec;
     const dt = t1 - t0 || 1;
 
-    const tx = (t: number) => PAD_L + ((t - t0) / dt) * CHART_W;
+    const pMin = yRange.min;
+    const pMax = yRange.max;
+    const dp = pMax - pMin || 1;
+
+    const tx = (t: number) =>
+      PAD_L + (Math.max(t0, Math.min(t1, t)) - t0) / dt * CHART_W;
     const py = (p: number) => PAD_T + CHART_H - ((p - pMin) / dp) * CHART_H;
 
     const lineD = series
       .map((pt, i) => `${i === 0 ? "M" : "L"}${tx(pt.t).toFixed(1)},${py(pt.p).toFixed(1)}`)
       .join(" ");
 
-    // Area fill under the line, baselined at the X-axis.
     const xFirst = tx(series[0]!.t);
     const xLast = tx(series[series.length - 1]!.t);
     const baseY = PAD_T + CHART_H;
@@ -102,23 +163,28 @@ export function MarketPriceChart({
     const strikeY = strikeNum != null ? py(strikeNum) : null;
     const last = series[series.length - 1]!;
     const above = strikeNum == null ? true : last.p >= strikeNum;
-    const lastX = tx(last.t);
-    const lastY = py(last.p);
+
+    // The endpoint's "now" X creeps forward between real ticks, so the dot
+    // glides along the time axis at a visually continuous rate. Past the
+    // last real tick we clamp the X to tickNow but keep the Y at the last
+    // known price — the line doesn't extend visually, but the marker slides.
+    const endX = tx(Math.max(last.t, Math.min(tickNow, t1)));
+    const endY = py(last.p);
 
     const yLabels = Array.from({ length: Y_TICKS }, (_, i) => {
-      const t = i / (Y_TICKS - 1);
-      const v = pMax - t * dp;
-      return { y: PAD_T + t * CHART_H, v };
+      const u = i / (Y_TICKS - 1);
+      const v = pMax - u * dp;
+      return { y: PAD_T + u * CHART_H, v };
     });
 
     const xLabels = Array.from({ length: X_TICKS }, (_, i) => {
-      const t = i / (X_TICKS - 1);
-      const sec = t0 + t * dt;
-      return { x: PAD_L + t * CHART_W, label: fmtTick(sec, windowSec) };
+      const u = i / (X_TICKS - 1);
+      const sec = t0 + u * dt;
+      return { x: PAD_L + u * CHART_W, label: fmtTick(sec, windowSec) };
     });
 
-    return { lineD, areaD, strikeY, above, lastX, lastY, yLabels, xLabels };
-  }, [series, marketStartSec, marketEndSec, nowSec, strikeNum, windowSec]);
+    return { lineD, areaD, strikeY, above, endX, endY, yLabels, xLabels };
+  }, [series, marketStartSec, marketEndSec, strikeNum, tickNow, windowSec, yRange.min, yRange.max]);
 
   const directionColor = geom?.above ? "var(--up)" : "var(--down)";
   const headerRight =
@@ -178,7 +244,6 @@ export function MarketPriceChart({
               </linearGradient>
             </defs>
 
-            {/* Horizontal gridlines + Y-axis labels in the right gutter. */}
             {geom.yLabels.map((t, i) => (
               <g key={`y-${i}`}>
                 <line
@@ -204,7 +269,6 @@ export function MarketPriceChart({
               </g>
             ))}
 
-            {/* Strike line + labeled badge. */}
             {geom.strikeY != null && (
               <>
                 <line
@@ -241,7 +305,6 @@ export function MarketPriceChart({
               </>
             )}
 
-            {/* Area fill + price line. */}
             <path d={geom.areaD} fill={`url(#${gradId})`} />
             <path
               d={geom.lineD}
@@ -253,11 +316,18 @@ export function MarketPriceChart({
               vectorEffect="non-scaling-stroke"
             />
 
-            {/* Endpoint halo + dot. */}
-            <circle cx={geom.lastX} cy={geom.lastY} r="6" fill={directionColor} opacity="0.22" />
-            <circle cx={geom.lastX} cy={geom.lastY} r="3" fill={directionColor} />
+            {/* Endpoint — CSS transform transitions smoothly between WS ticks
+                so the marker glides instead of snapping. */}
+            <g
+              style={{
+                transform: `translate(${geom.endX}px, ${geom.endY}px)`,
+                transition: `transform ${ENDPOINT_EASE_MS}ms cubic-bezier(0.2, 0, 0, 1)`,
+              }}
+            >
+              <circle r="6" fill={directionColor} opacity="0.22" />
+              <circle r="3" fill={directionColor} />
+            </g>
 
-            {/* X-axis baseline. */}
             <line
               x1={PAD_L}
               x2={VB_W - PAD_R}
@@ -267,7 +337,6 @@ export function MarketPriceChart({
               strokeWidth="1"
             />
 
-            {/* X-axis time ticks. */}
             {geom.xLabels.map((t, i) => (
               <text
                 key={`x-${i}`}

@@ -139,7 +139,7 @@ export function MarketCard({
               {pairLabel} · <span style={{ color: "var(--fg-2)" }}>{tfLabel}</span>
             </span>
           </div>
-          <span className="pp-chip pp-chip--closed">{market.status}</span>
+          <span className="pp-chip pp-chip--closed">RESOLVED</span>
         </div>
 
         <div className={cn("pp-tile__outcome", resolvedUp ? "pp-tile__outcome--up" : "pp-tile__outcome--down")}>
@@ -183,7 +183,7 @@ export function MarketCard({
           onOpen();
         }
       }}
-      className="pp-tile"
+      className={cn("pp-tile", effectiveStatus === "ACTIVE" && "pp-tile--live")}
     >
       <div className="pp-tile__top">
         <div className="pp-tile__ticker">

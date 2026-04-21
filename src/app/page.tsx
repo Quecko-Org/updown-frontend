@@ -62,8 +62,11 @@ function TimeframeRowWithToggle({
   const loading = selectedPair === "BTC-USD" ? btcLoading : ethLoading;
   const pairShort = selectedPair === "BTC-USD" ? "BTC" : "ETH";
 
-  const cards = [data.active, ...data.history].filter(Boolean) as MarketListItem[];
-  const visible = cards.slice(0, MAX_CARDS_PER_ROW);
+  // Separate active (live trading) from resolved so they render in two
+  // visually distinct rows. A single mixed row made it hard to see at a
+  // glance which markets were live.
+  const active = data.active ? [data.active] : [];
+  const resolved = data.history.slice(0, MAX_CARDS_PER_ROW);
 
   return (
     <div>
@@ -72,6 +75,13 @@ function TimeframeRowWithToggle({
           <span className="pp-mrow__tf">{tfLabel(tf)}</span>
         </div>
         <div className="pp-mrow__hd-right">
+          <span className="pp-mrow__count">
+            <span className="pp-tabular">{active.length}</span>{" "}
+            <span className="pp-caption">open</span>
+            <span className="pp-mrow__dot">·</span>
+            <span className="pp-tabular">{resolved.length}</span>{" "}
+            <span className="pp-caption">resolved</span>
+          </span>
           <div className="pp-tab">
             <button
               type="button"
@@ -95,17 +105,44 @@ function TimeframeRowWithToggle({
           className="h-[180px] rounded-[6px] border"
           style={{ background: "var(--bg-1)", borderColor: "var(--border-0)" }}
         />
-      ) : visible.length === 0 ? (
+      ) : active.length === 0 && resolved.length === 0 ? (
         <p className="pp-caption">
           No {pairShort} markets for {tfLabel(tf)}
         </p>
       ) : (
-        <div className="flex gap-3 overflow-x-auto pb-2">
-          {visible.map((m) => (
-            <div key={m.address} className="w-[320px] shrink-0">
-              <MarketCard market={m} btcPoints={pricePoints} spotUsd={spot} feeConfig={feeConfig} />
+        <div className="space-y-3">
+          {/* Active: full-size, front-row. Only ever one per pair+timeframe. */}
+          {active.length > 0 && (
+            <div className="flex gap-3 overflow-x-auto">
+              {active.map((m) => (
+                <div key={m.address} className="w-[360px] shrink-0">
+                  <MarketCard market={m} btcPoints={pricePoints} spotUsd={spot} feeConfig={feeConfig} />
+                </div>
+              ))}
             </div>
-          ))}
+          )}
+          {/* Resolved: smaller, dimmed, shown under a divider so the eye
+              hits live markets first. */}
+          {resolved.length > 0 && (
+            <div className="pt-2" style={{ borderTop: "1px solid var(--border-0)" }}>
+              <div className="mb-2 flex items-center gap-3">
+                <span className="pp-micro">Resolved</span>
+                <span className="pp-caption" style={{ color: "var(--fg-3)" }}>
+                  Last {resolved.length}
+                </span>
+              </div>
+              <div
+                className="flex gap-3 overflow-x-auto pb-2"
+                style={{ opacity: 0.72 }}
+              >
+                {resolved.map((m) => (
+                  <div key={m.address} className="w-[280px] shrink-0">
+                    <MarketCard market={m} btcPoints={pricePoints} spotUsd={spot} feeConfig={feeConfig} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -417,7 +417,10 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         </button>
       </div>
 
-      {/* Limit price — only visible when the order type rests on the book. */}
+      {/* Limit price — only visible when the order type rests on the book.
+          Pre-fills with the auto-derived cents (best-ask + 50 bps / best-bid
+          − 50 bps) so the user sees a sensible number they can edit in place,
+          rather than a greyed-out placeholder. */}
       {orderType !== "MARKET" && (
         <div className="mt-3">
           <label className="pp-micro" htmlFor="limit-price-cents">
@@ -431,9 +434,9 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
               min={1}
               max={99}
               step={1}
-              placeholder={String(autoCentsDisplay)}
-              value={userPriceCentsInput}
+              value={userPriceCentsInput === "" ? autoCentsDisplay : userPriceCentsInput}
               onChange={(e) => setUserPriceCentsInput(e.target.value)}
+              onFocus={(e) => e.currentTarget.select()}
               className={cn(
                 "pp-input pp-input--mono w-24 text-center",
                 priceInputInvalid && "pp-input--invalid",
@@ -441,47 +444,62 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
               aria-invalid={priceInputInvalid}
               aria-describedby="limit-price-hint"
             />
-            <span className="pp-caption">
-              {userOverrideActive
-                ? `= ${limitPrice} bps`
-                : `auto ${autoCentsDisplay}¢ (${autoLimitPrice} bps)`}
-            </span>
+            <span className="pp-caption">= {limitPrice} bps</span>
           </div>
-          <p id="limit-price-hint" className="pp-caption mt-1">
-            {priceInputInvalid
-              ? userPriceParsed.error
-              : userOverrideActive
-                ? "Your price overrides the auto-derived default."
-                : "Leave blank to use the auto-derived default."}
-          </p>
+          {priceInputInvalid && (
+            <p id="limit-price-hint" className="pp-caption mt-1 pp-down">
+              {userPriceParsed.error}
+            </p>
+          )}
         </div>
       )}
 
-      {/* Size */}
+      {/* Size — editable input with preset quick-sets. Range slider removed
+          so the input reads as the primary control; presets populate it. */}
       <div className="mt-3">
-        <span className="pp-micro">Size · USDT</span>
-        <input
-          type="range"
-          className="pp-range"
-          min={5}
-          max={500}
-          step={1}
-          value={dollars}
-          onChange={(e) => setDollars(Number(e.target.value))}
-        />
-        <div className="pp-trade__size">${dollars}</div>
-        <div className="pp-trade__presets">
+        <label className="pp-micro" htmlFor="trade-size-usdt">
+          Size · USDT
+        </label>
+        <div className="mt-1 flex items-center gap-2">
+          <span className="pp-micro" style={{ color: "var(--fg-2)" }}>$</span>
+          <input
+            id="trade-size-usdt"
+            type="number"
+            inputMode="decimal"
+            min={5}
+            max={500}
+            step={1}
+            value={dollars}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              if (Number.isFinite(n)) setDollars(n);
+            }}
+            onFocus={(e) => e.currentTarget.select()}
+            className={cn(
+              "pp-input pp-input--mono flex-1 text-right",
+              (dollars < 5 || dollars > 500) && "pp-input--invalid",
+            )}
+            aria-invalid={dollars < 5 || dollars > 500}
+          />
+        </div>
+        <div className="pp-trade__presets mt-2">
           {PRESETS.map((p) => (
             <button
               key={p}
               type="button"
-              className="pp-trade__preset"
+              className={cn(
+                "pp-trade__preset",
+                dollars === p && "pp-trade__preset--on",
+              )}
               onClick={() => setDollars(p)}
             >
               ${p}
             </button>
           ))}
         </div>
+        {(dollars < 5 || dollars > 500) && (
+          <p className="pp-caption mt-1 pp-down">Amount must be $5–$500.</p>
+        )}
       </div>
 
       {/* Summary */}

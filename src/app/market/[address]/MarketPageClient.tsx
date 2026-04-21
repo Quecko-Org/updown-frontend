@@ -170,7 +170,9 @@ export function MarketPageClient({ address }: { address: string }) {
             <span className="flex flex-col gap-1">
               <span className="pp-micro">Status</span>
               <span className="pp-chip pp-chip--cd">
-                <span className="pp-tabular">{market.status}</span>
+                <span className="pp-tabular">
+                  {market.status === "CLAIMED" ? "RESOLVED" : market.status}
+                </span>
               </span>
             </span>
           </div>
@@ -260,7 +262,9 @@ export function MarketPageClient({ address }: { address: string }) {
                     </td>
                     <td>
                       <span className="pp-chip pp-chip--cd">
-                        <span className="pp-tabular">{p.marketStatus}</span>
+                        <span className="pp-tabular">
+                          {p.marketStatus === "CLAIMED" ? "RESOLVED" : p.marketStatus}
+                        </span>
                       </span>
                     </td>
                   </tr>

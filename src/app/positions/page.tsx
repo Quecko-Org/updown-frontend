@@ -103,19 +103,22 @@ export default function PositionsPage() {
                     </span>
                   </td>
                   <td>
+                    {/* Market-level chip always reads RESOLVED for closed markets;
+                        the per-position "Auto-claimed" chip in the action column
+                        tells the user whether their winnings already landed. */}
                     <span
                       className={cn(
-                        p.marketStatus === "CLAIMED" && "pp-chip-status--filled",
-                        p.marketStatus === "RESOLVED" && "pp-chip-status--open",
-                        p.marketStatus === "ACTIVE" && "pp-chip-status--open",
-                        p.marketStatus !== "CLAIMED" &&
-                          p.marketStatus !== "RESOLVED" &&
-                          p.marketStatus !== "ACTIVE" &&
-                          "pp-chip-status--cancelled",
                         "pp-chip-status",
+                        p.marketStatus === "ACTIVE" && "pp-chip-status--open",
+                        (p.marketStatus === "RESOLVED" || p.marketStatus === "CLAIMED") &&
+                          "pp-chip-status--open",
+                        p.marketStatus !== "ACTIVE" &&
+                          p.marketStatus !== "RESOLVED" &&
+                          p.marketStatus !== "CLAIMED" &&
+                          "pp-chip-status--cancelled",
                       )}
                     >
-                      {p.marketStatus}
+                      {p.marketStatus === "CLAIMED" ? "RESOLVED" : p.marketStatus}
                     </span>
                   </td>
                   <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
