@@ -1,148 +1,131 @@
 /**
- * Option C — per-wallet P-256 signing keypair for non-custodial scoped sessions.
+ * Option C — per-wallet secp256k1 session key, stored plaintext in IndexedDB.
  *
- * The private half is generated as a WebCrypto CryptoKey with
- * `extractable: false`, so it literally cannot be exported back to
- * JavaScript, let alone leak to the server. It is stored in IndexedDB
- * (which supports non-extractable CryptoKey objects natively) under a
- * key derived from the smart account address, so one device can hold
- * distinct sessions for distinct wallets without collision.
+ * The session key is what Alchemy's grantPermissions authorizes on-chain as
+ * the scoped signer for `enterPosition`. Under Option B the backend holds
+ * this key and signs UserOps itself. Under Option C the key lives only in
+ * the client's IndexedDB: the backend has the address (to recognize the
+ * signer and route sign-requests) but not the private half, so the backend
+ * cannot forge a UserOp without the user's device online.
  *
- * The public half is exported once as SEC1 uncompressed bytes
- * (`0x04 || X || Y`), hex-encoded, and sent to the backend in the
- * `/api/smart-account/register` body. The backend uses it only to
- * address the client over WS and to cross-check the grantPermissions
- * signer matches the key we think we hold. The private half is never
- * serialized, never leaves the device.
+ * secp256k1, not P-256. An earlier iteration used a non-extractable
+ * WebCrypto P-256 keypair, which would have been XSS-exfiltration-proof —
+ * but @account-kit/wallet-client has no P-256 signing path (every client
+ * signing branch in `signSignatureRequest.ts` returns
+ * `{ type: "secp256k1", ... }`), so any P-256 design would require
+ * bypassing Alchemy's bundler entirely. We chose SDK compatibility over
+ * the stronger-at-rest property. See PULSEPAIRS_OPTION_C_DESIGN.md for
+ * the full trade-off write-up.
  *
- * Signing: `signUserOpHash(account, digest)` → 0x-prefixed 64-byte
- * raw ECDSA signature (r || s). The MA v2 scoped-session module
- * accepts this shape via the `ecdsa` KeySigner type.
+ * XSS surface — READ THIS BEFORE TOUCHING STORAGE.
+ *   The private key is stored as plaintext hex. Any successful XSS on
+ *   this origin can read it and sign arbitrary UserOps on the SA's behalf,
+ *   UP TO THE SCOPE granted: `enterPosition` on the settlement contract
+ *   only, capped USDT allowance, per-market cap, session expiry (48h).
+ *   We do NOT attempt to encrypt the key at rest. A JS-derivable
+ *   encryption key provides zero protection against an XSS attacker
+ *   running in the same origin — they can re-derive the key the same
+ *   way legitimate code does. Encryption in this threat model is
+ *   security theater and was explicitly rejected.
+ *
+ *   The real defenses are on the authorization envelope, not at rest:
+ *     - function selector locked to enterPosition (no withdraw, no approve)
+ *     - USDT allowance capped per session
+ *     - per-market cap (MA v2 module enforced)
+ *     - session expiry (48h, re-grant required)
+ *   These are enforced on-chain by the MA v2 scoped-session module; even
+ *   an XSS-exfiltrated key cannot escape them.
  */
 
+import { privateKeyToAccount } from "viem/accounts";
+import { bytesToHex } from "viem";
 import { getIndexKey, saveIndexKey, deleteIndexKey } from "./indexDb";
 
-const IDB_KEY_PREFIX = "sessionKeypairP256:";
+const IDB_KEY_PREFIX = "sessionSignerKey:";
 
-/** Key under which the keypair is stored in IndexedDB, one slot per smart account. */
 export function idbKeyFor(smartAccountAddress: string): string {
   return `${IDB_KEY_PREFIX}${smartAccountAddress.toLowerCase()}`;
 }
 
-/**
- * Create a fresh non-extractable P-256 keypair and persist it in IndexedDB.
- * Returns the SEC1 uncompressed public key, hex-encoded with `0x` prefix.
- * Overwrites any existing entry for the same smart account.
- */
-export async function generateAndStoreSessionKeypair(
-  smartAccountAddress: string
-): Promise<`0x${string}`> {
-  const keypair = await crypto.subtle.generateKey(
-    { name: "ECDSA", namedCurve: "P-256" },
-    false /* extractable */,
-    // "sign" applies to the private half; "verify" applies to the public
-    // half. Declaring both is the standard WebCrypto pattern and does NOT
-    // widen the private key's capabilities beyond signing.
-    ["sign", "verify"]
+type StoredSessionKey = {
+  privateKey: `0x${string}`;
+  address: `0x${string}`;
+};
+
+function isStoredSessionKey(x: unknown): x is StoredSessionKey {
+  if (!x || typeof x !== "object") return false;
+  const o = x as Record<string, unknown>;
+  return (
+    typeof o.privateKey === "string" &&
+    o.privateKey.startsWith("0x") &&
+    o.privateKey.length === 66 &&
+    typeof o.address === "string" &&
+    o.address.startsWith("0x") &&
+    o.address.length === 42
   );
-  await saveIndexKey(idbKeyFor(smartAccountAddress), keypair);
-  return exportPublicKeyHex(keypair.publicKey);
 }
 
 /**
- * Export the SEC1 uncompressed public key as `0x04` + 64 hex bytes.
- * Public key is always exportable regardless of the private key's
- * extractability — that's a WebCrypto invariant.
+ * Generate a fresh secp256k1 private key, derive its address, persist
+ * `{ privateKey, address }` in IndexedDB under a per-SA slot, and return
+ * the address so the caller can pass it into `grantPermissions`.
+ * Overwrites any prior entry for the same smart account.
  */
-export async function exportPublicKeyHex(
-  publicKey: CryptoKey
-): Promise<`0x${string}`> {
-  const raw = await crypto.subtle.exportKey("raw", publicKey);
-  const bytes = new Uint8Array(raw);
-  // SEC1 uncompressed: 1 leading byte (0x04) + 32 bytes X + 32 bytes Y = 65 bytes.
-  if (bytes.length !== 65 || bytes[0] !== 0x04) {
-    throw new Error(
-      `Unexpected SEC1 encoding: length=${bytes.length} prefix=0x${bytes[0]?.toString(16)}`
-    );
-  }
-  return `0x${bytesToHex(bytes)}` as `0x${string}`;
-}
-
-/**
- * Read the keypair for this smart account from IndexedDB, or null if
- * not present / shape invalid. The returned CryptoKeyPair is usable
- * directly with `crypto.subtle.sign`.
- */
-export async function getStoredSessionKeypair(
+export async function generateAndStoreSessionKey(
   smartAccountAddress: string
-): Promise<CryptoKeyPair | null> {
-  const kp = await getIndexKey<CryptoKeyPair>(idbKeyFor(smartAccountAddress));
-  if (!kp || typeof kp !== "object" || !("privateKey" in kp) || !("publicKey" in kp)) {
-    return null;
-  }
-  return kp;
+): Promise<`0x${string}`> {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const privateKey = bytesToHex(bytes) as `0x${string}`;
+  const account = privateKeyToAccount(privateKey);
+  const stored: StoredSessionKey = { privateKey, address: account.address };
+  await saveIndexKey(idbKeyFor(smartAccountAddress), stored);
+  return account.address;
+}
+
+/** Read the stored session key, or null if not present / shape invalid. */
+export async function getStoredSessionKey(
+  smartAccountAddress: string
+): Promise<StoredSessionKey | null> {
+  const v = await getIndexKey<unknown>(idbKeyFor(smartAccountAddress));
+  return isStoredSessionKey(v) ? v : null;
 }
 
 /**
- * Remove the stored keypair — called on wallet disconnect so a shared
- * device doesn't leave authority for the prior wallet accessible.
+ * Remove the stored key — called on wallet disconnect so a shared device
+ * doesn't leave authority for the prior wallet accessible.
  */
-export async function deleteSessionKeypair(
+export async function deleteSessionKey(
   smartAccountAddress: string
 ): Promise<void> {
   await deleteIndexKey(idbKeyFor(smartAccountAddress));
 }
 
 /**
- * Sign a 32-byte digest (the server's `userOpHash`) with the session
- * private key. Returns a `0x`-prefixed raw r||s concatenation (64 bytes).
- * WebCrypto's ECDSA output is already raw; no DER envelope to unwrap.
+ * Sign a userOpHash using the stored session key. Returns a 0x-prefixed
+ * 65-byte secp256k1 signature (r || s || v) produced via personal_sign
+ * (EIP-191) — matches the `personal_sign` branch in Alchemy's
+ * `signSignatureRequest.ts` (the only path the wallet server accepts
+ * for secp256k1 session signers).
+ *
+ * Uses `{ message: { raw: hex } }` explicitly so the 32-byte hash is
+ * treated as raw bytes, not as a UTF-8 string. `signMessage(hexString)`
+ * would interpret the `"0x..."` literal characters as the message,
+ * producing a signature over different bytes — and
+ * `recoverMessageAddress({ message: { raw } })` would no longer match.
  */
 export async function signUserOpHash(
   smartAccountAddress: string,
   userOpHashHex: string
 ): Promise<`0x${string}`> {
-  const kp = await getStoredSessionKeypair(smartAccountAddress);
+  const kp = await getStoredSessionKey(smartAccountAddress);
   if (!kp) {
     throw new Error(
-      `No session keypair found for ${smartAccountAddress}; the user must re-grant the scoped session`
+      `No session key found for ${smartAccountAddress}; the user must re-grant the scoped session`
     );
   }
-  const msg = hexToBytes(userOpHashHex);
-  if (msg.length !== 32) {
-    throw new Error(`userOpHash must be 32 bytes, got ${msg.length}`);
-  }
-  // WebCrypto always prehashes the input with the named hash — there is
-  // no "sign raw digest" mode for ECDSA. The on-chain MA v2 ECDSA
-  // verification module must therefore be aligned: it should compute
-  // SHA-256(userOpHash) when verifying against a P-256 scoped-session
-  // signer. If that alignment fails end-to-end, the fix is on the
-  // verifier side or via @noble/curves/p256 for raw-digest signing —
-  // do NOT paper over by switching to `extractable: true`.
-  const sig = await crypto.subtle.sign(
-    { name: "ECDSA", hash: "SHA-256" },
-    kp.privateKey,
-    msg.buffer as ArrayBuffer
-  );
-  const bytes = new Uint8Array(sig);
-  if (bytes.length !== 64) {
-    throw new Error(`Unexpected ECDSA signature length: ${bytes.length}`);
-  }
-  return `0x${bytesToHex(bytes)}` as `0x${string}`;
-}
-
-function bytesToHex(bytes: Uint8Array): string {
-  let out = "";
-  for (const b of bytes) out += b.toString(16).padStart(2, "0");
-  return out;
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const s = hex.startsWith("0x") ? hex.slice(2) : hex;
-  if (s.length % 2 !== 0) throw new Error(`Odd-length hex: ${hex}`);
-  const out = new Uint8Array(s.length / 2);
-  for (let i = 0; i < out.length; i++) {
-    out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16);
-  }
-  return out;
+  const account = privateKeyToAccount(kp.privateKey);
+  return (await account.signMessage({
+    message: { raw: userOpHashHex as `0x${string}` },
+  })) as `0x${string}`;
 }
