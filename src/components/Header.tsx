@@ -101,13 +101,15 @@ export function Header() {
         <div className="pp-hdr__inner">
           {/* Brand — SVG wordmark (mark + "PulsePairs" text baked into the SVG) */}
           <Link href="/" className="pp-hdr__brand" aria-label="PulsePairs — markets">
+            {/* Wordmark: 34px desktop, 28px mobile. Native SVG aspect ratio
+                (220×40 viewBox ≈ 5.5:1) preserved via w-auto. */}
             <Image
               src="/logo/pulsepairs-wordmark-dark.svg"
               alt="PulsePairs"
-              width={154}
-              height={28}
+              width={187}
+              height={34}
               priority
-              style={{ height: 28, width: "auto" }}
+              className="block h-7 w-auto sm:h-[34px]"
             />
           </Link>
 

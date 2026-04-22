@@ -197,6 +197,8 @@ export function MarketPageClient({ address }: { address: string }) {
             marketStartSec={market.startTime}
             marketEndSec={market.endTime}
             strikePriceRaw={market.strikePrice}
+            settlementPriceRaw={market.settlementPrice}
+            isResolved={market.status === "RESOLVED" || market.status === "CLAIMED"}
           />
           <section>
             <h2 className="pp-micro mb-2">Order book</h2>

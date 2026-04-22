@@ -470,3 +470,48 @@
   letter-spacing: 0.04em; text-transform: uppercase;
   color: var(--fg-2);
 }
+
+/* ============================================================================
+   Responsive overrides — mobile pass.
+   Breakpoint matches Tailwind's sm (640px). Below that, fixed-column grids
+   become flex rows or 2×2 stacks; the header collapses to logo + right
+   cluster so the logo never gets squeezed by an empty middle track.
+   ========================================================================== */
+
+@media (max-width: 640px) {
+  .pp-hdr__inner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 16px;
+    gap: 12px;
+    height: 56px;
+  }
+  .pp-hdr__right { gap: 8px; }
+
+  /* Stats rail: 2×2 on mobile instead of 1×4. */
+  .pp-statsrail {
+    grid-template-columns: repeat(2, 1fr);
+    margin-bottom: 20px;
+  }
+  .pp-statsrail__cell {
+    padding: 14px 12px;
+    border-right: 1px solid var(--border-0);
+  }
+  .pp-statsrail__cell:nth-child(2n) { border-right: 0; }
+  .pp-statsrail__cell:nth-child(-n+2) { border-bottom: 1px solid var(--border-0); }
+  .pp-statsrail__cell .pp-price-xl { font-size: 20px; }
+
+  /* Market detail — counter + BTC/ETH toggle may wrap on narrow screens. */
+  .pp-mrow__hd { flex-wrap: wrap; gap: 8px; }
+  .pp-mrow__hd-right { width: 100%; justify-content: space-between; }
+
+  /* App container padding */
+  .pp-app { padding: 16px; }
+
+  /* Order book columns slightly tighter */
+  .pp-book__hd, .pp-book__row { grid-template-columns: 52px 1fr 1fr 42px; }
+
+  /* Trade form preset pills stay on one line */
+  .pp-trade__presets { flex-wrap: wrap; }
+}
