@@ -47,9 +47,9 @@ export function OrderBookPanel({ marketId }: { marketId: string }) {
 
   const staleHint =
     wsConnected && wsLastEventAt != null && now - wsLastEventAt > STALE_MS
-      ? "Live updates paused — refreshing via REST."
+      ? "Live updates paused — falling back to snapshots."
       : !wsConnected
-        ? "WS disconnected — REST snapshots."
+        ? "Live feed disconnected — falling back to snapshots."
         : null;
 
   const { upRows, downRows, maxDepth, spreadCents } = useMemo(() => {

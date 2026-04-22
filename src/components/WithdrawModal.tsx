@@ -97,7 +97,7 @@ export function WithdrawModal({ open, onClose }: Props) {
     return (
       <Modal open={open} onClose={onClose} title="Withdraw USDT" width={420}>
         <p className="pp-body" style={{ color: "var(--fg-1)" }}>
-          Complete connection first.
+          Complete the connection flow first.
         </p>
         <button
           type="button"
@@ -183,7 +183,7 @@ export function WithdrawModal({ open, onClose }: Props) {
         )}
         {!configReady && (
           <p className="pp-caption pp-down" style={{ marginTop: 4 }}>
-            Config is still loading. Try again in a moment.
+            Config loading. Try again in a moment.
           </p>
         )}
       </div>

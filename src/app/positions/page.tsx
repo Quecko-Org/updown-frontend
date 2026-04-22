@@ -34,7 +34,7 @@ export default function PositionsPage() {
   const claim = useMutation({
     mutationFn: (market: string) => postMarketClaim(market),
     onSuccess: () => {
-      toast.success("Claim request sent");
+      toast.success("Claim submitted");
       const sa = smartAccount?.toLowerCase() ?? "";
       qc.invalidateQueries({ queryKey: ["positions", sa] });
       qc.invalidateQueries({ queryKey: ["balance", walletAddress?.toLowerCase() ?? ""] });
@@ -53,7 +53,7 @@ export default function PositionsPage() {
         <EmptyState
           icon="wallet"
           title="Connect your wallet"
-          subtitle="Connect with the button in the header to view open positions and claim resolved markets."
+          subtitle="Connect a wallet to view open positions and claim resolved markets."
         />
       )}
 
@@ -65,7 +65,7 @@ export default function PositionsPage() {
         <EmptyState
           icon="trade"
           title="No open positions"
-          subtitle="When you buy UP or DOWN on a market, your exposure will show here."
+          subtitle="Buy UP or DOWN on a market. Exposure shows here."
         />
       )}
 
@@ -155,7 +155,7 @@ export default function PositionsPage() {
       )}
 
       <p className="pp-caption">
-        Winnings are credited by the relayer after resolution. Claim nudges the backend path for resolved markets.
+        Winnings credit via the relayer after resolution. Claim nudges the backend for resolved markets.
       </p>
     </div>
   );

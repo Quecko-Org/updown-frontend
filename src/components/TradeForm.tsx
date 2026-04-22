@@ -539,8 +539,8 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             style={{ color: overCap ? "var(--danger)" : "var(--fg-2)" }}
           >
             {overCap
-              ? `This order would exceed your $${capUsd} session cap`
-              : `Spending $${dollars.toFixed(0)} of $${remainingUsd} remaining in this session (of $${capUsd})`}
+              ? `Exceeds $${capUsd} session cap`
+              : `Using $${dollars.toFixed(0)} of $${remainingUsd} remaining ($${capUsd} cap)`}
           </div>
         );
       })()}
@@ -580,7 +580,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         >
           <p className="pp-body-strong text-center">Connect wallet to trade</p>
           <p className="pp-caption mt-1 text-center">
-            Choose a wallet to sign in. Adjust side and size first.
+            Choose a wallet. Side and size can be adjusted before signing.
           </p>
           <WalletConnectorList className="mt-3" />
         </div>
