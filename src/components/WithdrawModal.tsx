@@ -8,9 +8,11 @@ import { encodeFunctionData, erc20Abi, parseUnits, type Address, type Hex } from
 import { toast } from "sonner";
 import { getBalance } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { formatUsdt } from "@/lib/format";
 import { formatUserFacingError } from "@/lib/errors";
 import { userSmartAccount, userSmartAccountClient, apiConfigAtom, sessionReadyAtom } from "@/store/atoms";
 import { PAYMASTER_POLICY_ID } from "@/config/environment";
+import { Modal } from "./Modal";
 
 type Props = {
   open: boolean;
@@ -60,7 +62,7 @@ export function WithdrawModal({ open, onClose }: Props) {
       const maxAvailable = BigInt(bal?.available ?? "0");
       if (amountBaseUnits > maxAvailable) {
         throw new Error(
-          "Amount exceeds available balance. Funds reserved for open orders are not withdrawable."
+          "Amount exceeds available balance. Funds reserved for open orders are not withdrawable.",
         );
       }
 
@@ -91,20 +93,20 @@ export function WithdrawModal({ open, onClose }: Props) {
     onError: (e: Error) => toast.error(formatUserFacingError(e)),
   });
 
-  if (!open) return null;
-
   if (!sessionReady) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <button type="button" className="absolute inset-0 bg-overlay" aria-label="Close" onClick={onClose} />
-        <div className={cn("card-kraken relative z-10 w-full max-w-md p-6 shadow-card-hover")}>
-          <h2 className="pp-h2">Withdraw USDT</h2>
-          <p className="mt-2 text-sm text-muted">Please complete connection first</p>
-          <button type="button" className="btn-secondary mt-6 w-full" onClick={onClose}>
-            Close
-          </button>
-        </div>
-      </div>
+      <Modal open={open} onClose={onClose} title="Withdraw USDT" width={420}>
+        <p className="pp-body" style={{ color: "var(--fg-1)" }}>
+          Complete connection first.
+        </p>
+        <button
+          type="button"
+          className="pp-btn pp-btn--secondary pp-btn--lg pp-modal__cta"
+          onClick={onClose}
+        >
+          Close
+        </button>
+      </Modal>
     );
   }
 
@@ -114,7 +116,9 @@ export function WithdrawModal({ open, onClose }: Props) {
     !configReady ||
     !smartAccountClient ||
     !usdtAddress ||
-    !bal;
+    !bal ||
+    !!amountError ||
+    amountStr === "";
 
   function onAmountChange(v: string) {
     setAmountStr(v);
@@ -138,7 +142,7 @@ export function WithdrawModal({ open, onClose }: Props) {
     const maxAvailable = BigInt(bal.available ?? "0");
     if (amountBaseUnits > maxAvailable) {
       setAmountError(
-        "Amount exceeds available balance. Funds reserved for open orders are not withdrawable."
+        "Amount exceeds available balance. Funds reserved for open orders are not withdrawable.",
       );
       return;
     }
@@ -146,42 +150,62 @@ export function WithdrawModal({ open, onClose }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <button type="button" className="absolute inset-0 bg-overlay" aria-label="Close" onClick={onClose} />
-      <div className={cn("card-kraken relative z-10 w-full max-w-md p-6 shadow-card-hover")}>
-        <h2 className="pp-h2">Withdraw USDT</h2>
-        <p className="pp-body mt-2" style={{ color: "var(--fg-2)" }}>
-          Send USDT from your smart account to your connected wallet. This uses a sponsored user operation signed by
-          your wallet (owner), not the trading session key.
-        </p>
-        <label className="mt-4 block text-xs font-medium text-muted">Amount (USDT)</label>
+    <Modal open={open} onClose={onClose} title="Withdraw USDT" width={420}>
+      <p className="pp-body" style={{ color: "var(--fg-1)" }}>
+        Sends USDT from your smart account to your connected wallet. Signed by your wallet (owner), not the
+        trading session key.
+      </p>
+
+      <div className="pp-kv" style={{ marginTop: 14 }}>
+        <span className="pp-micro">Available</span>
+        <span className="pp-tabular" style={{ color: "var(--fg-0)" }}>
+          ${bal ? formatUsdt(bal.available) : "—"}
+        </span>
+      </div>
+
+      <div style={{ marginTop: 14 }}>
+        <label className="pp-micro" htmlFor="withdraw-amount">
+          Amount · USDT
+        </label>
         <input
+          id="withdraw-amount"
+          inputMode="decimal"
           value={amountStr}
           onChange={(e) => onAmountChange(e.target.value)}
           placeholder="0.00"
-          className="mt-1 w-full rounded-[12px] border border-border bg-surface-muted px-3 py-2.5 text-foreground transition-colors focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+          className={cn("pp-input pp-input--mono", !!amountError && "pp-input--invalid")}
+          style={{ marginTop: 4 }}
         />
-        {bal && (
-          <p className="mt-2 text-xs text-muted">
-            Available: <span className="font-mono text-foreground">{bal.available}</span> (atomic)
+        {amountError && (
+          <p className="pp-caption pp-down" style={{ marginTop: 4 }}>
+            {amountError}
           </p>
         )}
         {!configReady && (
-          <p className="mt-2 text-xs text-down">App config is still loading. Try again in a moment.</p>
+          <p className="pp-caption pp-down" style={{ marginTop: 4 }}>
+            Config is still loading. Try again in a moment.
+          </p>
         )}
-        {amountError ? <p className="mt-2 text-xs font-medium text-down">{amountError}</p> : null}
+      </div>
+
+      <div className="pp-modal__row" style={{ marginTop: 20 }}>
         <button
           type="button"
+          className="pp-btn pp-btn--secondary pp-btn--md"
+          onClick={onClose}
+          disabled={withdraw.isPending}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="pp-btn pp-btn--primary pp-btn--md"
           disabled={submitDisabled}
-          className="btn-primary mt-6 w-full disabled:opacity-50"
           onClick={onSubmitClick}
         >
           {withdraw.isPending ? "Submitting…" : "Withdraw"}
         </button>
-        <button type="button" className="btn-secondary mt-3 w-full" onClick={onClose}>
-          Cancel
-        </button>
       </div>
-    </div>
+    </Modal>
   );
 }
