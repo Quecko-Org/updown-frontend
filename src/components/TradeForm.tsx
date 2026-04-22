@@ -1,5 +1,6 @@
 "use client";
 
+import { Info } from "lucide-react";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -49,17 +50,9 @@ const LONG_PRESS_MS = 400;
 
 function InfoTip({ text }: { text: string }) {
   return (
-    <span className="inline-flex align-middle" title={text}>
+    <span className="ml-1 inline-flex align-middle" title={text} style={{ color: "var(--fg-2)" }}>
       <span className="sr-only">{text}</span>
-      <svg
-        className="ml-0.5 inline h-3 w-3"
-        viewBox="0 0 12 12"
-        fill="currentColor"
-        aria-hidden
-        style={{ color: "var(--fg-2)" }}
-      >
-        <path d="M6 0a6 6 0 100 12A6 6 0 006 0zm.75 9H5.25V5.25h1.5V9zm0-5.25H5.25v-1h1.5v1z" />
-      </svg>
+      <Info size={12} strokeWidth={1.5} aria-hidden />
     </span>
   );
 }
