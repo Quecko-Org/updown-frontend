@@ -45,7 +45,7 @@ vi.mock("sonner", () => ({
 }));
 
 // Import after mocks so the helpers read the mocked module graph.
-import { generateAndStoreSessionKeypair } from "../utils/sessionKeypair";
+import { generateAndStoreSessionKey } from "../utils/sessionKeypair";
 
 const SA = "0xAa" + "11".repeat(19);
 const ENTER_POSITION_SELECTOR = "0x" + "a".repeat(8); // stub; not cryptographically verified here
@@ -126,7 +126,7 @@ describe("session_sign_request handler", () => {
   }
 
   it("signs the digest and emits sign_response with same requestId", async () => {
-    await generateAndStoreSessionKeypair(SA);
+    await generateAndStoreSessionKey(SA);
 
     const sent: string[] = [];
     const pending = new Map<string, PendingSignRequest>();
@@ -159,7 +159,7 @@ describe("session_sign_request handler", () => {
     const parsed = JSON.parse(sent[0]);
     expect(parsed.type).toBe("sign_response");
     expect(parsed.requestId).toBe("req-1");
-    expect(parsed.signature).toMatch(/^0x[0-9a-f]{128}$/i);
+    expect(parsed.signature).toMatch(/^0x[0-9a-f]{130}$/i);
 
     expect(pending.get("req-1")).toBeDefined();
     expect(pending.get("req-1")?.amount).toBe("25000000");
@@ -185,7 +185,7 @@ describe("session_sign_request handler", () => {
   });
 
   it("throws if no stored keypair (user must re-grant)", async () => {
-    // No generateAndStoreSessionKeypair call before — keypair missing.
+    // No generateAndStoreSessionKey call before — keypair missing.
     await expect(
       handleSessionSignRequest(
         {
@@ -208,7 +208,7 @@ describe("session_sign_request handler", () => {
   });
 
   it("accumulates amountUsed across multiple signs", async () => {
-    await generateAndStoreSessionKeypair(SA);
+    await generateAndStoreSessionKey(SA);
     const pending = new Map<string, PendingSignRequest>();
     let amountUsed = "0";
     const deps = {

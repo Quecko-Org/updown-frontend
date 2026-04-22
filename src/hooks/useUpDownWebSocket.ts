@@ -59,7 +59,8 @@ function isSignRequestPayload(x: unknown): x is SignRequestPayload {
  *   2. Record the pending request so UI derivations (PENDING chip,
  *      remaining-allowance preview) can react.
  *   3. Show a sonner loading toast keyed by requestId.
- *   4. Sign the userOpHash with the non-extractable P-256 key in IDB.
+ *   4. Sign the userOpHash with the secp256k1 session key in IDB
+ *      (personal_sign / EIP-191).
  *   5. Send `sign_response` back on the same socket.
  *
  * Errors (no key in IDB, signing fails, socket closed mid-flight) surface

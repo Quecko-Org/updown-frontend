@@ -190,7 +190,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           sessionKey: artifact.privateKey,
           sessionExpiry: artifact.sessionExpiry,
           permissionsContext: artifact.permissionsContext,
-          ...(artifact.sessionPublicKey ? { sessionPublicKey: artifact.sessionPublicKey } : {}),
+          ...(artifact.sessionSignerAddress
+            ? { sessionSignerAddress: artifact.sessionSignerAddress }
+            : {}),
           sessionScope: {
             settlementAddress: cfg.eip712.domain.verifyingContract,
             functionSelector: artifact.functionSelector,
