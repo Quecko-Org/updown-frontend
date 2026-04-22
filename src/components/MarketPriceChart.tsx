@@ -6,11 +6,10 @@ import { getPriceHistory } from "@/lib/api";
 import { formatStrikeUsd, parseStrikeUsdNumber } from "@/lib/format";
 import { clipPointsBetween, normalizePriceHistoryData, type PricePoint } from "@/lib/priceChart";
 
-// Viewbox chosen to match pp-chart dimensions from the handoff spec.
 const VB_W = 820;
 const VB_H = 280;
 const PAD_L = 12;
-const PAD_R = 64;   // right gutter hosts the Y-axis price labels
+const PAD_R = 72;
 const PAD_T = 16;
 const PAD_B = 28;
 const CHART_W = VB_W - PAD_L - PAD_R;
@@ -19,23 +18,16 @@ const CHART_H = VB_H - PAD_T - PAD_B;
 const Y_TICKS = 5;
 const X_TICKS = 6;
 
-// Smooth endpoint motion between WS ticks (~1s cadence). 900ms CSS ease on
-// the dot's transform keeps it gliding toward the next point rather than
-// snapping, which reads as "continuous" even though the data is discrete.
 const ENDPOINT_EASE_MS = 900;
-
-function buildSeries(all: PricePoint[], startSec: number, endSec: number): PricePoint[] {
-  const s = clipPointsBetween(all, startSec, endSec);
-  if (s.length >= 2) return s;
-  const beforeEnd = all.filter((p) => p.t <= endSec);
-  const tail = beforeEnd.slice(-120);
-  return tail.length >= 2 ? tail : beforeEnd;
-}
 
 function fmtUsd(v: number): string {
   if (v >= 1000) return `$${Math.round(v).toLocaleString("en-US")}`;
   if (v >= 1) return `$${v.toFixed(2)}`;
   return `$${v.toFixed(4)}`;
+}
+
+function fmtPrice2(v: number): string {
+  return v.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function fmtTick(secEpoch: number, windowSec: number): string {
@@ -50,40 +42,24 @@ function fmtTick(secEpoch: number, windowSec: number): string {
 }
 
 /**
- * Stable Y-range hook.
- *
- * Polymarket's chart doesn't flinch when a tick extends the visible range by
- * a dollar — it re-uses the prior min/max until the new datum clearly falls
- * outside them, then expands with some room to spare. Mimicking that here
- * via a ref keeps micro ticks from flickering the 5 gridlines every second.
+ * Stable Y-range hook — re-uses prior extrema unless a tick clearly escapes
+ * them. Keeps the 5 gridlines steady instead of twitching on every WS push.
  */
-function useStableYRange(
-  seriesKey: string,
-  seriesMin: number,
-  seriesMax: number,
-  strike: number | null,
-) {
+function useStableYRange(seriesKey: string, rawMin: number, rawMax: number) {
   const stateRef = useRef<{ key: string; min: number; max: number } | null>(null);
-
-  const desiredPad = Math.max((seriesMax - seriesMin) * 0.12, seriesMax * 0.0005, 1);
-  const strikeMin = strike != null ? Math.min(seriesMin, strike) : seriesMin;
-  const strikeMax = strike != null ? Math.max(seriesMax, strike) : seriesMax;
-  const targetMin = strikeMin - desiredPad;
-  const targetMax = strikeMax + desiredPad;
+  const pad = Math.max((rawMax - rawMin) * 0.12, rawMax * 0.0005, 1);
+  const target = { min: rawMin - pad, max: rawMax + pad };
 
   const prev = stateRef.current;
-
   if (!prev || prev.key !== seriesKey) {
-    stateRef.current = { key: seriesKey, min: targetMin, max: targetMax };
-    return { min: targetMin, max: targetMax };
+    stateRef.current = { key: seriesKey, ...target };
+    return target;
   }
 
-  // Only expand if new data pokes outside the existing frame with a buffer.
   const buffer = (prev.max - prev.min) * 0.02;
   let { min, max } = prev;
-  if (targetMin < prev.min - buffer) min = targetMin;
-  if (targetMax > prev.max + buffer) max = targetMax;
-
+  if (target.min < prev.min - buffer) min = target.min;
+  if (target.max > prev.max + buffer) max = target.max;
   if (min !== prev.min || max !== prev.max) {
     stateRef.current = { key: seriesKey, min, max };
     return { min, max };
@@ -96,11 +72,15 @@ export function MarketPriceChart({
   marketStartSec,
   marketEndSec,
   strikePriceRaw,
+  settlementPriceRaw,
+  isResolved = false,
 }: {
   symbol: "BTC" | "ETH";
   marketStartSec: number;
   marketEndSec: number;
   strikePriceRaw?: string;
+  settlementPriceRaw?: string;
+  isResolved?: boolean;
 }) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["priceHistory", symbol],
@@ -109,36 +89,76 @@ export function MarketPriceChart({
   });
 
   const strikeNum = parseStrikeUsdNumber(strikePriceRaw);
+  const settlementNum = parseStrikeUsdNumber(settlementPriceRaw);
   const strikeLabel = formatStrikeUsd(strikePriceRaw);
 
   const allPoints = useMemo(() => normalizePriceHistoryData(data), [data]);
-  const series = useMemo(
-    () => buildSeries(allPoints, marketStartSec, marketEndSec),
+
+  // Raw clipped series inside the market window.
+  const rawSeries = useMemo(
+    () => clipPointsBetween(allPoints, marketStartSec, marketEndSec),
     [allPoints, marketStartSec, marketEndSec],
   );
 
-  // Progress indicator — advances 4x/sec. Not a data source, just lets the
-  // "now" marker (and the endpoint X, after the last real tick) slide instead
-  // of snapping once per WS push.
+  // Anchor: the line must literally start on the strike line at marketStartSec,
+  // because the strike IS the opening price of the market (Chainlink snapshot at
+  // block time). Binance/oracle cross-feed drift is a visual distraction we
+  // don't want in a price-direction chart.
+  //
+  // If the market is resolved, also append the settlement at marketEndSec so
+  // the chart spans the full window and clearly shows where we landed.
+  const series = useMemo((): PricePoint[] => {
+    const s: PricePoint[] = [...rawSeries];
+    if (strikeNum != null) {
+      const firstT = s[0]?.t ?? marketEndSec;
+      if (firstT > marketStartSec) {
+        s.unshift({ t: marketStartSec, p: strikeNum });
+      } else if (s.length > 0) {
+        s[0] = { t: marketStartSec, p: strikeNum };
+      }
+    }
+    if (isResolved && settlementNum != null) {
+      const lastT = s[s.length - 1]?.t ?? marketStartSec;
+      if (lastT < marketEndSec) {
+        s.push({ t: marketEndSec, p: settlementNum });
+      } else if (s.length > 0) {
+        s[s.length - 1] = { t: marketEndSec, p: settlementNum };
+      }
+    }
+    return s;
+  }, [rawSeries, strikeNum, settlementNum, isResolved, marketStartSec, marketEndSec]);
+
+  // Sub-second "tickNow" for smooth endpoint glide between WS ticks.
   const [tickNow, setTickNow] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
+    if (isResolved) return;
     const id = setInterval(() => setTickNow(Date.now() / 1000), 250);
     return () => clearInterval(id);
-  }, []);
+  }, [isResolved]);
 
   const windowSec = Math.max(60, marketEndSec - marketStartSec);
 
+  // Current spot — last real (non-synthetic) point in the market window.
+  // For resolved markets, spot = settlement.
+  const currentSpot = useMemo(() => {
+    if (isResolved && settlementNum != null) return settlementNum;
+    if (rawSeries.length) return rawSeries[rawSeries.length - 1]!.p;
+    if (allPoints.length) return allPoints[allPoints.length - 1]!.p;
+    return null;
+  }, [rawSeries, allPoints, isResolved, settlementNum]);
+
+  // Y range considers strike + current spot + settlement so everything visible
+  // stays inside the frame.
   const priceMin = series.length ? Math.min(...series.map((p) => p.p)) : 0;
   const priceMax = series.length ? Math.max(...series.map((p) => p.p)) : 0;
-  const seriesKey = `${symbol}:${marketStartSec}:${marketEndSec}`;
-  const yRange = useStableYRange(seriesKey, priceMin, priceMax, strikeNum);
+  const ymin = Math.min(priceMin, strikeNum ?? priceMin, currentSpot ?? priceMin);
+  const ymax = Math.max(priceMax, strikeNum ?? priceMax, currentSpot ?? priceMax);
+  const seriesKey = `${symbol}:${marketStartSec}:${marketEndSec}:${isResolved ? "R" : "A"}`;
+  const yRange = useStableYRange(seriesKey, ymin, ymax);
 
   const geom = useMemo(() => {
     if (series.length < 2) return null;
 
-    // Lock the X axis to the market window so the chart doesn't pan as time
-    // passes — the line grows into a fixed frame instead of dragging the
-    // whole scale with it, which is what Polymarket does.
     const t0 = marketStartSec;
     const t1 = marketEndSec;
     const dt = t1 - t0 || 1;
@@ -161,14 +181,13 @@ export function MarketPriceChart({
     const areaD = `${lineD} L${xLast.toFixed(1)},${baseY.toFixed(1)} L${xFirst.toFixed(1)},${baseY.toFixed(1)} Z`;
 
     const strikeY = strikeNum != null ? py(strikeNum) : null;
+    const currentY = currentSpot != null ? py(currentSpot) : null;
     const last = series[series.length - 1]!;
     const above = strikeNum == null ? true : last.p >= strikeNum;
 
-    // The endpoint's "now" X creeps forward between real ticks, so the dot
-    // glides along the time axis at a visually continuous rate. Past the
-    // last real tick we clamp the X to tickNow but keep the Y at the last
-    // known price — the line doesn't extend visually, but the marker slides.
-    const endX = tx(Math.max(last.t, Math.min(tickNow, t1)));
+    // Endpoint X glides with tickNow for live markets; resolved markets pin
+    // the marker to settlement time.
+    const endX = isResolved ? tx(t1) : tx(Math.max(last.t, Math.min(tickNow, t1)));
     const endY = py(last.p);
 
     const yLabels = Array.from({ length: Y_TICKS }, (_, i) => {
@@ -183,13 +202,16 @@ export function MarketPriceChart({
       return { x: PAD_L + u * CHART_W, label: fmtTick(sec, windowSec) };
     });
 
-    return { lineD, areaD, strikeY, above, endX, endY, yLabels, xLabels };
-  }, [series, marketStartSec, marketEndSec, strikeNum, tickNow, windowSec, yRange.min, yRange.max]);
+    return { lineD, areaD, strikeY, currentY, above, endX, endY, yLabels, xLabels };
+  }, [series, marketStartSec, marketEndSec, strikeNum, currentSpot, tickNow, isResolved, windowSec, yRange.min, yRange.max]);
 
   const directionColor = geom?.above ? "var(--up)" : "var(--down)";
-  const headerRight =
-    strikeNum == null || !geom ? "—" : geom.above ? "UP ▲" : "DOWN ▼";
-  const gradId = `pp-chart-grad-${symbol}`;
+  const directionLabel = strikeNum == null || !geom ? "—" : geom.above ? "UP ▲" : "DOWN ▼";
+  const gradId = `pp-chart-grad-${symbol}-${isResolved ? "r" : "a"}`;
+
+  // "Now" line color — cyan/neutral so it reads as distinct from the white
+  // strike and the green/red directional accents.
+  const nowColor = "oklch(78% 0.12 220)";
 
   return (
     <div
@@ -197,24 +219,33 @@ export function MarketPriceChart({
       style={{ background: "var(--bg-1)", borderColor: "var(--border-0)" }}
     >
       <div
-        className="flex flex-wrap items-center justify-between gap-3 border-b px-3 py-2"
+        className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b px-3 py-2"
         style={{ borderColor: "var(--border-0)" }}
       >
-        <div className="flex items-baseline gap-3">
+        <div className="flex items-baseline gap-2">
           <span className="pp-micro">Strike</span>
           <span className="pp-price-md">{strikeLabel}</span>
         </div>
-        <div className="flex items-baseline gap-3">
-          <span className="pp-micro">Currently</span>
+        <div className="flex items-baseline gap-2">
+          <span className="pp-micro">{isResolved ? "Settlement" : "Current"}</span>
+          <span
+            className="pp-price-md"
+            style={{ color: isResolved ? directionColor : nowColor }}
+          >
+            {currentSpot != null ? fmtPrice2(currentSpot) : "—"}
+          </span>
+        </div>
+        <div className="ml-auto flex items-baseline gap-2">
+          <span className="pp-micro">Direction</span>
           <span
             className="pp-price-md"
             style={{ color: strikeNum == null || !geom ? "var(--fg-2)" : directionColor }}
           >
-            {headerRight}
+            {directionLabel}
           </span>
         </div>
       </div>
-      <div className="relative min-h-[280px] flex-1">
+      <div className="relative aspect-[820/280] min-h-[220px] w-full flex-1 sm:min-h-[280px]">
         {isLoading && <p className="p-4 pp-caption">Loading chart…</p>}
         {isError && !isLoading && (
           <p className="p-4 pp-body-strong">Price data unavailable</p>
@@ -225,7 +256,7 @@ export function MarketPriceChart({
         {!isLoading && !isError && geom && series.length >= 2 && (
           <svg
             viewBox={`0 0 ${VB_W} ${VB_H}`}
-            className="block h-[280px] w-full"
+            className="block h-full w-full"
             preserveAspectRatio="none"
             role="img"
           >
@@ -244,6 +275,7 @@ export function MarketPriceChart({
               </linearGradient>
             </defs>
 
+            {/* Y gridlines + right-gutter price labels */}
             {geom.yLabels.map((t, i) => (
               <g key={`y-${i}`}>
                 <line
@@ -269,6 +301,7 @@ export function MarketPriceChart({
               </g>
             ))}
 
+            {/* Strike line + labeled badge */}
             {geom.strikeY != null && (
               <>
                 <line
@@ -282,9 +315,9 @@ export function MarketPriceChart({
                   opacity="0.9"
                 />
                 <rect
-                  x={VB_W - PAD_R - 56}
+                  x={VB_W - PAD_R - 58}
                   y={geom.strikeY - 9}
-                  width="52"
+                  width="54"
                   height="16"
                   fill="var(--bg-0)"
                   stroke="var(--border-1)"
@@ -292,7 +325,7 @@ export function MarketPriceChart({
                   rx="2"
                 />
                 <text
-                  x={VB_W - PAD_R - 30}
+                  x={VB_W - PAD_R - 31}
                   y={geom.strikeY + 2}
                   textAnchor="middle"
                   fontFamily="Geist Mono, ui-monospace, monospace"
@@ -301,6 +334,45 @@ export function MarketPriceChart({
                   style={{ fontVariantNumeric: "tabular-nums" }}
                 >
                   STRIKE
+                </text>
+              </>
+            )}
+
+            {/* Current-price line + badge — distinct cyan, separate from strike.
+                Hidden in resolved mode since the price IS the settlement and
+                already tracked by the endpoint dot. */}
+            {!isResolved && geom.currentY != null && currentSpot != null && (
+              <>
+                <line
+                  x1={PAD_L}
+                  x2={VB_W - PAD_R}
+                  y1={geom.currentY}
+                  y2={geom.currentY}
+                  stroke={nowColor}
+                  strokeWidth="1"
+                  strokeDasharray="2 3"
+                  opacity="0.85"
+                />
+                <rect
+                  x={VB_W - PAD_R - 58}
+                  y={geom.currentY - 9}
+                  width="54"
+                  height="16"
+                  fill="var(--bg-0)"
+                  stroke={nowColor}
+                  strokeWidth="1"
+                  rx="2"
+                />
+                <text
+                  x={VB_W - PAD_R - 31}
+                  y={geom.currentY + 2}
+                  textAnchor="middle"
+                  fontFamily="Geist Mono, ui-monospace, monospace"
+                  fontSize="10"
+                  fill={nowColor}
+                  style={{ fontVariantNumeric: "tabular-nums" }}
+                >
+                  NOW
                 </text>
               </>
             )}
@@ -316,8 +388,6 @@ export function MarketPriceChart({
               vectorEffect="non-scaling-stroke"
             />
 
-            {/* Endpoint — CSS transform transitions smoothly between WS ticks
-                so the marker glides instead of snapping. */}
             <g
               style={{
                 transform: `translate(${geom.endX}px, ${geom.endY}px)`,
