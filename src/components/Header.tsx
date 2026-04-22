@@ -1,5 +1,6 @@
 "use client";
 
+import { Menu, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -257,30 +258,13 @@ export function Header() {
               type="button"
               className="pp-btn pp-btn--ghost pp-btn--sm ml-1 sm:hidden"
               onClick={() => setMobileMenuOpen((o) => !o)}
-              aria-label="Menu"
+              aria-label={mobileMenuOpen ? "Close menu" : "Menu"}
             >
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-              >
-                {mobileMenuOpen ? (
-                  <>
-                    <path d="M18 6 6 18" />
-                    <path d="m6 6 12 12" />
-                  </>
-                ) : (
-                  <>
-                    <path d="M4 6h16" />
-                    <path d="M4 12h16" />
-                    <path d="M4 18h16" />
-                  </>
-                )}
-              </svg>
+              {mobileMenuOpen ? (
+                <X size={18} strokeWidth={1.5} />
+              ) : (
+                <Menu size={18} strokeWidth={1.5} />
+              )}
             </button>
           </div>
         </div>

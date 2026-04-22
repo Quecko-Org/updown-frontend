@@ -1,36 +1,12 @@
-import type { ReactNode } from "react";
+import type { LucideIcon } from "lucide-react";
+import { ArrowLeftRight, LineChart, List, Wallet } from "lucide-react";
 import { cn } from "@/lib/cn";
 
-const ICONS: Record<string, ReactNode> = {
-  wallet: (
-    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" />
-      <path d="M3 5v14a2 2 0 0 0 2 2h16v-5" />
-      <path d="M18 12a2 2 0 0 0 0 4h4v-4h-4Z" />
-
-    </svg>
-  ),
-  chart: (
-    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 3v18h18" />
-      <path d="m19 9-5 5-4-4-3 3" />
-    </svg>
-  ),
-  trade: (
-    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m16 3 4 4-4 4" />
-      <path d="M20 7H4" />
-      <path d="m8 21-4-4 4-4" />
-      <path d="M4 17h16" />
-    </svg>
-  ),
-  list: (
-    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="5" width="18" height="14" rx="2" />
-      <path d="M7 9h10" />
-      <path d="M7 13h6" />
-    </svg>
-  ),
+const ICONS: Record<string, LucideIcon> = {
+  wallet: Wallet,
+  chart: LineChart,
+  trade: ArrowLeftRight,
+  list: List,
 };
 
 export function EmptyState({
@@ -46,7 +22,7 @@ export function EmptyState({
   children?: React.ReactNode;
   className?: string;
 }) {
-  const iconEl = icon && ICONS[icon] ? ICONS[icon] : null;
+  const Icon = icon ? ICONS[icon] : null;
 
   return (
     <div
@@ -56,12 +32,12 @@ export function EmptyState({
       )}
       style={{ borderColor: "var(--border-0)", background: "var(--bg-1)" }}
     >
-      {iconEl && (
+      {Icon && (
         <div
           className="mb-4 flex h-14 w-14 items-center justify-center rounded-[6px]"
           style={{ background: "var(--bg-2)", color: "var(--fg-2)" }}
         >
-          {iconEl}
+          <Icon size={24} strokeWidth={1.5} />
         </div>
       )}
       {title && <p className="pp-h3">{title}</p>}
