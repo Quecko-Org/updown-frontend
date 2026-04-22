@@ -14,7 +14,10 @@ import {
 import { wsStreamUrl } from "@/lib/env";
 import type { BalanceResponse, MarketListItem, OrderBookResponse } from "@/lib/api";
 import { applyOrderUpdateToList, buildTerminalOrderToast, type OrderUpdateLike } from "@/lib/derivations";
-import { signUserOpHash } from "@/utils/sessionKeypair";
+import {
+  signSignatureRequest,
+  type SignatureRequest,
+} from "@/utils/sessionKeypair";
 
 type WsPayload = {
   type: string;
@@ -24,32 +27,37 @@ type WsPayload = {
 
 /**
  * Shape of `session_sign_request.data` from the backend (matches
- * `WsServer.sendSignRequest` payload in updown-backend). The server
- * validates on its side; we revalidate here to refuse malformed prompts
- * before ever touching the private key.
+ * `OptionCSignRequestPayload` in updown-backend `SettlementService.ts`).
+ * The server validates on its side; we revalidate here to refuse
+ * malformed prompts before ever touching the private key.
  */
 type SignRequestPayload = {
   requestId: string;
-  userOp: { to: string; callData: string; smartAccountAddress: string };
-  userOpHash: string;
+  smartAccountAddress: string;
+  signatureRequest: SignatureRequest;
+  uiPreview: { market: string; option: number; amount: string };
   expiresAt: number;
 };
 
 function isSignRequestPayload(x: unknown): x is SignRequestPayload {
   if (!x || typeof x !== "object") return false;
   const o = x as Record<string, unknown>;
-  const uo = o.userOp as Record<string, unknown> | undefined;
+  const sr = o.signatureRequest as Record<string, unknown> | undefined;
+  const ui = o.uiPreview as Record<string, unknown> | undefined;
   return (
     typeof o.requestId === "string" &&
     o.requestId.length > 0 &&
-    typeof o.userOpHash === "string" &&
-    o.userOpHash.startsWith("0x") &&
+    typeof o.smartAccountAddress === "string" &&
+    o.smartAccountAddress.startsWith("0x") &&
     typeof o.expiresAt === "number" &&
     Number.isFinite(o.expiresAt) &&
-    !!uo &&
-    typeof uo.to === "string" &&
-    typeof uo.callData === "string" &&
-    typeof uo.smartAccountAddress === "string"
+    !!sr &&
+    (sr.type === "personal_sign" || sr.type === "eth_signTypedData_v4") &&
+    typeof sr.rawPayload === "string" &&
+    !!ui &&
+    typeof ui.market === "string" &&
+    typeof ui.option === "number" &&
+    typeof ui.amount === "string"
   );
 }
 
@@ -59,8 +67,9 @@ function isSignRequestPayload(x: unknown): x is SignRequestPayload {
  *   2. Record the pending request so UI derivations (PENDING chip,
  *      remaining-allowance preview) can react.
  *   3. Show a sonner loading toast keyed by requestId.
- *   4. Sign the userOpHash with the secp256k1 session key in IDB
- *      (personal_sign / EIP-191).
+ *   4. Sign the Alchemy signatureRequest with the secp256k1 session key
+ *      in IDB — branches on `signatureRequest.type` (personal_sign vs
+ *      eth_signTypedData_v4).
  *   5. Send `sign_response` back on the same socket.
  *
  * Errors (no key in IDB, signing fails, socket closed mid-flight) surface
@@ -77,41 +86,22 @@ async function handleSessionSignRequest(
 ): Promise<void> {
   if (!isSignRequestPayload(data)) return;
 
-  // Decode the enterPosition amount from calldata: after the 4-byte
-  // selector, args are (marketId, option, amount) each uint256-padded.
-  // amount is the third word = bytes[4 + 64..4 + 96].
-  let amountStr = "0";
-  let marketStr = data.userOp.to.toLowerCase();
-  let optionNum = 0;
-  try {
-    const cd = data.userOp.callData.startsWith("0x")
-      ? data.userOp.callData.slice(2)
-      : data.userOp.callData;
-    if (cd.length >= 8 + 3 * 64) {
-      marketStr = `0x${cd.slice(8, 8 + 64)}`.replace(/^0x0+/, "0x");
-      optionNum = parseInt(cd.slice(8 + 64, 8 + 128), 16) || 0;
-      amountStr = BigInt(`0x${cd.slice(8 + 128, 8 + 192)}`).toString();
-    }
-  } catch {
-    // fall through with defaults
-  }
-
   const entry: PendingSignRequest = {
     requestId: data.requestId,
-    market: marketStr,
-    option: optionNum,
-    amount: amountStr,
+    market: data.uiPreview.market,
+    option: data.uiPreview.option,
+    amount: data.uiPreview.amount,
     expiresAt: data.expiresAt,
   };
   deps.setPendingSignRequests((prev) => new Map(prev).set(data.requestId, entry));
 
-  const amountUsd = (Number(amountStr) / 1_000_000).toFixed(2);
+  const amountUsd = (Number(data.uiPreview.amount) / 1_000_000).toFixed(2);
   toast.loading(`Signing fill of $${amountUsd}…`, { id: `sign-${data.requestId}` });
 
   try {
-    const signature = await signUserOpHash(
-      data.userOp.smartAccountAddress,
-      data.userOpHash
+    const signature = await signSignatureRequest(
+      data.smartAccountAddress,
+      data.signatureRequest
     );
     const ws = deps.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -125,7 +115,7 @@ async function handleSessionSignRequest(
     // server side, we leave the total bumped; the server's retry will
     // regenerate the same requestId (sha256 of the same tuple) and
     // `sign_response_ack` routed:false drops into the noop branch.
-    deps.setSessionAmountUsed((prev) => (BigInt(prev) + BigInt(amountStr)).toString());
+    deps.setSessionAmountUsed((prev) => (BigInt(prev) + BigInt(data.uiPreview.amount)).toString());
   } catch (err) {
     console.error("[sessionSign] failed:", err);
     toast.error("Could not sign settlement — re-authorize session", {

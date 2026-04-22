@@ -102,21 +102,46 @@ export async function deleteSessionKey(
 }
 
 /**
- * Sign a userOpHash using the stored session key. Returns a 0x-prefixed
- * 65-byte secp256k1 signature (r || s || v) produced via personal_sign
- * (EIP-191) — matches the `personal_sign` branch in Alchemy's
- * `signSignatureRequest.ts` (the only path the wallet server accepts
- * for secp256k1 session signers).
- *
- * Uses `{ message: { raw: hex } }` explicitly so the 32-byte hash is
- * treated as raw bytes, not as a UTF-8 string. `signMessage(hexString)`
- * would interpret the `"0x..."` literal characters as the message,
- * producing a signature over different bytes — and
- * `recoverMessageAddress({ message: { raw } })` would no longer match.
+ * Alchemy signatureRequest shape: the two variants the wallet server
+ * returns for MA v2 user-op prepared calls. See
+ * `@alchemy/wallet-api-types/schemas.PreparedCall_UserOpV07x` — the
+ * `signatureRequest` field is a union of exactly these two types.
+ * `eip7702Auth` is a third variant in the broader SignatureRequest
+ * union but is never attached to UserOp prepared calls.
  */
-export async function signUserOpHash(
+export type SignatureRequest =
+  | {
+      type: "personal_sign";
+      data: string | { raw: `0x${string}` };
+      rawPayload: `0x${string}`;
+    }
+  | {
+      type: "eth_signTypedData_v4";
+      data: import("viem").TypedDataDefinition;
+      rawPayload: `0x${string}`;
+    };
+
+/**
+ * Sign an Alchemy `signatureRequest` using the stored secp256k1 session
+ * key. Returns a 65-byte hex signature (r || s || v). Branches on
+ * `signatureRequest.type`:
+ *
+ *   - `personal_sign` → viem's `account.signMessage({ message: data })`.
+ *     Alchemy sends `data` as a SignableMessage (string or `{ raw: Hex }`).
+ *     viem handles both: a plain string is UTF-8-encoded before the
+ *     EIP-191 prefix; `{ raw: hex }` is treated as bytes. We just pass
+ *     `data` through verbatim so Alchemy's choice is honored.
+ *   - `eth_signTypedData_v4` → viem's `account.signTypedData(data)`.
+ *     EIP-712 hashing happens inside viem; the returned signature is
+ *     over the EIP-712 struct hash, NOT the rawPayload via EIP-191.
+ *
+ * The shape `{ type: "secp256k1", data: signature }` is what
+ * `wallet_sendPreparedCalls` expects on the server side — this function
+ * returns just the hex, and the backend wraps it before submission.
+ */
+export async function signSignatureRequest(
   smartAccountAddress: string,
-  userOpHashHex: string
+  req: SignatureRequest
 ): Promise<`0x${string}`> {
   const kp = await getStoredSessionKey(smartAccountAddress);
   if (!kp) {
@@ -125,7 +150,18 @@ export async function signUserOpHash(
     );
   }
   const account = privateKeyToAccount(kp.privateKey);
-  return (await account.signMessage({
-    message: { raw: userOpHashHex as `0x${string}` },
-  })) as `0x${string}`;
+
+  if (req.type === "personal_sign") {
+    return (await account.signMessage({ message: req.data })) as `0x${string}`;
+  }
+  if (req.type === "eth_signTypedData_v4") {
+    return (await account.signTypedData(req.data)) as `0x${string}`;
+  }
+  // Exhaustiveness guard — if Alchemy ships a third branch, the runtime
+  // throw surfaces it clearly instead of silently producing a garbage
+  // signature. Stop-and-page scenario per Option C design doc.
+  const unknownType = (req as { type?: string }).type;
+  throw new Error(
+    `Unsupported signatureRequest type from Alchemy: ${String(unknownType)}. Expected personal_sign or eth_signTypedData_v4.`
+  );
 }

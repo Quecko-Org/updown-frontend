@@ -7,8 +7,9 @@
  *
  * The test file sits next to the hook so the mock wiring stays local.
  * Rather than re-export internal helpers (which would widen the public
- * API), we exercise the handler by feeding the module-scoped `handleSessionSignRequest`
- * — which is an internal helper we keep unexported in the hook file.
+ * API), we exercise the handler by feeding the module-scoped
+ * `handleSessionSignRequest` — which is an internal helper we keep
+ * unexported in the hook file.
  *
  * Since the helper IS NOT exported, this test verifies the *behavior
  * the hook relies on* through an explicit copy of the handler. If the
@@ -18,6 +19,7 @@
  *      same requestId.
  *   2. Pending-request and session-amount atoms reflect the request.
  *   3. Malformed payloads are dropped silently (no WS send, no signing).
+ *   4. Both personal_sign and eth_signTypedData_v4 branches sign.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -45,10 +47,12 @@ vi.mock("sonner", () => ({
 }));
 
 // Import after mocks so the helpers read the mocked module graph.
-import { generateAndStoreSessionKey } from "../utils/sessionKeypair";
+import {
+  generateAndStoreSessionKey,
+  type SignatureRequest,
+} from "../utils/sessionKeypair";
 
 const SA = "0xAa" + "11".repeat(19);
-const ENTER_POSITION_SELECTOR = "0x" + "a".repeat(8); // stub; not cryptographically verified here
 
 type PendingSignRequest = {
   requestId: string;
@@ -58,11 +62,39 @@ type PendingSignRequest = {
   expiresAt: number;
 };
 
+type SignRequestPayload = {
+  requestId: string;
+  smartAccountAddress: string;
+  signatureRequest: SignatureRequest;
+  uiPreview: { market: string; option: number; amount: string };
+  expiresAt: number;
+};
+
+function isSignRequestPayload(x: unknown): x is SignRequestPayload {
+  if (!x || typeof x !== "object") return false;
+  const o = x as Record<string, unknown>;
+  const sr = o.signatureRequest as Record<string, unknown> | undefined;
+  const ui = o.uiPreview as Record<string, unknown> | undefined;
+  return (
+    typeof o.requestId === "string" &&
+    o.requestId.length > 0 &&
+    typeof o.smartAccountAddress === "string" &&
+    o.smartAccountAddress.startsWith("0x") &&
+    typeof o.expiresAt === "number" &&
+    Number.isFinite(o.expiresAt) &&
+    !!sr &&
+    (sr.type === "personal_sign" || sr.type === "eth_signTypedData_v4") &&
+    typeof sr.rawPayload === "string" &&
+    !!ui &&
+    typeof ui.market === "string" &&
+    typeof ui.option === "number" &&
+    typeof ui.amount === "string"
+  );
+}
+
 /**
- * Copy of `handleSessionSignRequest` from useUpDownWebSocket.ts — kept in
- * sync by the same module's `isSignRequestPayload` + decode logic. If you
- * edit one, edit both. The alternative (exporting the helper) would
- * widen the surface for every consumer of the hook.
+ * Copy of `handleSessionSignRequest` from useUpDownWebSocket.ts — kept
+ * in sync manually; see the source file for the authoritative version.
  */
 async function handleSessionSignRequest(
   data: unknown,
@@ -74,41 +106,24 @@ async function handleSessionSignRequest(
     setSessionAmountUsed: (updater: (p: string) => string) => void;
   }
 ) {
-  const { signUserOpHash } = await import("../utils/sessionKeypair");
-  if (!data || typeof data !== "object") return;
-  const o = data as Record<string, unknown>;
-  const uo = o.userOp as Record<string, unknown> | undefined;
-  if (
-    typeof o.requestId !== "string" ||
-    typeof o.userOpHash !== "string" ||
-    !(o.userOpHash as string).startsWith("0x") ||
-    typeof o.expiresAt !== "number" ||
-    !uo ||
-    typeof uo.to !== "string" ||
-    typeof uo.callData !== "string" ||
-    typeof uo.smartAccountAddress !== "string"
-  ) {
-    return;
-  }
-  let amountStr = "0";
-  const cd = (uo.callData as string).startsWith("0x") ? (uo.callData as string).slice(2) : (uo.callData as string);
-  if (cd.length >= 8 + 3 * 64) {
-    amountStr = BigInt(`0x${cd.slice(8 + 128, 8 + 192)}`).toString();
-  }
+  const { signSignatureRequest } = await import("../utils/sessionKeypair");
+  if (!isSignRequestPayload(data)) return;
+
   const entry: PendingSignRequest = {
-    requestId: o.requestId as string,
-    market: uo.to as string,
-    option: 0,
-    amount: amountStr,
-    expiresAt: o.expiresAt as number,
+    requestId: data.requestId,
+    market: data.uiPreview.market,
+    option: data.uiPreview.option,
+    amount: data.uiPreview.amount,
+    expiresAt: data.expiresAt,
   };
-  deps.setPendingSignRequests((prev) => new Map(prev).set(o.requestId as string, entry));
-  const sig = await signUserOpHash(uo.smartAccountAddress as string, o.userOpHash as string);
+  deps.setPendingSignRequests((prev) => new Map(prev).set(data.requestId, entry));
+
+  const sig = await signSignatureRequest(data.smartAccountAddress, data.signatureRequest);
   if (!deps.ws || deps.ws.readyState !== 1) throw new Error("WS closed");
   deps.ws.send(
-    JSON.stringify({ type: "sign_response", requestId: o.requestId, signature: sig })
+    JSON.stringify({ type: "sign_response", requestId: data.requestId, signature: sig })
   );
-  deps.setSessionAmountUsed((prev) => (BigInt(prev) + BigInt(amountStr)).toString());
+  deps.setSessionAmountUsed((prev) => (BigInt(prev) + BigInt(data.uiPreview.amount)).toString());
 }
 
 beforeEach(() => {
@@ -117,41 +132,39 @@ beforeEach(() => {
 });
 
 describe("session_sign_request handler", () => {
-  function buildCalldata(amountBaseUnits: bigint) {
-    // selector (8 hex) + marketId (64) + option (64) + amount (64)
-    const amountHex = amountBaseUnits.toString(16).padStart(64, "0");
-    const marketHex = "00".repeat(32);
-    const optionHex = "00".repeat(31) + "01";
-    return ENTER_POSITION_SELECTOR + marketHex + optionHex + amountHex;
+  function buildPayload(
+    signatureRequest: SignatureRequest,
+    amount = "25000000",
+    requestId = "req-1",
+  ) {
+    return {
+      requestId,
+      smartAccountAddress: SA,
+      signatureRequest,
+      uiPreview: { market: "99", option: 1, amount },
+      expiresAt: Date.now() + 20_000,
+    };
   }
 
-  it("signs the digest and emits sign_response with same requestId", async () => {
+  it("personal_sign: signs and emits sign_response with same requestId", async () => {
     await generateAndStoreSessionKey(SA);
-
     const sent: string[] = [];
     const pending = new Map<string, PendingSignRequest>();
     let amountUsed = "0";
 
     await handleSessionSignRequest(
-      {
-        requestId: "req-1",
-        userOpHash: "0x" + "ab".repeat(32),
-        expiresAt: Date.now() + 20_000,
-        userOp: {
-          to: "0x2222222222222222222222222222222222222222",
-          callData: buildCalldata(BigInt(25_000_000)),
-          smartAccountAddress: SA,
-        },
-      },
+      buildPayload({
+        type: "personal_sign",
+        data: { raw: "0x" + "ab".repeat(32) as `0x${string}` },
+        rawPayload: "0x" + "ab".repeat(32) as `0x${string}`,
+      }),
       {
         ws: { readyState: 1, send: (s: string) => sent.push(s) },
         setPendingSignRequests: (u) => {
           const next = u(pending);
           next.forEach((v, k) => pending.set(k, v));
         },
-        setSessionAmountUsed: (u) => {
-          amountUsed = u(amountUsed);
-        },
+        setSessionAmountUsed: (u) => { amountUsed = u(amountUsed); },
       }
     );
 
@@ -160,20 +173,62 @@ describe("session_sign_request handler", () => {
     expect(parsed.type).toBe("sign_response");
     expect(parsed.requestId).toBe("req-1");
     expect(parsed.signature).toMatch(/^0x[0-9a-f]{130}$/i);
-
-    expect(pending.get("req-1")).toBeDefined();
     expect(pending.get("req-1")?.amount).toBe("25000000");
     expect(amountUsed).toBe("25000000");
   });
 
-  it("silently drops malformed payloads (missing requestId)", async () => {
+  it("eth_signTypedData_v4: signs via EIP-712 path and emits sign_response", async () => {
+    await generateAndStoreSessionKey(SA);
+    const sent: string[] = [];
+    const pending = new Map<string, PendingSignRequest>();
+    let amountUsed = "0";
+
+    await handleSessionSignRequest(
+      buildPayload({
+        type: "eth_signTypedData_v4",
+        data: {
+          domain: {
+            name: "UpDown Exchange",
+            version: "1",
+            chainId: 42161,
+            verifyingContract: "0x2222222222222222222222222222222222222222",
+          },
+          types: {
+            Settle: [
+              { name: "marketId", type: "uint256" },
+              { name: "amount", type: "uint256" },
+            ],
+          },
+          primaryType: "Settle",
+          message: { marketId: BigInt(99), amount: BigInt(100) },
+        },
+        rawPayload: "0x" + "cd".repeat(32) as `0x${string}`,
+      }),
+      {
+        ws: { readyState: 1, send: (s: string) => sent.push(s) },
+        setPendingSignRequests: (u) => {
+          const next = u(pending);
+          next.forEach((v, k) => pending.set(k, v));
+        },
+        setSessionAmountUsed: (u) => { amountUsed = u(amountUsed); },
+      }
+    );
+
+    expect(sent).toHaveLength(1);
+    const parsed = JSON.parse(sent[0]);
+    expect(parsed.signature).toMatch(/^0x[0-9a-f]{130}$/i);
+    expect(pending.size).toBe(1);
+  });
+
+  it("silently drops malformed payloads (missing signatureRequest)", async () => {
     const sent: string[] = [];
     await handleSessionSignRequest(
       {
-        // no requestId
-        userOpHash: "0xabc",
+        requestId: "req-x",
+        smartAccountAddress: SA,
+        // no signatureRequest
+        uiPreview: { market: "0", option: 0, amount: "0" },
         expiresAt: Date.now(),
-        userOp: { to: "0x", callData: "0x", smartAccountAddress: SA },
       },
       {
         ws: { readyState: 1, send: (s: string) => sent.push(s) },
@@ -184,20 +239,14 @@ describe("session_sign_request handler", () => {
     expect(sent).toHaveLength(0);
   });
 
-  it("throws if no stored keypair (user must re-grant)", async () => {
-    // No generateAndStoreSessionKey call before — keypair missing.
+  it("throws if no stored session key (user must re-grant)", async () => {
     await expect(
       handleSessionSignRequest(
-        {
-          requestId: "req-2",
-          userOpHash: "0x" + "cc".repeat(32),
-          expiresAt: Date.now() + 20_000,
-          userOp: {
-            to: "0x2222222222222222222222222222222222222222",
-            callData: buildCalldata(BigInt(10_000_000)),
-            smartAccountAddress: SA,
-          },
-        },
+        buildPayload({
+          type: "personal_sign",
+          data: { raw: "0x" + "cc".repeat(32) as `0x${string}` },
+          rawPayload: "0x" + "cc".repeat(32) as `0x${string}`,
+        }, "10000000", "req-2"),
         {
           ws: { readyState: 1, send: () => undefined },
           setPendingSignRequests: () => undefined as never,
@@ -217,24 +266,17 @@ describe("session_sign_request handler", () => {
         const next = u(pending);
         next.forEach((v, k) => pending.set(k, v));
       },
-      setSessionAmountUsed: (u: (p: string) => string) => {
-        amountUsed = u(amountUsed);
-      },
+      setSessionAmountUsed: (u: (p: string) => string) => { amountUsed = u(amountUsed); },
     };
 
     for (let i = 0; i < 3; i++) {
       await handleSessionSignRequest(
-        {
-          requestId: `req-${i}`,
-          userOpHash: "0x" + String(i).padStart(64, "0"),
-          expiresAt: Date.now() + 20_000,
-          userOp: {
-            to: "0x2222222222222222222222222222222222222222",
-            callData: buildCalldata(BigInt(25_000_000)),
-            smartAccountAddress: SA,
-          },
-        },
-        deps
+        buildPayload({
+          type: "personal_sign",
+          data: { raw: ("0x" + String(i).padStart(64, "0")) as `0x${string}` },
+          rawPayload: ("0x" + String(i).padStart(64, "0")) as `0x${string}`,
+        }, "25000000", `req-${i}`),
+        deps,
       );
     }
 
