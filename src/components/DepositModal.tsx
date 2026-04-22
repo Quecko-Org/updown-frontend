@@ -2,7 +2,7 @@
 
 import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
-import { cn } from "@/lib/cn";
+import { Modal } from "./Modal";
 
 type Props = {
   open: boolean;
@@ -11,42 +11,59 @@ type Props = {
 };
 
 export function DepositModal({ open, onClose, depositAddress }: Props) {
-  if (!open) return null;
+  const address = depositAddress || "";
+  const canCopy = address.length > 0;
+
+  function copy() {
+    if (!canCopy) return;
+    navigator.clipboard.writeText(address);
+    toast.success("Address copied");
+  }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <button
-        type="button"
-        className="absolute inset-0 bg-overlay"
-        aria-label="Close"
-        onClick={onClose}
-      />
-      <div className={cn("card-kraken relative z-10 w-full max-w-md p-6 shadow-card-hover")}>
-        <h2 className="pp-h2">Deposit USDT</h2>
-        <p className="mt-2 text-sm leading-relaxed text-muted">
-          Send USDT on Arbitrum to your smart account address below. Funds are controlled only by you — the backend
-          can only use them for trades you authorize. Balance updates after confirmations.
-        </p>
-        <div className="mt-5 flex justify-center rounded-[12px] border border-border bg-surface-muted/40 p-5">
-          <QRCodeSVG value={depositAddress || " "} size={180} level="M" />
-        </div>
-        <p className="mt-4 break-all rounded-[12px] bg-surface-muted px-3 py-3 font-mono text-xs leading-relaxed text-foreground">
-          {depositAddress || "—"}
-        </p>
-        <button
-          type="button"
-          className="btn-primary mt-6 w-full"
-          onClick={() => {
-            navigator.clipboard.writeText(depositAddress);
-            toast.success("Address copied");
+    <Modal open={open} onClose={onClose} title="Deposit USDT" width={420}>
+      <p className="pp-body" style={{ color: "var(--fg-1)" }}>
+        Send USDT on Arbitrum to the smart-account address below. Funds stay under your control — the backend
+        only uses them for trades you authorize.
+      </p>
+
+      <div className="pp-kv" style={{ marginTop: 14 }}>
+        <span className="pp-micro">Network</span>
+        <span className="pp-body-strong">Arbitrum One</span>
+        <span className="pp-micro">Asset</span>
+        <span className="pp-body-strong">USDT</span>
+      </div>
+
+      <div className="pp-qr" style={{ padding: "18px 0" }}>
+        <QRCodeSVG value={address || " "} size={140} level="M" bgColor="#ffffff" fgColor="#000000" />
+      </div>
+
+      <div>
+        <span className="pp-micro">Address</span>
+        <p
+          className="pp-hash"
+          style={{
+            marginTop: 4,
+            padding: "10px 12px",
+            background: "var(--bg-0)",
+            border: "1px solid var(--border-0)",
+            borderRadius: 4,
+            color: "var(--fg-0)",
+            wordBreak: "break-all",
           }}
         >
-          Copy address
-        </button>
-        <button type="button" className="btn-secondary mt-3 w-full" onClick={onClose}>
-          Close
-        </button>
+          {address || "—"}
+        </p>
       </div>
-    </div>
+
+      <button
+        type="button"
+        className="pp-btn pp-btn--primary pp-btn--lg pp-modal__cta"
+        onClick={copy}
+        disabled={!canCopy}
+      >
+        Copy address
+      </button>
+    </Modal>
   );
 }

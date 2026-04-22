@@ -1,6 +1,6 @@
 "use client";
 
-import { cn } from "@/lib/cn";
+import { Modal } from "./Modal";
 
 type Props = {
   open: boolean;
@@ -9,28 +9,27 @@ type Props = {
 };
 
 export function SignModal({ open, onSign, onCancel }: Props) {
-  if (!open) return null;
-
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-      <button
-        type="button"
-        className="absolute inset-0 bg-overlay"
-        aria-label="Cancel and disconnect"
-        onClick={onCancel}
-      />
-      <div className={cn("card-kraken relative z-10 w-full max-w-md p-6 shadow-card-hover")}>
-        <h2 className="pp-h2">Verify wallet</h2>
-        <p className="mt-2 text-sm leading-relaxed text-muted">
-          Sign a message with your wallet to create your smart account and enable trading.
-        </p>
-        <button type="button" className="btn-primary mt-6 w-full" onClick={onSign}>
-          Sign message
-        </button>
-        <button type="button" className="btn-secondary mt-3 w-full" onClick={onCancel}>
+    <Modal open={open} onClose={onCancel} title="Authorize session" width={380} zIndex={100}>
+      <p className="pp-body" style={{ color: "var(--fg-1)" }}>
+        Sign a one-time message to create your smart account and enable trading. No gas.
+      </p>
+      <div className="pp-modal__row" style={{ marginTop: 20 }}>
+        <button
+          type="button"
+          className="pp-btn pp-btn--secondary pp-btn--md"
+          onClick={onCancel}
+        >
           Cancel
         </button>
+        <button
+          type="button"
+          className="pp-btn pp-btn--primary pp-btn--md"
+          onClick={onSign}
+        >
+          Sign
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }

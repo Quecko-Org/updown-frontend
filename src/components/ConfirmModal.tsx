@@ -1,12 +1,17 @@
 "use client";
 
 import { cn } from "@/lib/cn";
+import { Modal } from "./Modal";
 
 type Props = {
   open: boolean;
   title: string;
   message: string;
   confirmLabel: string;
+  /**
+   * Override the confirm button class — callers pass a pp-btn variant (e.g.
+   * `pp-btn pp-btn--down pp-btn--md` for destructive). Defaults to primary.
+   */
   confirmClassName?: string;
   loading?: boolean;
   onConfirm: () => void;
@@ -23,28 +28,29 @@ export function ConfirmModal({
   onConfirm,
   onClose,
 }: Props) {
-  if (!open) return null;
-
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-      <button type="button" className="absolute inset-0 bg-overlay" aria-label="Close" onClick={onClose} />
-      <div className={cn("card-kraken relative z-10 w-full max-w-md p-6 shadow-card-hover")}>
-        <h2 className="pp-h2">{title}</h2>
-        <p className="mt-3 text-sm leading-relaxed text-muted">{message}</p>
-        <div className="mt-6 flex gap-3">
-          <button type="button" className="btn-secondary flex-1" onClick={onClose} disabled={loading}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className={cn("flex-1 rounded-[12px] px-4 py-3 text-sm font-semibold text-white", confirmClassName ?? "btn-primary")}
-            onClick={() => onConfirm()}
-            disabled={loading}
-          >
-            {loading ? "…" : confirmLabel}
-          </button>
-        </div>
+    <Modal open={open} onClose={onClose} title={title} width={380} zIndex={100}>
+      <p className="pp-body" style={{ color: "var(--fg-1)" }}>
+        {message}
+      </p>
+      <div className="pp-modal__row" style={{ marginTop: 20 }}>
+        <button
+          type="button"
+          className="pp-btn pp-btn--secondary pp-btn--md"
+          onClick={onClose}
+          disabled={loading}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className={cn(confirmClassName ?? "pp-btn pp-btn--primary pp-btn--md")}
+          onClick={() => onConfirm()}
+          disabled={loading}
+        >
+          {loading ? "…" : confirmLabel}
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }
