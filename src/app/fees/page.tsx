@@ -86,8 +86,8 @@ export default function FeesPage() {
       <section className="pp-panel space-y-3" style={{ padding: "16px" }}>
         <h2 className="pp-h2">Designated market makers</h2>
         <p className="pp-body" style={{ color: "var(--fg-2)" }}>
-          Market makers who meet program requirements earn rebates on filled maker volume. Rebates are shown in the
-          trade form when your wallet is approved.
+          Market makers meeting program requirements earn rebates on filled maker volume. Approved wallets see
+          the rebate rate inline in the trade form.
         </p>
         <p>
           <Link

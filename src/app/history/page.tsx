@@ -97,7 +97,7 @@ export default function HistoryPage() {
         <EmptyState
           icon="wallet"
           title="Connect your wallet"
-          subtitle="Your orders and filled trades will appear here once you connect."
+          subtitle="Orders and filled trades show here once connected."
         />
       )}
 
@@ -111,7 +111,7 @@ export default function HistoryPage() {
           <EmptyState
             icon="list"
             title="No orders yet"
-            subtitle="Orders you've placed appear here. Cancelled and filled are kept for your records."
+            subtitle="Orders show here. Cancelled and filled stay for your records."
           />
         ) : (
           <div
@@ -185,7 +185,7 @@ export default function HistoryPage() {
           <EmptyState
             icon="list"
             title="No trades yet"
-            subtitle="Executed trades will show here with direction, size, and outcome hints after markets resolve."
+            subtitle="Executed trades show here with direction, size, and outcome after markets resolve."
           />
         )}
         {!!trades?.length && (

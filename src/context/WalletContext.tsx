@@ -168,7 +168,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
       let artifact = await readStoredScopedSessionIfValid();
       if (!artifact) {
-        if (showToasts) setLoadingStep("Authorizing trading session...");
+        if (showToasts) setLoadingStep("Authorizing trading session…");
         artifact = await grantScopedSessionIfNeeded(saClient, saAddress, {
           settlementAddress: cfg.eip712.domain.verifyingContract,
           usdtAddress: cfg.usdtAddress as `0x${string}`,
@@ -182,7 +182,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         return false;
       }
 
-      if (showToasts) setLoadingStep("Registering with server...");
+      if (showToasts) setLoadingStep("Registering session…");
       try {
         await registerSmartAccount({
           ownerAddress: eoaAddress,
@@ -219,7 +219,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     async (walletAddr: string) => {
       try {
         setIsLoading(true);
-        setLoadingStep("Confirm signature request from your wallet");
+        setLoadingStep("Confirm signature request");
 
         if (connectedChainId !== platform_chainId) {
           await switchChainAsync({ chainId: platform_chainId });
@@ -258,7 +258,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     async (connector: Connector) => {
       try {
         setIsLoading(true);
-        setLoadingStep("Confirm wallet connection from your wallet");
+        setLoadingStep("Confirm wallet connection");
 
         const result = await connectAsync(
           connector?.name === "WalletConnect"
@@ -300,7 +300,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     const signData = await performSign(address);
     if (!signData) return;
 
-    setLoadingStep("Setting up your account...");
+    setLoadingStep("Setting up smart account…");
     const sa = await createSmartAccountFn(walletClient);
     if (!sa) {
       setLoadingStep("");
@@ -393,7 +393,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         // staring at a silent "Reconnecting…" with trading blocked.
         console.error("Session restore failed after retry — showing re-authorize CTA");
         setSessionRestoreFailed(true);
-        toast.error("Couldn't restore your trading session. Please re-authorize.", {
+        toast.error("Could not restore trading session. Re-authorize to continue.", {
           id: "session-restore-fail",
           duration: Infinity,
           action: {

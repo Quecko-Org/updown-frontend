@@ -103,7 +103,7 @@ export function MyOrdersOnMarket({ marketComposite }: { marketComposite: string 
                   {pendingByOption.has(o.option) && (
                     <span
                       className="pp-chip-status pp-chip-status--partial ml-1"
-                      title="A fill for this option is currently awaiting on-chain settlement"
+                      title="Fill awaiting on-chain settlement."
                     >
                       PENDING
                     </span>

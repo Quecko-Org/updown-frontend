@@ -15,7 +15,7 @@ export function CancelAllMarketOrders({ marketComposite }: { marketComposite: st
   const cancel = useMutation({
     mutationFn: () => deleteAllMarketOrders(marketComposite),
     onSuccess: () => {
-      toast.success("All your orders in this market were canceled");
+      toast.success("Canceled all orders in this market");
       void qc.invalidateQueries({ queryKey: ["orderbook", key] });
       setOpen(false);
     },
@@ -35,7 +35,7 @@ export function CancelAllMarketOrders({ marketComposite }: { marketComposite: st
         open={open}
         onClose={() => setOpen(false)}
         title="Cancel all orders?"
-        message="Cancel all your orders in this market?"
+        message="Cancels every open order you have in this market."
         confirmLabel="Cancel all"
         confirmClassName="pp-btn pp-btn--down pp-btn--md"
         loading={cancel.isPending}

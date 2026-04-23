@@ -45,7 +45,7 @@ export default function RebatesPage() {
         <EmptyState
           icon="wallet"
           title="Connect your wallet"
-          subtitle="Connect with the button in the header to view DMM rebates and claim history."
+          subtitle="Connect a wallet to view rebates and claim history."
         />
       </div>
     );
@@ -64,7 +64,7 @@ export default function RebatesPage() {
         <div>
           <h1 className="pp-h1">Rebates</h1>
           <p className="pp-caption mt-1 max-w-xl">
-            Accumulated maker rebates for your wallet. Claim sends an on-chain or relayer settlement per API behavior.
+            Accumulated maker rebates. Claim settles on-chain or via the relayer.
           </p>
         </div>
         <button
@@ -82,7 +82,7 @@ export default function RebatesPage() {
         <EmptyState
           icon="list"
           title="Could not load rebates"
-          subtitle="The rebates API may be unavailable or your wallet may not be enrolled in the DMM program."
+          subtitle="The rebates API may be unavailable, or this wallet is not enrolled in the DMM program."
         />
       )}
 
@@ -93,7 +93,7 @@ export default function RebatesPage() {
               <p className="pp-micro">Accumulated</p>
               <p className="pp-price-xl mt-2">${formatAtomicUsdtSafe(accumulated)}</p>
               <p className="pp-hash mt-1" style={{ color: "var(--fg-2)" }}>
-                USDT (raw from API)
+                USDT
               </p>
             </div>
             {totalClaimed != null && (
@@ -107,7 +107,7 @@ export default function RebatesPage() {
           <section className="space-y-3">
             <h2 className="pp-h2">Claim history</h2>
             {history.length === 0 ? (
-              <p className="pp-caption">No claim records returned yet.</p>
+              <p className="pp-caption">No claims yet.</p>
             ) : (
               <div
                 className="overflow-hidden overflow-x-auto rounded-[6px] border"

@@ -220,7 +220,7 @@ export function MarketPageClient({ address }: { address: string }) {
           <EmptyState
             icon="wallet"
             title="Connect wallet"
-            subtitle="Link your wallet to see holdings for this market."
+            subtitle="Connect a wallet to see holdings for this market."
             className="min-h-0 py-6 mt-3"
           >
             <WalletConnectorList className="w-full max-w-xs" />
@@ -229,8 +229,8 @@ export function MarketPageClient({ address }: { address: string }) {
         {smartAccount && localPositions.length === 0 && (
           <EmptyState
             icon="trade"
-            title="No position here"
-            subtitle="Place a trade using the form above."
+            title="No position in this market"
+            subtitle="Use the form above to place a trade."
             className="min-h-0 py-6 mt-3"
           />
         )}

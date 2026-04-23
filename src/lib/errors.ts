@@ -9,16 +9,16 @@ export function formatUserFacingError(e: unknown): string {
     // "Insufficient shares to sell…" and we want that message surfaced verbatim,
     // not rewritten as a USDT balance issue (Shoaib BUG 3 false-match cause).
     if (/insufficient\s+(funds|usdt|balance)/i.test(m) && !/insufficient\s+shares/i.test(m)) {
-      return "Insufficient USDT balance for this action.";
+      return "Insufficient USDT balance.";
     }
     if (/network|fetch failed|failed to fetch|ECONNREFUSED/i.test(m)) {
-      return "Network error. Check your connection and try again.";
+      return "Network error. Check your connection and retry.";
     }
     if (/Too many requests|429/i.test(m)) {
-      return "Too many requests. Wait a moment and try again.";
+      return "Rate limited. Wait a moment and retry.";
     }
     if (m.length > 220) return `${m.slice(0, 220)}…`;
     return m;
   }
-  return "Something went wrong.";
+  return "Unknown error. Retry.";
 }

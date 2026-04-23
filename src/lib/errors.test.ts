@@ -31,6 +31,6 @@ describe("formatUserFacingError (hotfix #20 Fix G regex tighten)", () => {
       /Cancelled in wallet/,
     );
     expect(formatUserFacingError(new Error("fetch failed"))).toMatch(/Network error/);
-    expect(formatUserFacingError(new Error("429 Too many requests"))).toMatch(/Too many requests/);
+    expect(formatUserFacingError(new Error("429 Too many requests"))).toMatch(/Rate limited/);
   });
 });
