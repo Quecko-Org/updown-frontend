@@ -6,7 +6,11 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { recoverMessageAddress, hashMessage } from "viem";
+import {
+  recoverMessageAddress,
+  recoverTypedDataAddress,
+  type TypedDataDefinition,
+} from "viem";
 
 const store = new Map<string, unknown>();
 vi.mock("./indexDb", () => ({
@@ -24,8 +28,9 @@ import {
   generateAndStoreSessionKey,
   getStoredSessionKey,
   deleteSessionKey,
-  signUserOpHash,
+  signSignatureRequest,
   idbKeyFor,
+  type SignatureRequest,
 } from "./sessionKeypair";
 
 const SA = "0xAa" + "11".repeat(19);
@@ -101,49 +106,91 @@ describe("deleteSessionKey", () => {
   });
 });
 
-describe("signUserOpHash", () => {
-  it("returns a 65-byte secp256k1 personal_sign signature", async () => {
-    await generateAndStoreSessionKey(SA);
-    const digest = ("0x" + "ab".repeat(32)) as `0x${string}`;
-    const sig = await signUserOpHash(SA, digest);
-    // r||s||v = 65 bytes = 130 hex chars.
-    expect(sig).toMatch(/^0x[0-9a-f]{130}$/i);
-  });
-
-  it("signature recovers to the stored session address (EIP-191)", async () => {
+describe("signSignatureRequest", () => {
+  it("personal_sign with { raw } data: produces 65-byte sig that recovers to the stored address", async () => {
     const addr = await generateAndStoreSessionKey(SA);
-    const digest = ("0x" + "de".repeat(32)) as `0x${string}`;
-    const sig = (await signUserOpHash(SA, digest)) as `0x${string}`;
-
-    // LocalAccountSigner.signMessage(raw) is EIP-191 personal_sign over the
-    // raw bytes — recoverMessageAddress with `{ raw }` must match.
+    const rawPayload = ("0x" + "de".repeat(32)) as `0x${string}`;
+    const req: SignatureRequest = {
+      type: "personal_sign",
+      data: { raw: rawPayload },
+      rawPayload,
+    };
+    const sig = await signSignatureRequest(SA, req);
+    expect(sig).toMatch(/^0x[0-9a-f]{130}$/i);
     const recovered = await recoverMessageAddress({
-      message: { raw: digest },
+      message: { raw: rawPayload },
       signature: sig,
     });
     expect(recovered.toLowerCase()).toBe(addr.toLowerCase());
   });
 
-  it("the signed digest is the EIP-191-prefixed hash, not the raw userOpHash", async () => {
-    // Spot-check of the signing envelope: hashMessage({ raw }) is what a
-    // consumer would re-derive to verify on-chain under MA v2's
-    // single-signer validation module.
+  it("personal_sign with string data: UTF-8 encoded, recovers via EIP-191", async () => {
     const addr = await generateAndStoreSessionKey(SA);
-    const digest = ("0x" + "11".repeat(32)) as `0x${string}`;
-    const sig = (await signUserOpHash(SA, digest)) as `0x${string}`;
-    const wrapped = hashMessage({ raw: digest });
-    // We can't verify secp256k1 over a raw hash directly with viem's public
-    // helpers, but recoverMessageAddress uses this exact wrap internally —
-    // a successful recover above implies the wrap matches. This test
-    // documents the envelope explicitly so the invariant is codified.
-    expect(wrapped).toMatch(/^0x[0-9a-f]{64}$/i);
+    const message = "hello Alchemy";
+    const req: SignatureRequest = {
+      type: "personal_sign",
+      data: message,
+      rawPayload: ("0x" +
+        Buffer.from(message, "utf8").toString("hex")) as `0x${string}`,
+    };
+    const sig = await signSignatureRequest(SA, req);
     expect(sig).toMatch(/^0x[0-9a-f]{130}$/i);
-    expect(addr).toMatch(/^0x[0-9a-fA-F]{40}$/);
+    const recovered = await recoverMessageAddress({
+      message,
+      signature: sig,
+    });
+    expect(recovered.toLowerCase()).toBe(addr.toLowerCase());
+  });
+
+  it("eth_signTypedData_v4: produces EIP-712 sig that recovers via recoverTypedDataAddress", async () => {
+    const addr = await generateAndStoreSessionKey(SA);
+    const typedData: TypedDataDefinition = {
+      domain: {
+        name: "UpDown Exchange",
+        version: "1",
+        chainId: 42161,
+        verifyingContract: "0x2222222222222222222222222222222222222222",
+      },
+      types: {
+        Settle: [
+          { name: "marketId", type: "uint256" },
+          { name: "amount", type: "uint256" },
+        ],
+      },
+      primaryType: "Settle",
+      message: { marketId: BigInt(99), amount: BigInt(100_000_000) },
+    };
+    const req: SignatureRequest = {
+      type: "eth_signTypedData_v4",
+      data: typedData,
+      rawPayload: ("0x" + "00".repeat(32)) as `0x${string}`,
+    };
+    const sig = await signSignatureRequest(SA, req);
+    expect(sig).toMatch(/^0x[0-9a-f]{130}$/i);
+    const recovered = await recoverTypedDataAddress({
+      ...typedData,
+      signature: sig,
+    });
+    expect(recovered.toLowerCase()).toBe(addr.toLowerCase());
   });
 
   it("throws when no session key is stored (user must re-grant session)", async () => {
-    await expect(
-      signUserOpHash(SA, "0x" + "00".repeat(32))
-    ).rejects.toThrow(/must re-grant/);
+    const req: SignatureRequest = {
+      type: "personal_sign",
+      data: { raw: "0x00" as `0x${string}` },
+      rawPayload: "0x00" as `0x${string}`,
+    };
+    await expect(signSignatureRequest(SA, req)).rejects.toThrow(/must re-grant/);
+  });
+
+  it("throws on unsupported signatureRequest type (defensive stop-and-page)", async () => {
+    await generateAndStoreSessionKey(SA);
+    // Intentionally constructing an invalid variant to cover the guard.
+    const bogus = {
+      type: "eip7702Auth",
+      data: "whatever",
+      rawPayload: "0x00",
+    } as unknown as SignatureRequest;
+    await expect(signSignatureRequest(SA, bogus)).rejects.toThrow(/Unsupported signatureRequest type/);
   });
 });
