@@ -32,7 +32,7 @@ import {
 import { approxProfitIfSideWinsUsd } from "@/lib/payoutEstimate";
 import { parseCompositeMarketKey } from "@/lib/marketKey";
 import { cn } from "@/lib/cn";
-import { formatUserFacingError } from "@/lib/errors";
+import { formatUserFacingError, isUserRejection } from "@/lib/errors";
 import { EmptyState } from "@/components/EmptyState";
 import { WalletConnectorList } from "@/components/WalletConnectorList";
 import { apiConfigAtom, userSmartAccount } from "@/store/atoms";
@@ -187,12 +187,27 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     })) as bigint;
     if (current >= THRESHOLD) return;
     toast.info("One-time approval needed — confirm in your wallet (small ETH gas).");
-    const hash = await writeContractAsync({
-      address: usdt,
-      abi: erc20Abi,
-      functionName: "approve",
-      args: [settlement, maxUint256],
-    });
+    // Auto-retry-once on transient RPC layer failures ("JSON is not a valid
+    // request object" etc). User-rejections are NOT retried — if they declined,
+    // we honor that. The retry is silent so the wallet popup re-opens once on
+    // RPC hiccups without surfacing scary tech errors.
+    let hash: `0x${string}`;
+    try {
+      hash = await writeContractAsync({
+        address: usdt,
+        abi: erc20Abi,
+        functionName: "approve",
+        args: [settlement, maxUint256],
+      });
+    } catch (e) {
+      if (isUserRejection(e)) throw e;
+      hash = await writeContractAsync({
+        address: usdt,
+        abi: erc20Abi,
+        functionName: "approve",
+        args: [settlement, maxUint256],
+      });
+    }
     await pub.waitForTransactionReceipt({ hash });
   }, [address, cfg, wc, writeContractAsync]);
 

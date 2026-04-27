@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatUserFacingError } from "./errors";
+import { formatUserFacingError, isUserRejection } from "./errors";
 
 describe("formatUserFacingError (hotfix #20 Fix G regex tighten)", () => {
   it('maps "Insufficient balance" to the USDT balance copy (existing behavior)', () => {
@@ -32,5 +32,53 @@ describe("formatUserFacingError (hotfix #20 Fix G regex tighten)", () => {
     );
     expect(formatUserFacingError(new Error("fetch failed"))).toMatch(/Network error/);
     expect(formatUserFacingError(new Error("429 Too many requests"))).toMatch(/Rate limited/);
+  });
+
+  // Bug A from the audit. MetaMask's RPC layer occasionally throws this exact
+  // string mid-call; the prior fall-through surfaced it raw as a toast.
+  describe("Bug A — JSON-RPC hiccup mapping", () => {
+    it('maps "JSON is not a valid request object" to friendly retry copy', () => {
+      expect(
+        formatUserFacingError(new Error("JSON is not a valid request object")),
+      ).toMatch(/Wallet hiccuped/);
+    });
+
+    it("maps -32600 (JSON-RPC invalid request code) the same way", () => {
+      expect(
+        formatUserFacingError(new Error("RPC error: -32600 Invalid request")),
+      ).toMatch(/Wallet hiccuped/);
+    });
+
+    it('maps "Invalid request" generically', () => {
+      expect(formatUserFacingError(new Error("Invalid request"))).toMatch(
+        /Wallet hiccuped/,
+      );
+    });
+
+    it("user rejection still wins over invalid-request match (more specific)", () => {
+      // "User rejected the request" contains "request" but should still map to
+      // Cancelled-in-wallet because user-rejected matches FIRST.
+      expect(
+        formatUserFacingError(new Error("User rejected the request")),
+      ).toMatch(/Cancelled in wallet/);
+    });
+  });
+});
+
+describe("isUserRejection", () => {
+  it("returns true for common user-rejection error shapes", () => {
+    expect(isUserRejection(new Error("User rejected the request"))).toBe(true);
+    expect(isUserRejection(new Error("user denied"))).toBe(true);
+    expect(isUserRejection(new Error("Error: 4001 User cancelled"))).toBe(true);
+    expect(isUserRejection(new Error("MetaMask Tx Signature: User denied transaction signature."))).toBe(true);
+  });
+
+  it("returns false for other errors (so retry-once paths still retry)", () => {
+    expect(isUserRejection(new Error("JSON is not a valid request object"))).toBe(false);
+    expect(isUserRejection(new Error("network error"))).toBe(false);
+    expect(isUserRejection(new Error("Insufficient balance"))).toBe(false);
+    expect(isUserRejection(undefined)).toBe(false);
+    expect(isUserRejection(null)).toBe(false);
+    expect(isUserRejection("string")).toBe(false);
   });
 });

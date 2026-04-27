@@ -160,7 +160,16 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           pendingSign.current = true;
         }
       } catch (error) {
+        // Bug H: failure used to be silent (only console.error), so user saw
+        // button → spinner → button with no feedback. Surface clean copy via
+        // sonner. User-rejections get a softer message; everything else gets
+        // a "try again" prompt.
         console.error("Wallet connection failed:", error);
+        const msg =
+          error instanceof Error && /user rejected|denied|4001/i.test(error.message)
+            ? "Connection cancelled in wallet."
+            : "Couldn't connect to wallet. Please try again.";
+        toast.error(msg);
         setLoadingStep("");
         setIsLoading(false);
         localStorage.removeItem("connectorId");
@@ -177,6 +186,27 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setLoadingStep("");
     setShowSignModal(true);
   }, [address, walletClient]);
+
+  // Bug G: when a user clicks Connect, we wait for [address, walletClient] to
+  // both populate before showing the sign modal. If walletClient never resolves
+  // (extension stuck, wallet disconnected mid-flow), the spinner used to hang
+  // forever. Cap at 30s, reset state, and tell the user to retry.
+  useEffect(() => {
+    if (!pendingSign.current) return;
+    const timer = setTimeout(() => {
+      if (!pendingSign.current) return;
+      pendingSign.current = false;
+      setIsLoading(false);
+      setLoadingStep("");
+      toast.error("Wallet connection timed out. Please try again.");
+      try {
+        disconnect();
+      } catch {
+        /* ignore */
+      }
+    }, 30_000);
+    return () => clearTimeout(timer);
+  }, [disconnect]);
 
   const handleSign = useCallback(async () => {
     if (!address || !walletClient) return;
