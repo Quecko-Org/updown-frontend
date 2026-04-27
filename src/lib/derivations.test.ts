@@ -280,6 +280,58 @@ describe("applyOrderUpdateToList (Fix 1b event-based order cache merge)", () => 
     const next = applyOrderUpdateToList(list, { status: "FILLED" });
     expect(next).toBe(list);
   });
+
+  // Bug B (placement-emit): backend now emits order_update on initial LIMIT
+  // rest. The frontend cache may not yet contain the order id (the GET /orders
+  // refetch hasn't landed). Without prepend support, the order would stay
+  // invisible until the next 20s poll.
+  describe("Bug B — placement-emit prepend", () => {
+    const placementUpdate = {
+      id: "new-order-id",
+      maker: "0xalice",
+      market: "0xmkt-9",
+      option: 1,
+      side: 0,
+      orderType: 0,
+      price: 4500,
+      amount: "25000000",
+      filledAmount: "0",
+      status: "OPEN",
+      createdAt: 1730000000000,
+    };
+
+    it("prepends a synthesized row when id is unknown and payload is complete", () => {
+      const list = { orders: [baseRow({ orderId: "existing" })], total: 1, limit: 50, offset: 0 };
+      const next = applyOrderUpdateToList(list, placementUpdate);
+      expect(next).not.toBe(list);
+      expect(next!.orders.length).toBe(2);
+      expect(next!.orders[0].orderId).toBe("new-order-id");
+      expect(next!.orders[0].status).toBe("OPEN");
+      expect(next!.orders[0].price).toBe(4500);
+      expect(next!.orders[0].type).toBe(0);
+      expect(next!.orders[1].orderId).toBe("existing");
+    });
+
+    it("does NOT prepend when payload is missing required fields (legacy backend)", () => {
+      const list = { orders: [baseRow()], total: 1, limit: 50, offset: 0 };
+      const legacyUpdate = { id: "new-id", status: "OPEN", filledAmount: "0" };
+      const next = applyOrderUpdateToList(list, legacyUpdate);
+      expect(next).toBe(list);
+    });
+
+    it("patches in place (does NOT also prepend) when id matches existing row", () => {
+      const list = {
+        orders: [baseRow({ orderId: "new-order-id", status: "OPEN", filledAmount: "0" })],
+        total: 1,
+        limit: 50,
+        offset: 0,
+      };
+      const next = applyOrderUpdateToList(list, { ...placementUpdate, status: "FILLED", filledAmount: "25000000" });
+      expect(next!.orders.length).toBe(1);
+      expect(next!.orders[0].status).toBe("FILLED");
+      expect(next!.orders[0].filledAmount).toBe("25000000");
+    });
+  });
 });
 
 describe("deriveEffectiveStatus edge cases", () => {

@@ -38,8 +38,16 @@ export type CancelReason =
 export type OrderUpdateLike = {
   id?: string;
   maker?: string;
+  market?: string;
+  option?: number;
+  side?: number;
+  /** Backend renames `type` -> `orderType` on the wire to dodge the reserved
+   *  `type: 'order_update'` field at the message envelope level. */
+  orderType?: number;
+  price?: number;
   amount?: string;
   filledAmount?: string;
+  createdAt?: number;
   status?: string;
   reason?: CancelReason | string;
 };
@@ -61,14 +69,45 @@ type OrderListPage = {
 };
 
 /**
+ * Build an OrderListRow from a WS order_update frame. Returns null when the
+ * payload lacks fields needed for a usable row (older backend builds prior
+ * to the placement-emit enrichment). Only used when the cached list does
+ * not yet contain this order id — see `applyOrderUpdateToList` below.
+ */
+function rowFromUpdate(update: OrderUpdateLike): OrderListRow | null {
+  if (!update.id || !update.market || update.option == null || update.side == null) return null;
+  if (update.orderType == null || update.price == null) return null;
+  if (update.amount == null) return null;
+  const createdMs = update.createdAt ?? Date.now();
+  return {
+    orderId: update.id,
+    maker: update.maker ?? "",
+    market: update.market,
+    option: update.option,
+    side: update.side,
+    type: update.orderType,
+    price: update.price,
+    amount: update.amount,
+    filledAmount: update.filledAmount ?? "0",
+    status: String(update.status ?? "OPEN"),
+    createdAt: new Date(createdMs).toISOString(),
+    updatedAt: new Date(createdMs).toISOString(),
+    ...(update.reason != null ? { reason: String(update.reason) } : {}),
+  };
+}
+
+/**
  * Merge an incoming `order_update` WS frame into the cached orders-list response
- * so the UI reflects a fill / cancel in real time without waiting for a 20s
- * poll. Returns a new list reference when an order was matched & updated,
- * otherwise the input reference (React Query will no-op identity-equal updates).
+ * so the UI reflects placements / fills / cancels in real time without waiting
+ * for a 20s poll.
  *
- * Only patches fields present in the update; matching is by `order.orderId ===
- * update.id`. Backend WS currently sends `id` (see MatchingEngine emits),
- * cache rows store `orderId` (see GET /orders/:wallet response).
+ * - If the order id matches an existing row, patch in place (status, filledAmount, reason).
+ * - If the id is unknown AND the payload carries enough fields to build a full
+ *   row (Bug B placement-emit case), prepend it to the list.
+ * - Otherwise return the input list reference unchanged so React Query no-ops.
+ *
+ * Backend WS sends `id` (see MatchingEngine emits); cache rows store `orderId`
+ * (see GET /orders/:wallet response).
  */
 export function applyOrderUpdateToList(
   list: OrderListPage | undefined,
@@ -88,7 +127,12 @@ export function applyOrderUpdateToList(
       ...(update.reason != null ? { reason: String(update.reason) } : {}),
     };
   });
-  return mutated ? { ...list, orders: nextOrders } : list;
+  if (mutated) return { ...list, orders: nextOrders };
+  // Order not in cache — try to synthesize from the WS payload (Bug B: a fresh
+  // LIMIT placement emit arrives before any GET /orders refetch can hydrate it).
+  const synthesized = rowFromUpdate(update);
+  if (!synthesized) return list;
+  return { ...list, orders: [synthesized, ...list.orders] };
 }
 
 export type TerminalToast =
