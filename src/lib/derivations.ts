@@ -79,12 +79,18 @@ type OrderListPage = {
  * emit + payload enrichment that landed alongside this consumer.
  */
 function rowFromUpdate(update: OrderUpdateLike): OrderListRow | null {
-  if (!update.id || !update.market || update.option == null || update.side == null) return null;
+  if (!update.id || !update.market) return null;
+  if (update.option == null || update.side == null) return null;
   if (update.orderType == null || update.price == null) return null;
   if (update.amount == null) return null;
-  const createdMs = update.createdAt ?? Date.now();
+  const rawCreated = update.createdAt;
+  const createdMs =
+    typeof rawCreated === "number" && Number.isFinite(rawCreated) && rawCreated > 0
+      ? rawCreated
+      : Date.now();
+  const isoCreated = new Date(createdMs).toISOString();
   return {
-    orderId: update.id,
+    orderId: String(update.id),
     maker: update.maker ?? "",
     market: update.market,
     option: update.option,
@@ -94,8 +100,8 @@ function rowFromUpdate(update: OrderUpdateLike): OrderListRow | null {
     amount: update.amount,
     filledAmount: update.filledAmount ?? "0",
     status: String(update.status ?? "OPEN"),
-    createdAt: new Date(createdMs).toISOString(),
-    updatedAt: new Date(createdMs).toISOString(),
+    createdAt: isoCreated,
+    updatedAt: isoCreated,
     ...(update.reason != null ? { reason: String(update.reason) } : {}),
   };
 }
