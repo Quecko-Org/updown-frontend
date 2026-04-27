@@ -35,9 +35,7 @@ import { cn } from "@/lib/cn";
 import { formatUserFacingError } from "@/lib/errors";
 import { EmptyState } from "@/components/EmptyState";
 import { WalletConnectorList } from "@/components/WalletConnectorList";
-import { apiConfigAtom, sessionAmountUsedAtom, sessionReadyAtom, userSmartAccount } from "@/store/atoms";
-import { SESSION_USDT_ALLOWANCE_BASE_UNITS } from "@/config/environment";
-import { OPTION_C_ENABLED } from "@/lib/env";
+import { apiConfigAtom, userSmartAccount } from "@/store/atoms";
 
 const PRESETS = [5, 25, 50, 100, 500];
 
@@ -65,9 +63,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const searchParams = useSearchParams();
   const { address, isConnected } = useAccount();
   const smartAccount = useAtomValue(userSmartAccount);
-  const sessionReady = useAtomValue(sessionReadyAtom);
   const apiConfig = useAtomValue(apiConfigAtom);
-  const sessionAmountUsed = useAtomValue(sessionAmountUsedAtom);
   const [side, setSide] = useState<1 | 2>(1);
   const [dollars, setDollars] = useState(25);
   const [orderSide, setOrderSide] = useState<0 | 1>(0);
@@ -573,31 +569,6 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         )}
       </div>
 
-      {/* Option C — remaining-allowance preview. Reads the running sum of
-          signed sign_responses this session (sessionAmountUsedAtom) and
-          subtracts from the configured session cap. Hidden under Option B
-          since the cap on that path is enforced purely on chain and the
-          number has no user-facing meaning mid-session. */}
-      {OPTION_C_ENABLED && isConnected && sessionReady && (() => {
-        const used = BigInt(sessionAmountUsed || "0");
-        const cap = SESSION_USDT_ALLOWANCE_BASE_UNITS;
-        const thisOrder = BigInt(Math.max(0, Math.round(dollars * 1_000_000)));
-        const remaining = cap > used + thisOrder ? cap - used - thisOrder : BigInt(0);
-        const remainingUsd = (Number(remaining) / 1_000_000).toFixed(2);
-        const capUsd = (Number(cap) / 1_000_000).toFixed(0);
-        const overCap = used + thisOrder > cap;
-        return (
-          <div
-            className="pp-caption mt-1"
-            style={{ color: overCap ? "var(--danger)" : "var(--fg-2)" }}
-          >
-            {overCap
-              ? `Exceeds $${capUsd} session cap`
-              : `Using $${dollars.toFixed(0)} of $${remainingUsd} remaining ($${capUsd} cap)`}
-          </div>
-        );
-      })()}
-
       {/* Submit / connect */}
       {isConnected ? (
         <button
@@ -605,15 +576,12 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
           disabled={
             submit.isPending ||
             market?.status !== "ACTIVE" ||
-            !sessionReady ||
             priceInputInvalid
           }
           title={
-            !sessionReady
-              ? "Complete connection first"
-              : priceInputInvalid
-                ? (userPriceParsed.error ?? "Fix price before submitting")
-                : undefined
+            priceInputInvalid
+              ? (userPriceParsed.error ?? "Fix price before submitting")
+              : undefined
           }
           className={cn(
             "pp-btn pp-btn--lg pp-trade__cta",

@@ -8,7 +8,7 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { getBalance, getDmmStatus } from "@/lib/api";
-import { sessionReadyAtom, sessionRestoreFailedAtom, userSmartAccount } from "@/store/atoms";
+import { userSmartAccount } from "@/store/atoms";
 import { formatUsdt } from "@/lib/format";
 import { DepositModal } from "./DepositModal";
 import { WithdrawModal } from "./WithdrawModal";
@@ -36,12 +36,9 @@ export function Header() {
     showSignModal,
     handleSign,
     closeSignModal,
-    reauthorizeSession,
   } = useWalletContext();
 
   const smartAccount = useAtomValue(userSmartAccount);
-  const sessionReady = useAtomValue(sessionReadyAtom);
-  const sessionRestoreFailed = useAtomValue(sessionRestoreFailedAtom);
 
   const [depositOpen, setDepositOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
@@ -62,7 +59,7 @@ export function Header() {
   const { data: bal } = useQuery({
     queryKey: ["balance", walletAddress?.toLowerCase() ?? ""],
     queryFn: () => getBalance(walletAddress!),
-    enabled: !!walletAddress && isWalletConnected && sessionReady,
+    enabled: !!walletAddress && isWalletConnected,
     refetchInterval: 15_000,
     retry: 1,
   });
@@ -206,19 +203,6 @@ export function Header() {
                 >
                   Withdraw
                 </button>
-                {smartAccount && !sessionReady ? (
-                  <button
-                    type="button"
-                    className={cn(
-                      "pp-btn pp-btn--sm hidden sm:inline-flex",
-                      sessionRestoreFailed ? "pp-btn--down" : "pp-btn--secondary",
-                    )}
-                    disabled={isLoading}
-                    onClick={() => void reauthorizeSession()}
-                  >
-                    Re-authorize
-                  </button>
-                ) : null}
                 <button
                   type="button"
                   className="pp-btn pp-btn--ghost pp-btn--sm hidden sm:inline-flex"
@@ -323,22 +307,6 @@ export function Header() {
                   >
                     Withdraw
                   </button>
-                  {smartAccount && !sessionReady ? (
-                    <button
-                      type="button"
-                      className={cn(
-                        "pp-btn pp-btn--sm flex-1",
-                        sessionRestoreFailed ? "pp-btn--down" : "pp-btn--secondary",
-                      )}
-                      disabled={isLoading}
-                      onClick={() => {
-                        void reauthorizeSession();
-                        setMobileMenuOpen(false);
-                      }}
-                    >
-                      Re-authorize
-                    </button>
-                  ) : null}
                   <button
                     type="button"
                     className="pp-btn pp-btn--ghost pp-btn--sm flex-1"

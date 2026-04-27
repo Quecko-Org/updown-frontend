@@ -10,7 +10,7 @@ import { formatUsdt } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { EmptyState } from "@/components/EmptyState";
 import { marketPathFromAddress } from "@/lib/marketKey";
-import { sessionReadyAtom, userSmartAccount } from "@/store/atoms";
+import { userSmartAccount } from "@/store/atoms";
 
 function shortenMarket(addr: string): string {
   if (addr.length <= 22) return addr;
@@ -20,13 +20,12 @@ function shortenMarket(addr: string): string {
 export default function PositionsPage() {
   const { isConnected, address: walletAddress } = useAccount();
   const smartAccount = useAtomValue(userSmartAccount);
-  const sessionReady = useAtomValue(sessionReadyAtom);
   const qc = useQueryClient();
 
   const { data, isLoading } = useQuery({
     queryKey: ["positions", smartAccount?.toLowerCase() ?? ""],
     queryFn: () => getPositions(smartAccount!),
-    enabled: !!smartAccount && isConnected && sessionReady,
+    enabled: !!smartAccount && isConnected,
     refetchInterval: 20_000,
     retry: 1,
   });

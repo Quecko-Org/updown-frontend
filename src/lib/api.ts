@@ -280,43 +280,6 @@ export async function cancelOrder(
   return parseJson(res);
 }
 
-export type RegisterSmartAccountRequest = {
-  ownerAddress: string;
-  smartAccountAddress: string;
-  sessionKey: `0x${string}`;
-  sessionExpiry: number;
-  permissionsContext: string;
-  /**
-   * Option C — secp256k1 EOA address of the client-held session signer
-   * (20 bytes, 0x-prefixed). Optional so Option B rows still register.
-   * Presence marks the wallet as Option-C-capable; backend routes it
-   * through the non-custodial path once `OPTION_C_ENABLED` flips.
-   */
-  sessionSignerAddress?: `0x${string}`;
-  sessionScope: {
-    settlementAddress: string;
-    functionSelector: `0x${string}`;
-    usdtAllowance: string;
-  };
-};
-
-export type RegisterSmartAccountResponse = {
-  ownerAddress: string;
-  smartAccountAddress: string;
-  isNew: boolean;
-  sessionExpiry: number;
-};
-
-export async function registerSmartAccount(
-  body: RegisterSmartAccountRequest
-): Promise<RegisterSmartAccountResponse> {
-  const res = await fetch(url("/api/smart-account/register"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return parseJson<RegisterSmartAccountResponse>(res);
-}
 
 export async function postMarketClaim(marketAddress: string): Promise<{ ok: boolean }> {
   const enc = encodeURIComponent(marketAddress);

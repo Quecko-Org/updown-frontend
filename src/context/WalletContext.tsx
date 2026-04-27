@@ -19,52 +19,36 @@ import {
   type Connector,
 } from "wagmi";
 import { signMessage, getConnections } from "@wagmi/core";
-import {
-  createWalletClient,
-  custom,
-  createPublicClient,
-  http,
-  encodeFunctionData,
-  erc20Abi,
-  maxUint256,
-  toHex,
-  type Address,
-  type PublicClient,
-} from "viem";
-import { arbitrum, alchemy } from "@account-kit/infra";
-import { WalletClientSigner } from "@aa-sdk/core";
-import {
-  createSmartWalletClient,
-  signPreparedCalls,
-} from "@account-kit/wallet-client";
-import { getDefaultStore, useAtom, useAtomValue } from "jotai";
+import { createPublicClient, http, type PublicClient } from "viem";
+import { arbitrum } from "viem/chains";
+import { useAtom } from "jotai";
 import { toast } from "sonner";
 import { wagmiConfig } from "@/config/wagmi";
-import {
-  platform_chainId,
-  ALCHEMY_API_KEY,
-  PAYMASTER_POLICY_ID,
-  ALCHEMY_RPC_URL,
-  SESSION_USDT_ALLOWANCE_BASE_UNITS,
-  SESSION_GAS_LIMIT,
-} from "@/config/environment";
+import { platform_chainId, ALCHEMY_RPC_URL } from "@/config/environment";
 import { LOGIN_SUCCESS, SIGNATURE_REJECTED } from "@/config/walletConstants";
 import {
   userSmartAccount,
   userSmartAccountClient,
   userPublicClient,
-  apiConfigAtom,
-  sessionReadyAtom,
-  sessionRestoreFailedAtom,
-  sessionAmountUsedAtom,
 } from "@/store/atoms";
-import { getConfig, registerSmartAccount } from "@/lib/api";
-import {
-  grantScopedSessionIfNeeded,
-  readStoredScopedSessionIfValid,
-} from "@/lib/grantSessionPermissions";
-import { deleteIndexKey } from "@/utils/indexDb";
 
+/**
+ * Path-1 architecture (post Step 7 cleanup): the trading account IS the
+ * connected EOA. There is no Alchemy MA v2 smart account in the trading
+ * path, no scoped session, no paymaster. The connect flow is:
+ *
+ *   1. wagmi connect (MetaMask / WalletConnect / Coinbase Wallet)
+ *   2. Verify-wallet personal_sign — the EOA signs its own address as a
+ *      one-time identity proof so localStorage knows we've onboarded this
+ *      wallet (used to skip the popup on subsequent visits).
+ *   3. `userSmartAccount` atom is set to the EOA address. The "smart
+ *      account" naming in the atom is back-compat for read paths that
+ *      still reference it; under Path 1 it always equals the EOA.
+ *
+ * The `reauthorizeSession` API is kept (no-op) so existing callers don't
+ * break. First-trade `USDT.approve(settlement)` is handled in TradeForm
+ * via wagmi `useWriteContract`, not here.
+ */
 export interface WalletContextValue {
   isWalletConnected: boolean;
   isLoading: boolean;
@@ -75,7 +59,7 @@ export interface WalletContextValue {
   showSignModal: boolean;
   handleSign: () => void;
   closeSignModal: () => void;
-  /** Re-run scoped grant + backend register (e.g. after expiry or failed restore). */
+  /** No-op under Path 1; retained for back-compat with existing callers. */
   reauthorizeSession: () => Promise<void>;
 }
 
@@ -88,13 +72,9 @@ export function useWalletContext(): WalletContextValue {
 }
 
 export function WalletProvider({ children }: { children: ReactNode }) {
-  const [smartAccount, setSmartAccount] = useAtom(userSmartAccount);
+  const [, setSmartAccount] = useAtom(userSmartAccount);
   const [, setSmartAccountClient] = useAtom(userSmartAccountClient);
-  const smartAccountClientValue = useAtomValue(userSmartAccountClient);
   const [, setPubClient] = useAtom(userPublicClient);
-  const [sessionReady, setSessionReady] = useAtom(sessionReadyAtom);
-  const [, setSessionRestoreFailed] = useAtom(sessionRestoreFailedAtom);
-  const [, setSessionAmountUsed] = useAtom(sessionAmountUsedAtom);
 
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState("");
@@ -113,129 +93,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setSmartAccount("");
     setSmartAccountClient(null);
     setPubClient(null);
-    setSessionReady(false);
     pendingSign.current = false;
     localStorage.removeItem("connectorId");
     localStorage.removeItem("flag");
     localStorage.removeItem("lastAccount");
     localStorage.removeItem("sign");
-    localStorage.removeItem("sessionExpiryTime");
     localStorage.removeItem("userlastconnectorId");
-    void deleteIndexKey("sessionKeyData");
-  }, [disconnect, setSmartAccount, setSmartAccountClient, setPubClient, setSessionReady]);
-
-  /*
-   * Path-1 architecture: USDT lives on the EOA. The first BUY trade prompts
-   * a one-time `USDT.approve(settlement, MaxUint256)` directly from the EOA
-   * (handled in TradeForm via wagmi `writeContract`). No smart-account
-   * UserOp here, no Alchemy paymaster needed. The SA is still derived for
-   * legacy compatibility (some atoms / caches reference it), but it is no
-   * longer the trading custodian.
-   */
-  const createSmartAccountFn = useCallback(
-    async (
-      wc: NonNullable<typeof walletClient>
-    ): Promise<{ address: string; client: unknown } | null> => {
-      try {
-        const signer = new WalletClientSigner(
-          createWalletClient({
-            chain: arbitrum,
-            transport: custom(wc),
-          }),
-          "wallet"
-        );
-
-        const client = createSmartWalletClient({
-          transport: alchemy({ apiKey: ALCHEMY_API_KEY }),
-          chain: arbitrum,
-          signer,
-          policyId: PAYMASTER_POLICY_ID,
-        });
-
-        const smartAccountAddress = await (
-          client as ReturnType<typeof createSmartWalletClient>
-        ).requestAccount();
-        const addr = smartAccountAddress?.address as string;
-        setSmartAccount(addr);
-        setSmartAccountClient(client);
-        return { address: addr, client };
-      } catch (error) {
-        console.error("Error creating smart account:", error);
-        return null;
-      }
-    },
-    [setSmartAccount, setSmartAccountClient]
-  );
-
-  const syncScopedSessionAndRegister = useCallback(
-    async (params: {
-      eoaAddress: string;
-      saAddress: string;
-      saClient: unknown;
-      showToasts?: boolean;
-    }): Promise<boolean> => {
-      const { eoaAddress, saAddress, saClient, showToasts = true } = params;
-
-      let cfg = getDefaultStore().get(apiConfigAtom);
-      if (!cfg) {
-        try {
-          cfg = await getConfig();
-          getDefaultStore().set(apiConfigAtom, cfg);
-        } catch (err) {
-          console.error("Failed to load API config:", err);
-          if (showToasts) toast.error("Could not load config");
-          return false;
-        }
-      }
-
-      let artifact = await readStoredScopedSessionIfValid();
-      if (!artifact) {
-        if (showToasts) setLoadingStep("Authorizing trading session…");
-        artifact = await grantScopedSessionIfNeeded(saClient, saAddress, {
-          settlementAddress: cfg.eip712.domain.verifyingContract,
-          usdtAddress: cfg.usdtAddress as `0x${string}`,
-          usdtAllowance: SESSION_USDT_ALLOWANCE_BASE_UNITS,
-          gasLimit: SESSION_GAS_LIMIT,
-        });
-      }
-
-      if (!artifact) {
-        if (showToasts) toast.error("Failed to authorize trading session");
-        return false;
-      }
-
-      if (showToasts) setLoadingStep("Registering session…");
-      try {
-        await registerSmartAccount({
-          ownerAddress: eoaAddress,
-          smartAccountAddress: saAddress,
-          sessionKey: artifact.privateKey,
-          sessionExpiry: artifact.sessionExpiry,
-          permissionsContext: artifact.permissionsContext,
-          ...(artifact.sessionSignerAddress
-            ? { sessionSignerAddress: artifact.sessionSignerAddress }
-            : {}),
-          sessionScope: {
-            settlementAddress: cfg.eip712.domain.verifyingContract,
-            functionSelector: artifact.functionSelector,
-            usdtAllowance: SESSION_USDT_ALLOWANCE_BASE_UNITS.toString(),
-          },
-        });
-        setSessionReady(true);
-        // Option C — reset the tab-scoped "amount signed this session" counter
-        // on every successful session (re)init. Per-page-load scope is
-        // acceptable UX: the remaining-allowance preview is a soft guide, and
-        // the on-chain MA v2 module is the authority on actual cap enforcement.
-        setSessionAmountUsed("0");
-        return true;
-      } catch (err) {
-        console.error("Register smart account failed:", err);
-        if (showToasts) toast.error("Could not register session with backend");
-        return false;
-      }
-    },
-    [setSessionReady, setLoadingStep, setSessionAmountUsed]
-  );
+  }, [disconnect, setSmartAccount, setSmartAccountClient, setPubClient]);
 
   const performSign = useCallback(
     async (walletAddr: string) => {
@@ -273,7 +137,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         return null;
       }
     },
-    [connectedChainId, switchChainAsync, disconnectWallet]
+    [connectedChainId, switchChainAsync, disconnectWallet],
   );
 
   const connectWallet = useCallback(
@@ -285,7 +149,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         const result = await connectAsync(
           connector?.name === "WalletConnect"
             ? { connector }
-            : { connector, chainId: platform_chainId }
+            : { connector, chainId: platform_chainId },
         );
 
         localStorage.setItem("connectorId", connector?.name ?? "");
@@ -303,7 +167,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem("flag");
       }
     },
-    [connectAsync]
+    [connectAsync],
   );
 
   useEffect(() => {
@@ -322,151 +186,43 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     const signData = await performSign(address);
     if (!signData) return;
 
-    setLoadingStep("Setting up smart account…");
-    const sa = await createSmartAccountFn(walletClient);
-    if (!sa) {
-      setLoadingStep("");
-      setIsLoading(false);
-      return;
-    }
-
-    const ok = await syncScopedSessionAndRegister({
-      eoaAddress: address,
-      saAddress: sa.address,
-      saClient: sa.client,
-      showToasts: true,
-    });
-    if (!ok) {
-      setLoadingStep("");
-      setIsLoading(false);
-      return;
-    }
+    // Path-1: the EOA is the trading account. Set the atom (still named
+    // `userSmartAccount` for back-compat with read paths) to the EOA.
+    setSmartAccount(address);
 
     toast.success(LOGIN_SUCCESS);
     setLoadingStep("");
     setIsLoading(false);
-  }, [address, walletClient, performSign, createSmartAccountFn, syncScopedSessionAndRegister]);
+  }, [address, walletClient, performSign, setSmartAccount]);
 
+  /** No-op under Path 1; retained so existing toast-action handlers don't break. */
   const reauthorizeSession = useCallback(async () => {
-    if (!address || !smartAccount || !smartAccountClientValue) {
-      toast.error("Wallet or smart account not ready");
-      return;
-    }
-    setIsLoading(true);
-    const ok = await syncScopedSessionAndRegister({
-      eoaAddress: address,
-      saAddress: smartAccount,
-      saClient: smartAccountClientValue,
-      showToasts: true,
-    });
-    setLoadingStep("");
-    setIsLoading(false);
-    if (ok) {
-      setSessionRestoreFailed(false);
-      toast.dismiss("session-restore-fail");
-      toast.success("Trading session renewed");
-    }
-  }, [address, smartAccount, smartAccountClientValue, syncScopedSessionAndRegister, setSessionRestoreFailed]);
+    /* no-op */
+  }, []);
 
   const closeSignModal = useCallback(() => {
     setShowSignModal(false);
     disconnectWallet();
   }, [disconnectWallet]);
 
+  // Restore: if localStorage already has a verify-wallet signature for the
+  // current address, treat the connection as fully ready without re-prompting.
   useEffect(() => {
-    if (!address || !walletClient || !localStorage.getItem("sign")) return;
+    if (!address || !localStorage.getItem("sign")) return;
     if (pendingSign.current) return;
-
-    if (!smartAccount) {
-      void createSmartAccountFn(walletClient);
-      return;
-    }
-
-    if (!smartAccountClientValue) return;
-    if (sessionReady) return;
-
-    let cancelled = false;
-    void (async () => {
-      setIsLoading(true);
-      setLoadingStep("Reconnecting…");
-      try {
-        const first = await syncScopedSessionAndRegister({
-          eoaAddress: address,
-          saAddress: smartAccount,
-          saClient: smartAccountClientValue,
-          showToasts: false,
-        });
-        if (cancelled) return;
-        if (first) return;
-
-        // Single retry with 2s backoff — covers brief backend deploys / network blips.
-        await new Promise((r) => setTimeout(r, 2000));
-        if (cancelled) return;
-        const second = await syncScopedSessionAndRegister({
-          eoaAddress: address,
-          saAddress: smartAccount,
-          saClient: smartAccountClientValue,
-          showToasts: false,
-        });
-        if (cancelled) return;
-        if (second) return;
-
-        // Both attempts failed. Surface the failure so the user can act, instead of
-        // staring at a silent "Reconnecting…" with trading blocked.
-        console.error("Session restore failed after retry — showing re-authorize CTA");
-        setSessionRestoreFailed(true);
-        toast.error("Could not restore trading session. Re-authorize to continue.", {
-          id: "session-restore-fail",
-          duration: Infinity,
-          action: {
-            label: "Re-authorize",
-            onClick: () => {
-              void reauthorizeSession();
-            },
-          },
-        });
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-          setLoadingStep("");
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    address,
-    walletClient,
-    smartAccount,
-    smartAccountClientValue,
-    sessionReady,
-    createSmartAccountFn,
-    syncScopedSessionAndRegister,
-    setSessionRestoreFailed,
-    reauthorizeSession,
-  ]);
+    setSmartAccount(address);
+  }, [address, setSmartAccount]);
 
   useEffect(() => {
-    if (smartAccount) {
+    if (address) {
       setPubClient(
         createPublicClient({
           chain: arbitrum,
           transport: http(ALCHEMY_RPC_URL),
-        }) as PublicClient
+        }) as PublicClient,
       );
     }
-  }, [smartAccount, setPubClient]);
-
-  useEffect(() => {
-    if (address && smartAccount) {
-      const lastConnectedAccount = localStorage.getItem("lastAccount");
-      if (lastConnectedAccount && lastConnectedAccount !== address) {
-        localStorage.removeItem("sessionExpiryTime");
-      }
-    }
-  }, [address, smartAccount]);
+  }, [address, setPubClient]);
 
   const value: WalletContextValue = {
     isWalletConnected: isConnected && !!address,
