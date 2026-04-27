@@ -218,14 +218,20 @@ export default function HomePage() {
     retry: 1,
   });
 
-  // Settled-24h: markets from our existing queries that are already RESOLVED
-  // or CLAIMED. Backend /stats doesn't expose this count yet, so we derive it
-  // client-side from the already-fetched market rows.
+  // Settled-24h: markets RESOLVED/CLAIMED with endTime within the trailing 24h
+  // window. Backend /stats doesn't expose a 24h-scoped settled count yet, so
+  // we derive it client-side. Bug F: prior version omitted the time filter and
+  // showed all-time settled count under a "24h" label — misleading.
   const settledCount = useMemo(() => {
+    const cutoffSec = Math.floor(Date.now() / 1000) - 86_400;
     let n = 0;
     for (const q of marketQueries) {
       for (const m of q.data ?? []) {
-        if (m.status === "RESOLVED" || m.status === "CLAIMED") n++;
+        if (
+          (m.status === "RESOLVED" || m.status === "CLAIMED") &&
+          m.endTime >= cutoffSec
+        )
+          n++;
       }
     }
     return n;
