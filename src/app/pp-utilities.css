@@ -176,7 +176,18 @@
 }
 .pp-tile:hover { border-color: var(--border-1); background: var(--bg-hover); }
 .pp-tile:active { background: var(--bg-press); }
-.pp-tile:focus-visible { outline: 2px solid oklch(97% 0.005 250 / 0.3); outline-offset: 1px; }
+.pp-tile:focus-visible,
+.pp-tile:has(.pp-tile__cover-link:focus-visible) { outline: 2px solid oklch(97% 0.005 250 / 0.3); outline-offset: 1px; }
+
+/* Stretched-link overlay: makes the entire tile a real <a> for Cmd-click new-tab,
+   right-click "Open in new tab", and bookmarkable URL semantics. Inner Links
+   (UP/DOWN ladder) sit above this layer via z-index. */
+.pp-tile__cover-link {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+}
 
 .pp-tile__top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .pp-tile__ticker { display: flex; align-items: center; gap: 7px; }
@@ -215,7 +226,7 @@
 .pp-tile__stripe .pp-micro { color: var(--fg-2); }
 .pp-tile__delta { font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 500; margin-left: auto; white-space: nowrap; }
 
-.pp-tile__ladder { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.pp-tile__ladder { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; position: relative; z-index: 2; }
 .pp-tile__side {
   display: flex; justify-content: space-between; align-items: center; gap: 8px;
   white-space: nowrap; min-width: 0;

@@ -1,8 +1,8 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import type { ApiConfig, MarketListItem } from "@/lib/api";
 import { estimateTotalFee, formatShareCentsLabel, sharePriceBpsFromImpliedUp } from "@/lib/feeEstimate";
 import { formatStrikeUsd, marketDurationLabel, parseStrikeUsdNumber } from "@/lib/format";
@@ -66,7 +66,6 @@ export function MarketCard({
   feeConfig?: Pick<ApiConfig, "platformFeeBps" | "makerFeeBps" | "feeModel" | "peakFeeBps"> | null;
 }) {
   void btcPoints;
-  const router = useRouter();
   const marketHref = marketPathFromAddress(market.address);
   const { label: cdLabel, urgent: cdUrgent } = useCountdownRemaining(market.endTime);
   const effectiveStatus = deriveEffectiveStatus(market.status, cdLabel);
@@ -115,23 +114,15 @@ export function MarketCard({
   const resolvedOrClaimed = isResolved && market.winner != null && market.winner !== 0;
   const resolvedUp = market.winner === 1;
 
-  const onOpen = () => router.push(marketHref);
+  const coverLabel = `Open ${pairLabel} ${tfLabel} market`;
 
   // ---------------------------- RESOLVED / CLAIMED ----------------------------
   if (resolvedOrClaimed) {
     return (
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={onOpen}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onOpen();
-          }
-        }}
-        className="pp-tile pp-tile--closed"
-      >
+      <article className="pp-tile pp-tile--closed">
+        <Link href={marketHref} className="pp-tile__cover-link" aria-label={coverLabel}>
+          <span className="sr-only">{coverLabel}</span>
+        </Link>
         <div className="pp-tile__top">
           <div className="pp-tile__ticker">
             <Image src={`/icons/crypto/${iconSlug}.svg`} alt="" width={16} height={16} />
@@ -167,24 +158,16 @@ export function MarketCard({
             </span>
           </div>
         </div>
-      </div>
+      </article>
     );
   }
 
   // ---------------------------- ACTIVE / RESOLVING ----------------------------
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onOpen}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onOpen();
-        }
-      }}
-      className={cn("pp-tile", effectiveStatus === "ACTIVE" && "pp-tile--live")}
-    >
+    <article className={cn("pp-tile", effectiveStatus === "ACTIVE" && "pp-tile--live")}>
+      <Link href={marketHref} className="pp-tile__cover-link" aria-label={coverLabel}>
+        <span className="sr-only">{coverLabel}</span>
+      </Link>
       <div className="pp-tile__top">
         <div className="pp-tile__ticker">
           <Image src={`/icons/crypto/${iconSlug}.svg`} alt="" width={16} height={16} />
@@ -232,30 +215,20 @@ export function MarketCard({
 
       {effectiveStatus === "ACTIVE" ? (
         <div className="pp-tile__ladder">
-          <button
-            type="button"
+          <Link
+            href={`${marketHref}?side=1&amount=25`}
             className="pp-tile__side pp-tile__side--up"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              router.push(`${marketHref}?side=1&amount=25`);
-            }}
           >
             <span className="pp-tile__side-label">▲ UP</span>
             <span className="pp-tile__side-price">{upCents != null ? `${upCents}¢` : "—"}</span>
-          </button>
-          <button
-            type="button"
+          </Link>
+          <Link
+            href={`${marketHref}?side=2&amount=25`}
             className="pp-tile__side pp-tile__side--down"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              router.push(`${marketHref}?side=2&amount=25`);
-            }}
           >
             <span className="pp-tile__side-label">▼ DOWN</span>
             <span className="pp-tile__side-price">{downCents != null ? `${downCents}¢` : "—"}</span>
-          </button>
+          </Link>
         </div>
       ) : null}
 
@@ -291,6 +264,6 @@ export function MarketCard({
           </span>
         ) : null}
       </div>
-    </div>
+    </article>
   );
 }
