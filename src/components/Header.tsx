@@ -74,7 +74,11 @@ export function Header() {
     staleTime: 60_000,
   });
 
-  const depositAddress = smartAccount;
+  // Path-1 architecture: USDT lives on the EOA. Deposit/withdraw target the
+  // connected wallet address directly. The SA address is kept in state for
+  // legacy reasons (some atoms reference it) but is no longer the trading
+  // custodian.
+  const depositAddress = walletAddress;
 
   function navActive(href: string): boolean {
     if (href === "/") return pathname === "/" || pathname.startsWith("/market/");
@@ -352,7 +356,7 @@ export function Header() {
         )}
       </header>
 
-      <DepositModal open={depositOpen} onClose={() => setDepositOpen(false)} depositAddress={depositAddress} />
+      <DepositModal open={depositOpen} onClose={() => setDepositOpen(false)} depositAddress={depositAddress ?? ""} />
       <WithdrawModal open={withdrawOpen} onClose={() => setWithdrawOpen(false)} />
     </>
   );
