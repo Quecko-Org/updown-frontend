@@ -576,12 +576,15 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
           disabled={
             submit.isPending ||
             market?.status !== "ACTIVE" ||
-            priceInputInvalid
+            priceInputInvalid ||
+            !smartAccount
           }
           title={
             priceInputInvalid
               ? (userPriceParsed.error ?? "Fix price before submitting")
-              : undefined
+              : !smartAccount
+                ? "Finish wallet sign-in to enable trading"
+                : undefined
           }
           className={cn(
             "pp-btn pp-btn--lg pp-trade__cta",
