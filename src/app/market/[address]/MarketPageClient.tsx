@@ -9,6 +9,7 @@ import { getMarket, getPositions, getPriceHistory, getDmmStatus } from "@/lib/ap
 import { formatStrikeUsd, formatUsdt, marketDurationLabel, parseStrikeUsdNumber } from "@/lib/format";
 import { normalizePriceHistoryData } from "@/lib/priceChart";
 import { parseCompositeMarketKey } from "@/lib/marketKey";
+import { formatResolutionOutcome } from "@/lib/derivations";
 import { MarketPriceChart } from "@/components/MarketPriceChart";
 import { TradeForm } from "@/components/TradeForm";
 import { OrderBookPanel } from "@/components/OrderBook";
@@ -123,6 +124,14 @@ export function MarketPageClient({ address }: { address: string }) {
   const tfLabel = marketDurationLabel(market.duration);
   const heroTitle = `${pairLabel} · ${tfLabel}`;
 
+  // Bug C: pre-fix, "Currently" always rendered live spot vs strike — for
+  // RESOLVED markets this contradicted the home page card's winner badge once
+  // spot had drifted past strike post-resolve. Now use the canonical
+  // formatResolutionOutcome helper for resolved markets and drop "Currently".
+  const resolution = formatResolutionOutcome(market);
+  const isResolvedView = resolution.winnerSide != null;
+  const settledLabel = market.settlementPrice ? formatStrikeUsd(market.settlementPrice) : null;
+
   const directionLabel =
     strikeNum == null || spotUsd == null
       ? "—"
@@ -156,16 +165,51 @@ export function MarketPageClient({ address }: { address: string }) {
               <span className="pp-micro">Strike</span>
               <span className="pp-price-md">{strikeLabel}</span>
             </span>
-            <span className="flex flex-col gap-1">
-              <span className="pp-micro">Ends in</span>
-              <span className="pp-price-md">{endsIn}</span>
-            </span>
-            <span className="flex flex-col gap-1">
-              <span className="pp-micro">Currently</span>
-              <span className="pp-price-md" style={{ color: directionColor }}>
-                {directionLabel}
+            {isResolvedView ? (
+              <span className="flex flex-col gap-1">
+                <span className="pp-micro">Settled</span>
+                <span className="pp-price-md">{settledLabel ?? "—"}</span>
               </span>
-            </span>
+            ) : (
+              <span className="flex flex-col gap-1">
+                <span className="pp-micro">Ends in</span>
+                <span className="pp-price-md">{endsIn}</span>
+              </span>
+            )}
+            {isResolvedView ? (
+              <span className="flex flex-col gap-1">
+                <span className="pp-micro">Winner</span>
+                <span
+                  className="pp-price-md"
+                  style={{
+                    color:
+                      resolution.winnerSide === 1 ? "var(--up)" : "var(--down)",
+                  }}
+                >
+                  {resolution.winnerSide === 1 ? "▲ UP won" : "▼ DOWN won"}
+                </span>
+                {resolution.deltaPctStr ? (
+                  <span
+                    className="pp-caption pp-tabular"
+                    style={{ color: "var(--fg-2)" }}
+                    title={
+                      resolution.deltaUsedFinePrecision
+                        ? "Sub-cent gap — extra precision shown so the result is unambiguous"
+                        : undefined
+                    }
+                  >
+                    Δ {resolution.deltaPctStr}
+                  </span>
+                ) : null}
+              </span>
+            ) : (
+              <span className="flex flex-col gap-1">
+                <span className="pp-micro">Currently</span>
+                <span className="pp-price-md" style={{ color: directionColor }}>
+                  {directionLabel}
+                </span>
+              </span>
+            )}
             <span className="flex flex-col gap-1">
               <span className="pp-micro">Status</span>
               <span className="pp-chip pp-chip--cd">

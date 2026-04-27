@@ -20,10 +20,18 @@ function shortenMarket(addr: string): string {
   return `${addr.slice(0, 10)}…${addr.slice(-6)}`;
 }
 
-function tradeResult(t: TradeRow, winner: number | null | undefined, wallet: string): string {
-  if (winner == null || winner === 0) return "—";
+type MarketLookup = { winner: number | null; isLoading: boolean; isResolved: boolean };
+
+// Bug C: pre-fix, "—" was rendered for both "still loading the market data"
+// and "market resolved but neither buy nor sell win/lose applies" — users
+// couldn't tell which case they were in. Now: distinct "Loading…" while the
+// market query is in flight, "Pending" for unresolved markets, "—" only when
+// the user wasn't a counterparty on the trade.
+function tradeResult(t: TradeRow, lookup: MarketLookup, wallet: string): string {
+  if (lookup.isLoading) return "Loading…";
+  if (!lookup.isResolved || lookup.winner == null || lookup.winner === 0) return "Pending";
   const w = wallet.toLowerCase();
-  const wonOpt = t.option === winner;
+  const wonOpt = t.option === lookup.winner;
   if (t.buyer.toLowerCase() === w) return wonOpt ? "Win (buy)" : "Lose (buy)";
   if (t.seller.toLowerCase() === w) return wonOpt ? "Lose (sell)" : "Win (sell)";
   return "—";
@@ -76,11 +84,17 @@ export default function HistoryPage() {
     })),
   });
 
-  const winnerByMarket = useMemo(() => {
-    const map = new Map<string, number | null>();
+  const lookupByMarket = useMemo(() => {
+    const map = new Map<string, MarketLookup>();
     markets.forEach((m, i) => {
-      const d = marketQueries[i]?.data;
-      map.set(m, d?.winner ?? null);
+      const q = marketQueries[i];
+      const d = q?.data;
+      const isResolved = d?.status === "RESOLVED" || d?.status === "CLAIMED";
+      map.set(m, {
+        winner: d?.winner ?? null,
+        isLoading: q?.isLoading === true && !d,
+        isResolved,
+      });
     });
     return map;
   }, [markets, marketQueries]);
@@ -231,7 +245,15 @@ export default function HistoryPage() {
                     </td>
                     <td style={{ color: "var(--fg-0)" }}>
                       {smartAccount
-                        ? tradeResult(t, winnerByMarket.get(t.market.toLowerCase()), smartAccount)
+                        ? tradeResult(
+                            t,
+                            lookupByMarket.get(t.market.toLowerCase()) ?? {
+                              winner: null,
+                              isLoading: true,
+                              isResolved: false,
+                            },
+                            smartAccount,
+                          )
                         : "—"}
                     </td>
                   </tr>
