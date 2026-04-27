@@ -4,125 +4,16 @@ import { useEffect, useRef } from "react";
 import { useSetAtom } from "jotai";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import {
-  wsConnectedAtom,
-  wsLastEventAtAtom,
-  pendingSignRequestsAtom,
-  sessionAmountUsedAtom,
-  type PendingSignRequest,
-} from "@/store/atoms";
+import { wsConnectedAtom, wsLastEventAtAtom } from "@/store/atoms";
 import { wsStreamUrl } from "@/lib/env";
 import type { BalanceResponse, MarketListItem, OrderBookResponse } from "@/lib/api";
 import { applyOrderUpdateToList, buildTerminalOrderToast, type OrderUpdateLike } from "@/lib/derivations";
-import {
-  signSignatureRequest,
-  type SignatureRequest,
-} from "@/utils/sessionKeypair";
 
 type WsPayload = {
   type: string;
   channel?: string;
   data?: unknown;
 };
-
-/**
- * Shape of `session_sign_request.data` from the backend (matches
- * `OptionCSignRequestPayload` in updown-backend `SettlementService.ts`).
- * The server validates on its side; we revalidate here to refuse
- * malformed prompts before ever touching the private key.
- */
-type SignRequestPayload = {
-  requestId: string;
-  smartAccountAddress: string;
-  signatureRequest: SignatureRequest;
-  uiPreview: { market: string; option: number; amount: string };
-  expiresAt: number;
-};
-
-function isSignRequestPayload(x: unknown): x is SignRequestPayload {
-  if (!x || typeof x !== "object") return false;
-  const o = x as Record<string, unknown>;
-  const sr = o.signatureRequest as Record<string, unknown> | undefined;
-  const ui = o.uiPreview as Record<string, unknown> | undefined;
-  return (
-    typeof o.requestId === "string" &&
-    o.requestId.length > 0 &&
-    typeof o.smartAccountAddress === "string" &&
-    o.smartAccountAddress.startsWith("0x") &&
-    typeof o.expiresAt === "number" &&
-    Number.isFinite(o.expiresAt) &&
-    !!sr &&
-    (sr.type === "personal_sign" || sr.type === "eth_signTypedData_v4") &&
-    typeof sr.rawPayload === "string" &&
-    !!ui &&
-    typeof ui.market === "string" &&
-    typeof ui.option === "number" &&
-    typeof ui.amount === "string"
-  );
-}
-
-/**
- * Sign-request handler invoked from the WS message dispatcher.
- *   1. Revalidate the payload shape — refuse malformed silently.
- *   2. Record the pending request so UI derivations (PENDING chip,
- *      remaining-allowance preview) can react.
- *   3. Show a sonner loading toast keyed by requestId.
- *   4. Sign the Alchemy signatureRequest with the secp256k1 session key
- *      in IDB — branches on `signatureRequest.type` (personal_sign vs
- *      eth_signTypedData_v4).
- *   5. Send `sign_response` back on the same socket.
- *
- * Errors (no key in IDB, signing fails, socket closed mid-flight) surface
- * as a failed toast and leave the pending entry in place — the server
- * will time out the request and retry the settlement on the next tick.
- */
-async function handleSessionSignRequest(
-  data: unknown,
-  deps: {
-    ws: WebSocket | null;
-    setPendingSignRequests: (updater: (prev: Map<string, PendingSignRequest>) => Map<string, PendingSignRequest>) => void;
-    setSessionAmountUsed: (updater: (prev: string) => string) => void;
-  }
-): Promise<void> {
-  if (!isSignRequestPayload(data)) return;
-
-  const entry: PendingSignRequest = {
-    requestId: data.requestId,
-    market: data.uiPreview.market,
-    option: data.uiPreview.option,
-    amount: data.uiPreview.amount,
-    expiresAt: data.expiresAt,
-  };
-  deps.setPendingSignRequests((prev) => new Map(prev).set(data.requestId, entry));
-
-  const amountUsd = (Number(data.uiPreview.amount) / 1_000_000).toFixed(2);
-  toast.loading(`Signing fill of $${amountUsd}…`, { id: `sign-${data.requestId}` });
-
-  try {
-    const signature = await signSignatureRequest(
-      data.smartAccountAddress,
-      data.signatureRequest
-    );
-    const ws = deps.ws;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      throw new Error("WebSocket not open when sign_response ready");
-    }
-    ws.send(
-      JSON.stringify({ type: "sign_response", requestId: data.requestId, signature })
-    );
-    // Running allowance total — updated optimistically here so the UI can
-    // reflect the spend even before the ack lands. If routing fails on the
-    // server side, we leave the total bumped; the server's retry will
-    // regenerate the same requestId (sha256 of the same tuple) and
-    // `sign_response_ack` routed:false drops into the noop branch.
-    deps.setSessionAmountUsed((prev) => (BigInt(prev) + BigInt(data.uiPreview.amount)).toString());
-  } catch (err) {
-    console.error("[sessionSign] failed:", err);
-    toast.error("Could not sign settlement — re-authorize session", {
-      id: `sign-${data.requestId}`,
-    });
-  }
-}
 
 /** Keys we accept as a market identifier in the market cache (list uses `address`). */
 function matchesMarketKey(m: Partial<MarketListItem> & { marketId?: string }, needle: Partial<MarketListItem> & { marketId?: string }) {
@@ -132,14 +23,9 @@ function matchesMarketKey(m: Partial<MarketListItem> & { marketId?: string }, ne
 }
 
 function walletChannels(walletLower: string) {
-  // Option C: subscribe to `sessionSign:<wallet>` unconditionally even when
-  // the flag is off — it's server-gated (backend never pushes to this
-  // channel without OPTION_C_ENABLED=1), and subscribing always keeps the
-  // list stable across flag flips without a reconnect.
   return [
     `orders:${walletLower}`,
     `balance:${walletLower}`,
-    `sessionSign:${walletLower}`,
   ] as const;
 }
 
@@ -160,8 +46,6 @@ export function useUpDownWebSocket(opts: {
   const queryClient = useQueryClient();
   const setWsConnected = useSetAtom(wsConnectedAtom);
   const setWsLastEventAt = useSetAtom(wsLastEventAtAtom);
-  const setPendingSignRequests = useSetAtom(pendingSignRequestsAtom);
-  const setSessionAmountUsed = useSetAtom(sessionAmountUsedAtom);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -260,30 +144,6 @@ export function useUpDownWebSocket(opts: {
             queryClient.invalidateQueries({ queryKey: ["market", ma.toLowerCase()] });
           }
         }, 1000);
-      }
-      if (msg.type === "session_sign_request" && msg.data && typeof msg.data === "object") {
-        void handleSessionSignRequest(msg.data as SignRequestPayload, {
-          ws: wsRef.current,
-          setPendingSignRequests,
-          setSessionAmountUsed,
-        });
-      }
-      if (msg.type === "sign_response_ack" && typeof (msg as unknown as { requestId?: string }).requestId === "string") {
-        const ack = msg as unknown as { requestId: string; routed?: boolean };
-        const rid = ack.requestId;
-        const routed = ack.routed;
-        // Only drop the pending-request entry when the server confirms the
-        // signature was accepted. If `routed:false` (late / duplicate) we
-        // leave the entry so the user still sees the toast until it expires.
-        if (routed) {
-          setPendingSignRequests((prev) => {
-            if (!prev.has(rid)) return prev;
-            const next = new Map(prev);
-            next.delete(rid);
-            return next;
-          });
-          toast.success("Fill settled", { id: `sign-${rid}` });
-        }
       }
       if (msg.type === "order_update" && msg.data && typeof msg.data === "object") {
         const update = msg.data as OrderUpdateLike;

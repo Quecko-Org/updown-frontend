@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { CancelOrderButton } from "@/components/CancelOrderButton";
 import { cn } from "@/lib/cn";
 import { marketPathFromAddress } from "@/lib/marketKey";
-import { sessionReadyAtom, userSmartAccount } from "@/store/atoms";
+import { userSmartAccount } from "@/store/atoms";
 
 const PAGE = 20;
 
@@ -40,13 +40,12 @@ function statusChipClass(status: string): string {
 export default function HistoryPage() {
   const { address, isConnected } = useAccount();
   const smartAccount = useAtomValue(userSmartAccount);
-  const sessionReady = useAtomValue(sessionReadyAtom);
   const [offset, setOffset] = useState(0);
 
   const { data: trades, isLoading } = useQuery({
     queryKey: ["trades", smartAccount?.toLowerCase() ?? "", offset],
     queryFn: () => getTrades(smartAccount!, PAGE, offset),
-    enabled: !!smartAccount && isConnected && sessionReady,
+    enabled: !!smartAccount && isConnected,
     retry: 1,
   });
 
