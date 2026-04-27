@@ -73,6 +73,10 @@ type OrderListPage = {
  * payload lacks fields needed for a usable row (older backend builds prior
  * to the placement-emit enrichment). Only used when the cached list does
  * not yet contain this order id — see `applyOrderUpdateToList` below.
+ *
+ * Required wire fields: id, market, option, side, orderType, price, amount.
+ * Backend WebSocketServer.ts pins this shape; see PR #41 for the placement
+ * emit + payload enrichment that landed alongside this consumer.
  */
 function rowFromUpdate(update: OrderUpdateLike): OrderListRow | null {
   if (!update.id || !update.market || update.option == null || update.side == null) return null;
