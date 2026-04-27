@@ -225,6 +225,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const submit = useMutation({
     mutationFn: async () => {
       if (!address || !cfg || !parsedKey) throw new Error("Connect wallet");
+      if (!smartAccount) throw new Error("Smart account not ready");
       if (!market || market.status !== "ACTIVE") throw new Error("Market not active");
       const amount = parseUsdtToAtomic(String(dollars));
       const min = parseUsdtToAtomic("5");
@@ -238,7 +239,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
 
       if (orderSide === 1 /* SELL */) {
         try {
-          const positions = await getPositions(address);
+          const positions = await getPositions(smartAccount);
           const match = positions.find(
             (p) => p.market.toLowerCase() === parsedKey.composite.toLowerCase() && p.option === side,
           );
@@ -261,8 +262,13 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       const typeNum = ORDER_TYPE_U8[orderType];
       const priceNum = orderType === "MARKET" ? 0 : limitPrice;
 
+      // Order maker is the SMART ACCOUNT (where USDT lives), not the EOA.
+      // Settlement contract uses SignatureChecker.isValidSignatureNow on the
+      // maker, which delegates to the SA's ERC-1271 isValidSignature →
+      // checks against the SA's owner EOA. We sign with the EOA via wagmi's
+      // signTypedData; the SA accepts the signature on-chain.
       const msg = {
-        maker: address as `0x${string}`,
+        maker: smartAccount as `0x${string}`,
         market: parsedKey.marketId,
         option: BigInt(side),
         side: orderSide,
@@ -277,7 +283,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       const signature = await signTypedDataAsync(typed);
 
       await postOrder({
-        maker: address,
+        maker: smartAccount,
         market: parsedKey.composite,
         option: side,
         side: orderSide,
