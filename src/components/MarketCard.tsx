@@ -8,7 +8,7 @@ import { estimateTotalFee, formatShareCentsLabel, sharePriceBpsFromImpliedUp } f
 import { formatStrikeUsd, marketDurationLabel, parseStrikeUsdNumber } from "@/lib/format";
 import type { PricePoint } from "@/lib/priceChart";
 import { cn } from "@/lib/cn";
-import { deriveEffectiveStatus } from "@/lib/derivations";
+import { deriveEffectiveStatus, formatResolutionOutcome } from "@/lib/derivations";
 import { marketPathFromAddress } from "@/lib/marketKey";
 
 function useCountdownRemaining(endTime: number) {
@@ -111,8 +111,9 @@ export function MarketCard({
   const diffPct = diffUsd != null && strikeNum ? (diffUsd / strikeNum) * 100 : null;
   const deltaUp = diffUsd != null && diffUsd >= 0;
 
-  const resolvedOrClaimed = isResolved && market.winner != null && market.winner !== 0;
-  const resolvedUp = market.winner === 1;
+  const resolution = formatResolutionOutcome(market);
+  const resolvedOrClaimed = resolution.winnerSide != null;
+  const resolvedUp = resolution.winnerSide === 1;
 
   const coverLabel = `Open ${pairLabel} ${tfLabel} market`;
 
@@ -151,10 +152,15 @@ export function MarketCard({
           </div>
           <div>
             <span className="pp-micro">Δ</span>
-            <span className={cn("pp-tile__num", deltaUp ? "pp-up" : "pp-down")}>
-              {diffPct != null
-                ? `${deltaUp ? "+" : "−"}${Math.abs(diffPct).toFixed(2)}%`
-                : "—"}
+            <span
+              className={cn("pp-tile__num", resolvedUp ? "pp-up" : "pp-down")}
+              title={
+                resolution.deltaUsedFinePrecision
+                  ? "Sub-cent gap — extra precision shown so the result is unambiguous"
+                  : undefined
+              }
+            >
+              {resolution.deltaPctStr ?? "—"}
             </span>
           </div>
         </div>
