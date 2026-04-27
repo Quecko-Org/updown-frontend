@@ -5,7 +5,11 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
-import { useAccount, useSignTypedData } from "wagmi";
+import { useAccount, useSignTypedData, useWriteContract, useWalletClient } from "wagmi";
+import { erc20Abi, maxUint256 } from "viem";
+import { createPublicClient, http } from "viem";
+import { arbitrum } from "viem/chains";
+import { ALCHEMY_RPC_URL } from "@/config/environment";
 import { toast } from "sonner";
 import {
   getConfig,
@@ -158,6 +162,43 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   });
 
   const { signTypedDataAsync } = useSignTypedData();
+  const { writeContractAsync } = useWriteContract();
+  const { data: wc } = useWalletClient();
+
+  /**
+   * One-time-per-wallet `USDT.approve(settlement, MaxUint256)` from the EOA.
+   *
+   * Path-1 architecture: USDT lives on the EOA; the settlement contract pulls
+   * via `transferFrom(eoa, settlement, fillAmount)` inside `enterPosition`.
+   * Without this allowance the first BUY would revert. Idempotent: reads
+   * current allowance and only triggers the wallet popup when below threshold.
+   *
+   * Cost: ~50k gas, paid in ETH on Arbitrum (a few cents at typical prices).
+   * Once approved, every future trade is gasless from the user's POV — only
+   * a typed-data signature.
+   */
+  const ensureSettlementAllowance = useCallback(async () => {
+    if (!address || !cfg || !wc) return;
+    const settlement = cfg.eip712.domain.verifyingContract as `0x${string}`;
+    const usdt = cfg.usdtAddress as `0x${string}`;
+    const pub = createPublicClient({ chain: arbitrum, transport: http(ALCHEMY_RPC_URL) });
+    const THRESHOLD = BigInt(10_000) * BigInt(10) ** BigInt(6);
+    const current = (await pub.readContract({
+      address: usdt,
+      abi: erc20Abi,
+      functionName: "allowance",
+      args: [address as `0x${string}`, settlement],
+    })) as bigint;
+    if (current >= THRESHOLD) return;
+    toast.info("One-time approval needed — confirm in your wallet (small ETH gas).");
+    const hash = await writeContractAsync({
+      address: usdt,
+      abi: erc20Abi,
+      functionName: "approve",
+      args: [settlement, maxUint256],
+    });
+    await pub.waitForTransactionReceipt({ hash });
+  }, [address, cfg, wc, writeContractAsync]);
 
   const totalBps = (cfg?.platformFeeBps ?? 70) + (cfg?.makerFeeBps ?? 80);
 
@@ -225,8 +266,15 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const submit = useMutation({
     mutationFn: async () => {
       if (!address || !cfg || !parsedKey) throw new Error("Connect wallet");
-      if (!smartAccount) throw new Error("Smart account not ready");
       if (!market || market.status !== "ACTIVE") throw new Error("Market not active");
+
+      // Path-1: ensure the EOA has approved settlement for USDT before BUY.
+      // Idempotent on subsequent trades. SELL doesn't need allowance (no
+      // transferFrom; settlement only debits buyers).
+      if (orderSide === 0 /* BUY */) {
+        await ensureSettlementAllowance();
+      }
+
       const amount = parseUsdtToAtomic(String(dollars));
       const min = parseUsdtToAtomic("5");
       const max = parseUsdtToAtomic("500");
@@ -239,7 +287,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
 
       if (orderSide === 1 /* SELL */) {
         try {
-          const positions = await getPositions(smartAccount);
+          const positions = await getPositions(address);
           const match = positions.find(
             (p) => p.market.toLowerCase() === parsedKey.composite.toLowerCase() && p.option === side,
           );
@@ -262,13 +310,12 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       const typeNum = ORDER_TYPE_U8[orderType];
       const priceNum = orderType === "MARKET" ? 0 : limitPrice;
 
-      // Order maker is the SMART ACCOUNT (where USDT lives), not the EOA.
-      // Settlement contract uses SignatureChecker.isValidSignatureNow on the
-      // maker, which delegates to the SA's ERC-1271 isValidSignature →
-      // checks against the SA's owner EOA. We sign with the EOA via wagmi's
-      // signTypedData; the SA accepts the signature on-chain.
+      // Order maker is the EOA — that's where USDT lives in the Path-1
+      // architecture (no smart account in the trading path). Settlement's
+      // `SignatureChecker.isValidSignatureNow` falls through to ECDSA when
+      // maker has no contract code, accepting plain EOA signatures.
       const msg = {
-        maker: smartAccount as `0x${string}`,
+        maker: address as `0x${string}`,
         market: parsedKey.marketId,
         option: BigInt(side),
         side: orderSide,
@@ -283,7 +330,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       const signature = await signTypedDataAsync(typed);
 
       await postOrder({
-        maker: smartAccount,
+        maker: address,
         market: parsedKey.composite,
         option: side,
         side: orderSide,

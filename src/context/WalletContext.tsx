@@ -124,74 +124,14 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     void deleteIndexKey("sessionKeyData");
   }, [disconnect, setSmartAccount, setSmartAccountClient, setPubClient, setSessionReady]);
 
-  /**
-   * One-time `USDT.approve(settlement, MaxUint256)` from the user's SA.
-   *
-   * Why this is required: the new settlement contract pulls USDT directly from
-   * the order maker's SA via `transferFrom` inside `enterPosition`. Without an
-   * allowance set, the very first BUY order to settle would revert with
-   * `SafeERC20FailedOperation`. Pre-cutover this was unnecessary because the
-   * old contract's `enterPosition` was `onlyRelayer` and pulled USDT from the
-   * relayer's own balance — user SAs never needed to approve the old settlement.
-   *
-   * Idempotent: reads current allowance first and only sends an approve
-   * UserOp when allowance is below threshold (10k USDT in base units).
-   * Threshold instead of strict zero so the check survives small one-off
-   * approves without forcing a re-approve. MaxUint256 is the same value the
-   * Polymarket / Uniswap UX uses; users see the prompt exactly once per SA
-   * lifetime.
-   *
-   * Gas is paid by Alchemy's paymaster policy (set on the wallet client at
-   * construction), so the user's SA does not need ETH.
+  /*
+   * Path-1 architecture: USDT lives on the EOA. The first BUY trade prompts
+   * a one-time `USDT.approve(settlement, MaxUint256)` directly from the EOA
+   * (handled in TradeForm via wagmi `writeContract`). No smart-account
+   * UserOp here, no Alchemy paymaster needed. The SA is still derived for
+   * legacy compatibility (some atoms / caches reference it), but it is no
+   * longer the trading custodian.
    */
-  const ensureSettlementAllowance = useCallback(
-    async (
-      saAddr: Address,
-      saClient: ReturnType<typeof createSmartWalletClient>,
-      saSigner: WalletClientSigner,
-      settlementAddr: Address,
-      usdtAddr: Address
-    ): Promise<void> => {
-      const APPROVE_THRESHOLD = BigInt(10_000) * BigInt(10) ** BigInt(6); // 10k USDT (base units)
-
-      // Read current allowance straight from chain — cheap, avoids redundant
-      // approve UserOps on reconnect.
-      const pubReader = createPublicClient({
-        chain: arbitrum,
-        transport: http(ALCHEMY_RPC_URL),
-      }) as PublicClient;
-      const current = (await pubReader.readContract({
-        address: usdtAddr,
-        abi: erc20Abi,
-        functionName: "allowance",
-        args: [saAddr, settlementAddr],
-      })) as bigint;
-
-      if (current >= APPROVE_THRESHOLD) {
-        // Already approved (typically MaxUint256) — no-op.
-        return;
-      }
-
-      setLoadingStep("Approving USDT for trading…");
-      const data = encodeFunctionData({
-        abi: erc20Abi,
-        functionName: "approve",
-        args: [settlementAddr, maxUint256],
-      });
-      const prepared = await saClient.prepareCalls({
-        from: saAddr,
-        calls: [{ to: usdtAddr, data, value: toHex(BigInt(0)) }],
-        capabilities: {},
-      });
-      const signed = await signPreparedCalls(saSigner, prepared);
-      const sent = await saClient.sendPreparedCalls(signed);
-      // Wait until the bundler reports a receipt — otherwise a fast first
-      // trade would fire before the approve confirms and revert anyway.
-      await saClient.waitForCallsStatus({ id: sent.id, timeout: 120_000 });
-    },
-    [setLoadingStep]
-  );
-
   const createSmartAccountFn = useCallback(
     async (
       wc: NonNullable<typeof walletClient>
@@ -218,35 +158,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         const addr = smartAccountAddress?.address as string;
         setSmartAccount(addr);
         setSmartAccountClient(client);
-
-        // Best-effort settlement-allowance bootstrap. If approval fails (user
-        // rejects the prompt, network blip, etc.) we do NOT block account
-        // creation — the user can still see balances. The next reconnect will
-        // re-attempt. The first BUY trade would revert without allowance, so
-        // surface the failure as a toast so the user knows to reconnect.
-        try {
-          const cfg = await getConfig();
-          getDefaultStore().set(apiConfigAtom, cfg);
-          await ensureSettlementAllowance(
-            addr as Address,
-            client as ReturnType<typeof createSmartWalletClient>,
-            signer,
-            cfg.eip712.domain.verifyingContract,
-            cfg.usdtAddress as Address
-          );
-        } catch (approveErr) {
-          console.error("Settlement-allowance bootstrap failed:", approveErr);
-          toast.error("USDT approval pending — reconnect to retry before your first trade");
-          // fall through; SA itself is created and usable for read-only views
-        }
-
         return { address: addr, client };
       } catch (error) {
         console.error("Error creating smart account:", error);
         return null;
       }
     },
-    [setSmartAccount, setSmartAccountClient, ensureSettlementAllowance]
+    [setSmartAccount, setSmartAccountClient]
   );
 
   const syncScopedSessionAndRegister = useCallback(
