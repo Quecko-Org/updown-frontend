@@ -585,3 +585,83 @@
 .pp-xpromo__pair { font-size: 12px; font-weight: 600; }
 .pp-xpromo__tf { font-size: 11px; color: var(--fg-2); }
 .pp-xpromo__chip { font-family: var(--font-mono); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* ---------- Phase2-F quick-markets strip ---------- */
+.pp-quicknav {
+  width: 100%;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border-0);
+}
+.pp-quicknav__inner {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 6px 16px;
+  display: flex; align-items: center; gap: 10px;
+  overflow-x: auto;
+}
+.pp-quicknav__label {
+  flex-shrink: 0;
+  color: var(--fg-2);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+}
+.pp-quicknav__chips {
+  display: flex; gap: 6px;
+  flex-shrink: 0;
+}
+.pp-quicknav__chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-0);
+  border-radius: 999px;
+  background: var(--bg-0);
+  color: var(--fg-1);
+  font-size: 11px;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: border-color var(--dur-micro) var(--ease),
+              background var(--dur-micro) var(--ease),
+              color var(--dur-micro) var(--ease);
+}
+.pp-quicknav__chip:hover { border-color: var(--border-1); color: var(--fg-0); }
+.pp-quicknav__chip--on {
+  background: var(--fg-0); color: var(--bg-0); border-color: var(--fg-0);
+  font-weight: 600;
+}
+.pp-quicknav__chip--off {
+  opacity: 0.5; cursor: default;
+}
+.pp-quicknav__chip--off:hover { border-color: var(--border-0); color: var(--fg-1); }
+.pp-quicknav__chip--urgent { color: var(--down); }
+.pp-quicknav__chip--urgent.pp-quicknav__chip--on { color: var(--bg-0); }
+.pp-quicknav__pair { font-weight: 600; }
+.pp-quicknav__tf { color: var(--fg-2); }
+.pp-quicknav__chip--on .pp-quicknav__tf { color: var(--bg-0); opacity: 0.8; }
+.pp-quicknav__cd { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+@media (max-width: 640px) {
+  .pp-quicknav__inner { padding: 6px 12px; gap: 8px; }
+  .pp-quicknav__label { display: none; }
+}
+
+/* ---------- Phase2-F market header actions (share / embed / bookmark) ---------- */
+.pp-mhdr-actions {
+  display: inline-flex; gap: 4px;
+  flex-shrink: 0;
+}
+.pp-mhdr-actions__btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px;
+  border: 1px solid var(--border-0);
+  border-radius: 6px;
+  background: var(--bg-1);
+  color: var(--fg-2);
+  cursor: pointer;
+  transition: border-color var(--dur-micro) var(--ease),
+              color var(--dur-micro) var(--ease),
+              background var(--dur-micro) var(--ease);
+}
+.pp-mhdr-actions__btn:hover { border-color: var(--border-1); color: var(--fg-0); }
+.pp-mhdr-actions__btn--on { color: var(--up); border-color: var(--up); }
+.pp-mhdr-actions__btn--on:hover { color: var(--up); border-color: var(--up); }

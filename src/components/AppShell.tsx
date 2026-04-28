@@ -10,6 +10,7 @@ import { apiConfigAtom } from "@/store/atoms";
 import { useUpDownWebSocket } from "@/hooks/useUpDownWebSocket";
 import { useLivePriceFeed } from "@/hooks/useLivePriceFeed";
 import { Header } from "./Header";
+import { QuickMarketsStrip } from "./QuickMarketsStrip";
 import { cn } from "@/lib/cn";
 
 const LIVE_SYMBOLS = ["BTC", "ETH"];
@@ -45,6 +46,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-background">
       <Header />
+      <QuickMarketsStrip />
       <main
         className={cn(
           "mx-auto w-full px-4 pb-12 pt-6 sm:px-6 lg:px-8",

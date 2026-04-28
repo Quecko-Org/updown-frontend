@@ -20,6 +20,7 @@ import { OrderBookPanel } from "@/components/OrderBook";
 import { YourActivityOnMarket } from "@/components/YourActivityOnMarket";
 import { EmptyState } from "@/components/EmptyState";
 import { CancelAllMarketOrders } from "@/components/CancelAllMarketOrders";
+import { MarketHeaderActions } from "@/components/MarketHeaderActions";
 import { TimeRangeStrip } from "@/components/TimeRangeStrip";
 import { formatUsdt } from "@/lib/format";
 import { userSmartAccount } from "@/store/atoms";
@@ -157,9 +158,12 @@ export function MarketPageClient({ address }: { address: string }) {
 
   return (
     <div>
-      <Link href="/" className="pp-back">
-        ← Markets
-      </Link>
+      <div className="flex items-center justify-between gap-3">
+        <Link href="/" className="pp-back">
+          ← Markets
+        </Link>
+        <MarketHeaderActions marketKey={marketKey} />
+      </div>
 
       {/* Phase2-B header redesign: two-tier Polymarket-parity layout for
           RESOLVED markets — "Price To Beat" + "Settled Price ▼/▲ Δ$ value".
