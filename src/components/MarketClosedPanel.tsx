@@ -47,7 +47,7 @@ export function MarketClosedPanel({ market }: { market: MarketListItem }) {
         Market closed
       </div>
 
-      {outcome.label ? (
+      {outcome.winnerLabel ? (
         <div
           style={{
             marginTop: 12,
@@ -75,7 +75,7 @@ export function MarketClosedPanel({ market }: { market: MarketListItem }) {
               Settled at {formatStrikeUsd(market.settlementPrice)}
             </span>
           ) : null}
-          {outcome.deltaPctStr ? (
+          {outcome.deltaStr ? (
             <span
               className="pp-caption pp-tabular"
               style={{ color: "var(--fg-2)" }}
@@ -85,7 +85,7 @@ export function MarketClosedPanel({ market }: { market: MarketListItem }) {
                   : undefined
               }
             >
-              Δ {outcome.deltaPctStr}
+              Δ {outcome.deltaStr}
             </span>
           ) : null}
         </div>

@@ -160,7 +160,7 @@ export function MarketCard({
                   : undefined
               }
             >
-              {resolution.deltaPctStr ?? "—"}
+              {resolution.deltaStr ?? "—"}
             </span>
           </div>
         </div>

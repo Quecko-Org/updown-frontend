@@ -18,10 +18,12 @@ import { WalletConnectorList } from "@/components/WalletConnectorList";
 import { getFormattedAddress } from "@/utils/walletHelpers";
 import { cn } from "@/lib/cn";
 
+// Phase2-A: collapsed Positions + History into a single "Portfolio" surface
+// with tabs (Active / Resolved). Old /positions and /history routes redirect
+// into the right tab so any external link / bookmark continues working.
 const NAV = [
   { href: "/", label: "Markets" },
-  { href: "/positions", label: "Positions" },
-  { href: "/history", label: "History" },
+  { href: "/portfolio", label: "Portfolio" },
   { href: "/fees", label: "Fees" },
 ];
 
