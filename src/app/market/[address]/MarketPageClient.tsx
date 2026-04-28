@@ -16,6 +16,8 @@ import { OrderBookPanel } from "@/components/OrderBook";
 import { YourActivityOnMarket } from "@/components/YourActivityOnMarket";
 import { EmptyState } from "@/components/EmptyState";
 import { CancelAllMarketOrders } from "@/components/CancelAllMarketOrders";
+import { TimeRangeStrip } from "@/components/TimeRangeStrip";
+import { formatUsdt } from "@/lib/format";
 import { userSmartAccount } from "@/store/atoms";
 
 function useEndsInCountdown(endTimeSec: number) {
@@ -155,72 +157,99 @@ export function MarketPageClient({ address }: { address: string }) {
         ← Markets
       </Link>
 
-      {/* Title row + meta */}
+      {/* Phase2-B header redesign: two-tier Polymarket-parity layout for
+          RESOLVED markets — "Price To Beat" + "Settled Price ▼/▲ Δ$ value".
+          Active markets keep the existing Strike/Ends in/Currently/Status
+          layout until Phase2-C redesigns the live state. */}
       <header
         className="flex flex-wrap items-start justify-between gap-4 border-b pb-4"
         style={{ borderColor: "var(--border-0)" }}
       >
         <div className="min-w-0 flex-1">
           <h1 className="pp-h1">{heroTitle}</h1>
-          <div className="mt-3 flex flex-wrap items-baseline gap-x-6 gap-y-2">
-            <span className="flex flex-col gap-1">
-              <span className="pp-micro">Strike</span>
-              <span className="pp-price-md">{strikeLabel}</span>
-            </span>
-            {isResolvedView ? (
+          {isResolvedView ? (
+            <div className="mt-3 flex flex-wrap items-baseline gap-x-10 gap-y-3">
               <span className="flex flex-col gap-1">
-                <span className="pp-micro">Settled</span>
-                <span className="pp-price-md">{settledLabel ?? "—"}</span>
+                <span className="pp-micro">Price To Beat</span>
+                <span className="pp-price-md pp-tabular">{strikeLabel}</span>
               </span>
-            ) : (
+              <span className="flex flex-col gap-1">
+                <span className="pp-micro">Settled Price</span>
+                <span
+                  className="pp-price-md pp-tabular"
+                  style={{
+                    color:
+                      resolution.winnerSide === 1
+                        ? "var(--up)"
+                        : resolution.winnerSide === 2
+                          ? "var(--down)"
+                          : "var(--fg-1)",
+                  }}
+                >
+                  {resolution.winnerSide === 1
+                    ? "▲ "
+                    : resolution.winnerSide === 2
+                      ? "▼ "
+                      : ""}
+                  {settledLabel ?? "—"}
+                  {resolution.deltaStr ? (
+                    <span
+                      className="pp-caption pp-tabular"
+                      style={{ color: "var(--fg-2)", marginLeft: 8, fontWeight: 400 }}
+                      title={
+                        resolution.deltaUsedFinePrecision
+                          ? "Sub-cent gap — extra precision shown so the result is unambiguous"
+                          : undefined
+                      }
+                    >
+                      ({resolution.deltaStr})
+                    </span>
+                  ) : null}
+                </span>
+              </span>
+              <span className="flex flex-col gap-1">
+                <span className="pp-micro">Volume</span>
+                <span className="pp-price-md pp-tabular">
+                  ${formatUsdt(market.volume ?? "0")}
+                </span>
+              </span>
+              <span className="flex flex-col gap-1">
+                <span className="pp-micro">Status</span>
+                <span className="pp-chip pp-chip--closed">
+                  <span className="pp-tabular">RESOLVED</span>
+                </span>
+              </span>
+            </div>
+          ) : (
+            <div className="mt-3 flex flex-wrap items-baseline gap-x-6 gap-y-2">
+              <span className="flex flex-col gap-1">
+                <span className="pp-micro">Strike</span>
+                <span className="pp-price-md">{strikeLabel}</span>
+              </span>
               <span className="flex flex-col gap-1">
                 <span className="pp-micro">Ends in</span>
                 <span className="pp-price-md">{endsIn}</span>
               </span>
-            )}
-            {isResolvedView ? (
-              <span className="flex flex-col gap-1">
-                <span className="pp-micro">Winner</span>
-                <span
-                  className="pp-price-md"
-                  style={{
-                    color:
-                      resolution.winnerSide === 1 ? "var(--up)" : "var(--down)",
-                  }}
-                >
-                  {resolution.winnerSide === 1 ? "▲ UP won" : "▼ DOWN won"}
-                </span>
-                {resolution.deltaStr ? (
-                  <span
-                    className="pp-caption pp-tabular"
-                    style={{ color: "var(--fg-2)" }}
-                    title={
-                      resolution.deltaUsedFinePrecision
-                        ? "Sub-cent gap — extra precision shown so the result is unambiguous"
-                        : undefined
-                    }
-                  >
-                    Δ {resolution.deltaStr}
-                  </span>
-                ) : null}
-              </span>
-            ) : (
               <span className="flex flex-col gap-1">
                 <span className="pp-micro">Currently</span>
                 <span className="pp-price-md" style={{ color: directionColor }}>
                   {directionLabel}
                 </span>
               </span>
-            )}
-            <span className="flex flex-col gap-1">
-              <span className="pp-micro">Status</span>
-              <span className="pp-chip pp-chip--cd">
-                <span className="pp-tabular">
-                  {market.status === "CLAIMED" ? "RESOLVED" : market.status}
+              <span className="flex flex-col gap-1">
+                <span className="pp-micro">Volume</span>
+                <span className="pp-price-md pp-tabular">
+                  ${formatUsdt(market.volume ?? "0")}
                 </span>
               </span>
-            </span>
-          </div>
+              <span className="flex flex-col gap-1">
+                <span className="pp-micro">Status</span>
+                <span className="pp-chip pp-chip--cd">
+                  <span className="pp-tabular">{market.status}</span>
+                </span>
+              </span>
+            </div>
+          )}
         </div>
         {showCancelAll ? <CancelAllMarketOrders marketComposite={marketKey} /> : null}
       </header>
@@ -244,6 +273,14 @@ export function MarketPageClient({ address }: { address: string }) {
             strikePriceRaw={market.strikePrice}
             settlementPriceRaw={market.settlementPrice}
             isResolved={market.status === "RESOLVED" || market.status === "CLAIMED"}
+          />
+          {/* Phase2-B: outcome history + upcoming windows strip below the
+              chart. Provides at-a-glance context for the current window and
+              one-click jump to past or near-future markets in the same series. */}
+          <TimeRangeStrip
+            pairId={market.pairId}
+            duration={market.duration}
+            currentMarketAddress={market.address}
           />
           <section>
             <h2 className="pp-micro mb-2">Order book</h2>

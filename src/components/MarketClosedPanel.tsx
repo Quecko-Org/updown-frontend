@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { getMarkets, type MarketListItem } from "@/lib/api";
-import { formatStrikeUsd, marketDurationLabel } from "@/lib/format";
+import { marketDurationLabel } from "@/lib/format";
 import { formatResolutionOutcome } from "@/lib/derivations";
 import { marketPathFromAddress } from "@/lib/marketKey";
+import { CrossPromoCards } from "@/components/CrossPromoCards";
 
 /**
  * Replaces TradeForm when the market is in a terminal state (RESOLVED, CLAIMED,
@@ -42,82 +43,104 @@ export function MarketClosedPanel({ market }: { market: MarketListItem }) {
   const liveHref = activeMarket ? marketPathFromAddress(activeMarket.address) : "/";
 
   return (
-    <div className="pp-panel pp-trade">
-      <div className="pp-micro" style={{ color: "var(--fg-2)" }}>
-        Market closed
-      </div>
-
-      {outcome.winnerLabel ? (
-        <div
-          style={{
-            marginTop: 12,
-            padding: 16,
-            borderRadius: 6,
-            background:
-              outcome.winnerSide === 1 ? "var(--up-bg)" : "var(--down-bg)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 6,
-          }}
-        >
-          <span
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div className="pp-panel pp-trade">
+        {outcome.winnerLabel ? (
+          <div
             style={{
-              fontFamily: "var(--font-sans)",
-              fontSize: 22,
-              fontWeight: 600,
-              color: outcome.winnerSide === 1 ? "var(--up)" : "var(--down)",
+              padding: 18,
+              borderRadius: 6,
+              background:
+                outcome.winnerSide === 1 ? "var(--up-bg)" : "var(--down-bg)",
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+              alignItems: "center",
+              textAlign: "center",
             }}
           >
-            {outcome.winnerSide === 1 ? "▲ UP won" : "▼ DOWN won"}
-          </span>
-          {market.settlementPrice ? (
-            <span className="pp-caption" style={{ color: "var(--fg-2)" }}>
-              Settled at {formatStrikeUsd(market.settlementPrice)}
-            </span>
-          ) : null}
-          {outcome.deltaStr ? (
+            {/* Polymarket-parity outcome panel: big check + outcome label.
+                Color cue carried by background + foreground at once for the
+                screenshot read at a glance. */}
             <span
-              className="pp-caption pp-tabular"
-              style={{ color: "var(--fg-2)" }}
-              title={
-                outcome.deltaUsedFinePrecision
-                  ? "Sub-cent gap — extra precision shown so the result is unambiguous"
-                  : undefined
-              }
+              aria-hidden
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: "50%",
+                background:
+                  outcome.winnerSide === 1 ? "var(--up)" : "var(--down)",
+                color: "var(--bg-0)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 22,
+                fontWeight: 700,
+                lineHeight: 1,
+              }}
             >
-              Δ {outcome.deltaStr}
+              ✓
             </span>
-          ) : null}
-        </div>
-      ) : (
-        <div
-          style={{
-            marginTop: 12,
-            padding: 16,
-            borderRadius: 6,
-            background: "var(--bg-2)",
-          }}
+            <span className="pp-micro" style={{ color: "var(--fg-2)" }}>
+              Outcome
+            </span>
+            <span
+              style={{
+                fontFamily: "var(--font-sans)",
+                fontSize: 20,
+                fontWeight: 600,
+                color:
+                  outcome.winnerSide === 1 ? "var(--up)" : "var(--down)",
+                letterSpacing: "-0.01em",
+              }}
+            >
+              {outcome.winnerSide === 1 ? "▲ UP won" : "▼ DOWN won"}
+            </span>
+            <span className="pp-caption" style={{ color: "var(--fg-2)" }}>
+              {pairBase}/USD · {tfLabel}
+            </span>
+          </div>
+        ) : (
+          <div
+            style={{
+              padding: 16,
+              borderRadius: 6,
+              background: "var(--bg-2)",
+              textAlign: "center",
+            }}
+          >
+            <span className="pp-body" style={{ color: "var(--fg-1)" }}>
+              Trading ended — awaiting on-chain settlement.
+            </span>
+          </div>
+        )}
+
+        <Link
+          href={liveHref}
+          className="pp-btn pp-btn--primary pp-btn--lg pp-trade__cta"
+          style={{ marginTop: 14 }}
         >
-          <span className="pp-body" style={{ color: "var(--fg-1)" }}>
-            Trading ended — awaiting on-chain settlement.
-          </span>
-        </div>
-      )}
+          {activeMarket
+            ? `Go to live ${pairBase}/USD ${tfLabel} market`
+            : `Browse all markets`}
+        </Link>
 
-      <Link
-        href={liveHref}
-        className="pp-btn pp-btn--primary pp-btn--lg pp-trade__cta"
-        style={{ marginTop: 16 }}
-      >
-        {activeMarket
-          ? `Go to live ${pairBase}/USD ${tfLabel} market`
-          : `Browse all markets`}
-      </Link>
+        <p
+          className="pp-caption"
+          style={{ color: "var(--fg-2)", marginTop: 12, textAlign: "center" }}
+        >
+          By trading on PulsePairs you agree to the{" "}
+          <Link href="/" style={{ color: "var(--fg-1)", textDecoration: "underline" }}>
+            terms of use
+          </Link>
+          .
+        </p>
+      </div>
 
-      <p className="pp-caption" style={{ color: "var(--fg-2)", marginTop: 12 }}>
-        New trades on this market are no longer accepted. Open positions
-        already settled are visible from your portfolio.
-      </p>
+      <CrossPromoCards
+        currentPair={market.pairId}
+        currentDuration={market.duration}
+      />
     </div>
   );
 }
