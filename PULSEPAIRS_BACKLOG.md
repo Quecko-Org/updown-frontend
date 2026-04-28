@@ -64,3 +64,27 @@ reproduction or link, and a target milestone.
      to the frontend instead of computing bars ourselves.
 - **Known blast radius:** chart presentation only — no settlement /
   trade-flow impact. Safe to defer past launch.
+
+---
+
+## Surface gaps
+
+### Activity feed + Top Holders panels (Phase 2-E)
+
+- **Filed:** 2026-04-29 (deferred from Phase 2 → post-launch)
+- **Target:** post-launch — **NOT mainnet-launch scope**.
+- **Why it matters:** Polymarket-parity surface for market detail page —
+  recent trades feed (timestamp · side · shares · price · taker) and a
+  Top Holders ranking by position size for each outcome. Adds social
+  proof and discovery during a market's window. Skipped from launch
+  because both panels require new backend endpoints that don't exist
+  yet (recent trades exposed per market, top-holders ranking endpoint
+  with privacy considerations for wallet display).
+- **Repro:** N/A — feature gap.
+- **Resolution path:**
+  1. Backend: add `/markets/:key/trades` (paginated, time-ordered) and
+     `/markets/:key/top-holders` (top N per option, masked addresses).
+  2. Frontend: render both as right-rail panels on the market detail
+     page, alongside the existing trade form / order book.
+- **Known blast radius:** new UI only — no settlement / trade-flow
+  impact. Safe to defer past launch.
