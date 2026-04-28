@@ -24,6 +24,17 @@ export function formatUserFacingError(e: unknown): string {
     if (/JSON is not a valid request object|invalid request|-32600/i.test(m)) {
       return "Wallet hiccuped. Please try again.";
     }
+    // F2: order placement on a market that's already past its countdown.
+    // The race window is small (countdown 0:00 → backend status flip) but
+    // happens often enough to confuse users. Prior copy was the raw
+    // "Market not active" string surfaced as-is. Now: friendlier nudge
+    // that points the user at the next active market.
+    if (/Market not active/i.test(m)) {
+      return "This market has ended. Open the live market and try again.";
+    }
+    if (/Invalid signature/i.test(m)) {
+      return "Wallet signature couldn't be verified. Please try again.";
+    }
     if (m.length > 220) return `${m.slice(0, 220)}…`;
     return m;
   }

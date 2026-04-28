@@ -63,6 +63,21 @@ describe("formatUserFacingError (hotfix #20 Fix G regex tighten)", () => {
       ).toMatch(/Cancelled in wallet/);
     });
   });
+
+  // F2 — order placement on a market that just closed.
+  describe("F2 — Market not active mapping", () => {
+    it('maps "Market not active" to friendly closed-market copy', () => {
+      expect(formatUserFacingError(new Error("Market not active"))).toMatch(
+        /This market has ended/,
+      );
+    });
+
+    it('maps "Invalid signature" to friendly retry copy', () => {
+      expect(formatUserFacingError(new Error("Invalid signature"))).toMatch(
+        /signature couldn't be verified/,
+      );
+    });
+  });
 });
 
 describe("isUserRejection", () => {
