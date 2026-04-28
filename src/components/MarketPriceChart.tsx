@@ -5,6 +5,21 @@ import { useQuery } from "@tanstack/react-query";
 import { getPriceHistory } from "@/lib/api";
 import { formatStrikeUsd, parseStrikeUsdNumber } from "@/lib/format";
 import { clipPointsBetween, normalizePriceHistoryData, type PricePoint } from "@/lib/priceChart";
+import { cn } from "@/lib/cn";
+
+/**
+ * Phase2-G: Y-axis zoom mode.
+ *  - "strike"   = strike-fit. Range includes strike + spot + series so the
+ *                 user always sees how spot compares to strike. Default.
+ *  - "spot"     = spot-fit. Range hugs the actual price ticks (+ small pad).
+ *                 Useful late in a market when spot has drifted far from
+ *                 strike and the strike-fit view squashes the line into a
+ *                 thin band at the top/bottom of the frame. Strike line +
+ *                 badge are hidden when strike falls outside the visible
+ *                 range in this mode (clamping would mislead the eye into
+ *                 thinking the price was crossing strike).
+ */
+type YScaleMode = "strike" | "spot";
 
 const VB_W = 820;
 const VB_H = 280;
@@ -91,6 +106,7 @@ export function MarketPriceChart({
   const strikeNum = parseStrikeUsdNumber(strikePriceRaw);
   const settlementNum = parseStrikeUsdNumber(settlementPriceRaw);
   const strikeLabel = formatStrikeUsd(strikePriceRaw);
+  const [yScaleMode, setYScaleMode] = useState<YScaleMode>("strike");
 
   const allPoints = useMemo(() => normalizePriceHistoryData(data), [data]);
 
@@ -147,13 +163,27 @@ export function MarketPriceChart({
     return null;
   }, [rawSeries, allPoints, isResolved, settlementNum]);
 
-  // Y range considers strike + current spot + settlement so everything visible
-  // stays inside the frame.
+  // Y range. Strike-fit (default) considers strike + current spot + series so
+  // everything visible stays inside the frame. Spot-fit excludes strike from
+  // the extrema computation — useful when spot has drifted far from strike
+  // and the strike-fit view compresses the price line into a thin band.
   const priceMin = series.length ? Math.min(...series.map((p) => p.p)) : 0;
   const priceMax = series.length ? Math.max(...series.map((p) => p.p)) : 0;
-  const ymin = Math.min(priceMin, strikeNum ?? priceMin, currentSpot ?? priceMin);
-  const ymax = Math.max(priceMax, strikeNum ?? priceMax, currentSpot ?? priceMax);
-  const seriesKey = `${symbol}:${marketStartSec}:${marketEndSec}:${isResolved ? "R" : "A"}`;
+  const includeStrike = yScaleMode === "strike";
+  const ymin = Math.min(
+    priceMin,
+    includeStrike ? (strikeNum ?? priceMin) : priceMin,
+    currentSpot ?? priceMin,
+  );
+  const ymax = Math.max(
+    priceMax,
+    includeStrike ? (strikeNum ?? priceMax) : priceMax,
+    currentSpot ?? priceMax,
+  );
+  // Re-key on yScaleMode so useStableYRange resets to the new extrema instead
+  // of carrying the wider strike-fit range into spot-fit (otherwise the toggle
+  // would be a no-op until the next out-of-range tick).
+  const seriesKey = `${symbol}:${marketStartSec}:${marketEndSec}:${isResolved ? "R" : "A"}:${yScaleMode}`;
   const yRange = useStableYRange(seriesKey, ymin, ymax);
 
   const geom = useMemo(() => {
@@ -180,7 +210,15 @@ export function MarketPriceChart({
     const baseY = PAD_T + CHART_H;
     const areaD = `${lineD} L${xLast.toFixed(1)},${baseY.toFixed(1)} L${xFirst.toFixed(1)},${baseY.toFixed(1)} Z`;
 
-    const strikeY = strikeNum != null ? py(strikeNum) : null;
+    // In spot-fit mode the strike may sit outside the visible Y range. Hide
+    // the line + badge entirely in that case rather than clamping to a frame
+    // edge — clamping would suggest the price line was crossing strike when
+    // it isn't.
+    const strikeVisible =
+      strikeNum != null &&
+      (yScaleMode === "strike" ||
+        (strikeNum >= pMin && strikeNum <= pMax));
+    const strikeY = strikeVisible && strikeNum != null ? py(strikeNum) : null;
     const currentY = currentSpot != null ? py(currentSpot) : null;
     const last = series[series.length - 1]!;
     const above = strikeNum == null ? true : last.p >= strikeNum;
@@ -203,7 +241,7 @@ export function MarketPriceChart({
     });
 
     return { lineD, areaD, strikeY, currentY, above, endX, endY, yLabels, xLabels };
-  }, [series, marketStartSec, marketEndSec, strikeNum, currentSpot, tickNow, isResolved, windowSec, yRange.min, yRange.max]);
+  }, [series, marketStartSec, marketEndSec, strikeNum, currentSpot, tickNow, isResolved, windowSec, yRange.min, yRange.max, yScaleMode]);
 
   const directionColor = geom?.above ? "var(--up)" : "var(--down)";
   const directionLabel = strikeNum == null || !geom ? "—" : geom.above ? "UP ▲" : "DOWN ▼";
@@ -235,14 +273,41 @@ export function MarketPriceChart({
             {currentSpot != null ? fmtPrice2(currentSpot) : "—"}
           </span>
         </div>
-        <div className="ml-auto flex items-baseline gap-2">
-          <span className="pp-micro">Direction</span>
-          <span
-            className="pp-price-md"
-            style={{ color: strikeNum == null || !geom ? "var(--fg-2)" : directionColor }}
+        <div className="ml-auto flex items-center gap-3">
+          <div
+            className="pp-tab"
+            role="tablist"
+            aria-label="Y-axis zoom"
+            title="Strike-fit keeps the strike line in view; Spot-fit zooms in on price ticks."
           >
-            {directionLabel}
-          </span>
+            <button
+              type="button"
+              className={cn("pp-tab__btn", yScaleMode === "strike" && "pp-tab__btn--on")}
+              onClick={() => setYScaleMode("strike")}
+              aria-selected={yScaleMode === "strike"}
+              role="tab"
+            >
+              Strike-fit
+            </button>
+            <button
+              type="button"
+              className={cn("pp-tab__btn", yScaleMode === "spot" && "pp-tab__btn--on")}
+              onClick={() => setYScaleMode("spot")}
+              aria-selected={yScaleMode === "spot"}
+              role="tab"
+            >
+              Spot-fit
+            </button>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span className="pp-micro">Direction</span>
+            <span
+              className="pp-price-md"
+              style={{ color: strikeNum == null || !geom ? "var(--fg-2)" : directionColor }}
+            >
+              {directionLabel}
+            </span>
+          </div>
         </div>
       </div>
       <div className="relative aspect-[820/280] min-h-[220px] w-full flex-1 sm:min-h-[280px]">
