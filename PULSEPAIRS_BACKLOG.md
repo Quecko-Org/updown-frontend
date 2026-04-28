@@ -39,3 +39,28 @@ reproduction or link, and a target milestone.
   Coinbase), EIP-712 order signing, smart-account creation. Any wagmi
   surface could break silently on a minor version bump until this is
   resolved.
+
+---
+
+## Charting
+
+### Real OHLC candle support
+
+- **Filed:** 2026-04-29 (Phase2-G chart improvements)
+- **Target:** P1 post-launch.
+- **Why it matters:** Phase2-G shipped a Strike-fit / Spot-fit Y-zoom
+  toggle and an implied-probability strip but explicitly skipped a
+  line/candle toggle. The price feed exposes only tick data
+  (`{ t, p }` from `getPriceHistory`), so candles would have to be
+  bucketed client-side from those ticks. Tick-bucketed fake candles
+  produce misleading wicks/bodies — the user reads them as real OHLC
+  state when they're really just `min/max/first/last` of an arbitrary
+  client-side window. We declined to ship that quality.
+- **Repro:** N/A — feature gap.
+- **Resolution options:**
+  1. Backend: add an OHLC bucketing service that stores 1s/5s/30s bars
+     per symbol and exposes a new endpoint (`/priceHistory/ohlc?…`).
+  2. Integrate a Chainlink/Binance OHLC feed directly and surface that
+     to the frontend instead of computing bars ourselves.
+- **Known blast radius:** chart presentation only — no settlement /
+  trade-flow impact. Safe to defer past launch.

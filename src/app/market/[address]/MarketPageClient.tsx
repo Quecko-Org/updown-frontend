@@ -14,6 +14,7 @@ import {
   formatResolutionOutcome,
   isTerminalMarketStatus,
 } from "@/lib/derivations";
+import { ImpliedProbStrip } from "@/components/ImpliedProbStrip";
 import { MarketPriceChart } from "@/components/MarketPriceChart";
 import { TradeForm } from "@/components/TradeForm";
 import { OrderBookPanel } from "@/components/OrderBook";
@@ -282,6 +283,11 @@ export function MarketPageClient({ address }: { address: string }) {
             settlementPriceRaw={market.settlementPrice}
             isResolved={market.status === "RESOLVED" || market.status === "CLAIMED"}
           />
+          {/* Phase2-G: implied-probability snapshot from order-book mid.
+              Resolved markets hide it — the outcome is final, not a probability. */}
+          {!isTerminalMarketStatus(market.status) ? (
+            <ImpliedProbStrip market={market} />
+          ) : null}
           {/* Phase2-B: outcome history + upcoming windows strip below the
               chart. Provides at-a-glance context for the current window and
               one-click jump to past or near-future markets in the same series. */}

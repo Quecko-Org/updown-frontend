@@ -5,6 +5,21 @@ import { useQuery } from "@tanstack/react-query";
 import { getPriceHistory } from "@/lib/api";
 import { formatStrikeUsd, parseStrikeUsdNumber } from "@/lib/format";
 import { clipPointsBetween, normalizePriceHistoryData, type PricePoint } from "@/lib/priceChart";
+import { cn } from "@/lib/cn";
+
+/**
+ * Phase2-G: Y-axis zoom mode.
+ *  - "strike"   = strike-fit. Range includes strike + spot + series so the
+ *                 user always sees how spot compares to strike. Default.
+ *  - "spot"     = spot-fit. Range hugs the actual price ticks (+ small pad).
+ *                 Useful late in a market when spot has drifted far from
+ *                 strike and the strike-fit view squashes the line into a
+ *                 thin band at the top/bottom of the frame. Strike line +
+ *                 badge are hidden when strike falls outside the visible
+ *                 range in this mode (clamping would mislead the eye into
+ *                 thinking the price was crossing strike).
+ */
+type YScaleMode = "strike" | "spot";
 
 const VB_W = 820;
 const VB_H = 280;
@@ -91,6 +106,7 @@ export function MarketPriceChart({
   const strikeNum = parseStrikeUsdNumber(strikePriceRaw);
   const settlementNum = parseStrikeUsdNumber(settlementPriceRaw);
   const strikeLabel = formatStrikeUsd(strikePriceRaw);
+  const [yScaleMode, setYScaleMode] = useState<YScaleMode>("strike");
 
   const allPoints = useMemo(() => normalizePriceHistoryData(data), [data]);
 
@@ -100,16 +116,20 @@ export function MarketPriceChart({
     [allPoints, marketStartSec, marketEndSec],
   );
 
-  // Anchor: the line must literally start on the strike line at marketStartSec,
-  // because the strike IS the opening price of the market (Chainlink snapshot at
-  // block time). Binance/oracle cross-feed drift is a visual distraction we
-  // don't want in a price-direction chart.
+  // Anchor (strike-fit only): the line literally starts on the strike line at
+  // marketStartSec, because the strike IS the opening price of the market
+  // (Chainlink snapshot at block time). Binance/oracle cross-feed drift is a
+  // visual distraction we don't want in a price-direction chart.
+  //
+  // Spot-fit explicitly omits the strike anchor — when strike falls outside
+  // the zoomed Y range, the synthetic anchor would draw the line shooting in
+  // from below/above the frame. Use the raw ticks only.
   //
   // If the market is resolved, also append the settlement at marketEndSec so
   // the chart spans the full window and clearly shows where we landed.
   const series = useMemo((): PricePoint[] => {
     const s: PricePoint[] = [...rawSeries];
-    if (strikeNum != null) {
+    if (yScaleMode === "strike" && strikeNum != null) {
       const firstT = s[0]?.t ?? marketEndSec;
       if (firstT > marketStartSec) {
         s.unshift({ t: marketStartSec, p: strikeNum });
@@ -126,7 +146,7 @@ export function MarketPriceChart({
       }
     }
     return s;
-  }, [rawSeries, strikeNum, settlementNum, isResolved, marketStartSec, marketEndSec]);
+  }, [rawSeries, strikeNum, settlementNum, isResolved, marketStartSec, marketEndSec, yScaleMode]);
 
   // Sub-second "tickNow" for smooth endpoint glide between WS ticks.
   const [tickNow, setTickNow] = useState(() => Math.floor(Date.now() / 1000));
@@ -147,13 +167,30 @@ export function MarketPriceChart({
     return null;
   }, [rawSeries, allPoints, isResolved, settlementNum]);
 
-  // Y range considers strike + current spot + settlement so everything visible
-  // stays inside the frame.
-  const priceMin = series.length ? Math.min(...series.map((p) => p.p)) : 0;
-  const priceMax = series.length ? Math.max(...series.map((p) => p.p)) : 0;
-  const ymin = Math.min(priceMin, strikeNum ?? priceMin, currentSpot ?? priceMin);
-  const ymax = Math.max(priceMax, strikeNum ?? priceMax, currentSpot ?? priceMax);
-  const seriesKey = `${symbol}:${marketStartSec}:${marketEndSec}:${isResolved ? "R" : "A"}`;
+  // Y range. Strike-fit (default) considers strike + current spot + the full
+  // anchored series (which starts on strike) so everything visible stays
+  // inside the frame. Spot-fit explicitly drops the strike anchor: extrema
+  // come from `rawSeries` (real ticks only) + currentSpot. Otherwise the
+  // first-point strike anchor would always force the range to span [strike,
+  // spot] regardless of mode — silently making the toggle a no-op.
+  const includeStrike = yScaleMode === "strike";
+  const rangeSeries = includeStrike ? series : rawSeries;
+  const priceMin = rangeSeries.length ? Math.min(...rangeSeries.map((p) => p.p)) : (currentSpot ?? 0);
+  const priceMax = rangeSeries.length ? Math.max(...rangeSeries.map((p) => p.p)) : (currentSpot ?? 0);
+  const ymin = Math.min(
+    priceMin,
+    includeStrike ? (strikeNum ?? priceMin) : priceMin,
+    currentSpot ?? priceMin,
+  );
+  const ymax = Math.max(
+    priceMax,
+    includeStrike ? (strikeNum ?? priceMax) : priceMax,
+    currentSpot ?? priceMax,
+  );
+  // Re-key on yScaleMode so useStableYRange resets to the new extrema instead
+  // of carrying the wider strike-fit range into spot-fit (otherwise the toggle
+  // would be a no-op until the next out-of-range tick).
+  const seriesKey = `${symbol}:${marketStartSec}:${marketEndSec}:${isResolved ? "R" : "A"}:${yScaleMode}`;
   const yRange = useStableYRange(seriesKey, ymin, ymax);
 
   const geom = useMemo(() => {
@@ -180,7 +217,15 @@ export function MarketPriceChart({
     const baseY = PAD_T + CHART_H;
     const areaD = `${lineD} L${xLast.toFixed(1)},${baseY.toFixed(1)} L${xFirst.toFixed(1)},${baseY.toFixed(1)} Z`;
 
-    const strikeY = strikeNum != null ? py(strikeNum) : null;
+    // In spot-fit mode the strike may sit outside the visible Y range. Hide
+    // the line + badge entirely in that case rather than clamping to a frame
+    // edge — clamping would suggest the price line was crossing strike when
+    // it isn't.
+    const strikeVisible =
+      strikeNum != null &&
+      (yScaleMode === "strike" ||
+        (strikeNum >= pMin && strikeNum <= pMax));
+    const strikeY = strikeVisible && strikeNum != null ? py(strikeNum) : null;
     const currentY = currentSpot != null ? py(currentSpot) : null;
     const last = series[series.length - 1]!;
     const above = strikeNum == null ? true : last.p >= strikeNum;
@@ -203,7 +248,7 @@ export function MarketPriceChart({
     });
 
     return { lineD, areaD, strikeY, currentY, above, endX, endY, yLabels, xLabels };
-  }, [series, marketStartSec, marketEndSec, strikeNum, currentSpot, tickNow, isResolved, windowSec, yRange.min, yRange.max]);
+  }, [series, marketStartSec, marketEndSec, strikeNum, currentSpot, tickNow, isResolved, windowSec, yRange.min, yRange.max, yScaleMode]);
 
   const directionColor = geom?.above ? "var(--up)" : "var(--down)";
   const directionLabel = strikeNum == null || !geom ? "—" : geom.above ? "UP ▲" : "DOWN ▼";
@@ -235,14 +280,41 @@ export function MarketPriceChart({
             {currentSpot != null ? fmtPrice2(currentSpot) : "—"}
           </span>
         </div>
-        <div className="ml-auto flex items-baseline gap-2">
-          <span className="pp-micro">Direction</span>
-          <span
-            className="pp-price-md"
-            style={{ color: strikeNum == null || !geom ? "var(--fg-2)" : directionColor }}
+        <div className="ml-auto flex items-center gap-3">
+          <div
+            className="pp-tab"
+            role="tablist"
+            aria-label="Y-axis zoom"
+            title="Strike-fit keeps the strike line in view; Spot-fit zooms in on price ticks."
           >
-            {directionLabel}
-          </span>
+            <button
+              type="button"
+              className={cn("pp-tab__btn", yScaleMode === "strike" && "pp-tab__btn--on")}
+              onClick={() => setYScaleMode("strike")}
+              aria-selected={yScaleMode === "strike"}
+              role="tab"
+            >
+              Strike-fit
+            </button>
+            <button
+              type="button"
+              className={cn("pp-tab__btn", yScaleMode === "spot" && "pp-tab__btn--on")}
+              onClick={() => setYScaleMode("spot")}
+              aria-selected={yScaleMode === "spot"}
+              role="tab"
+            >
+              Spot-fit
+            </button>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span className="pp-micro">Direction</span>
+            <span
+              className="pp-price-md"
+              style={{ color: strikeNum == null || !geom ? "var(--fg-2)" : directionColor }}
+            >
+              {directionLabel}
+            </span>
+          </div>
         </div>
       </div>
       <div className="relative aspect-[820/280] min-h-[220px] w-full flex-1 sm:min-h-[280px]">
