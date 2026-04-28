@@ -21,7 +21,7 @@ import {
   type OrderApiType,
 } from "@/lib/api";
 import { buildOrderTypedData } from "@/lib/eip712";
-import { validateLimitPriceCents } from "@/lib/derivations";
+import { deriveEffectiveStatus, validateLimitPriceCents } from "@/lib/derivations";
 import { parseUsdtToAtomic } from "@/lib/format";
 import {
   estimateTotalFee,
@@ -152,6 +152,34 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     refetchInterval: 15_000,
   });
 
+  // F2: countdown-aware gate. The 15s `market` refetch interval is too slow
+  // to catch the moment a market hits 0:00 — the backend status flip lags
+  // a few seconds behind real time. Without a local countdown, a user can
+  // submit at "0:01" and the order POST lands when the matching engine has
+  // already cancelled all resting orders for that market (TRADING_ENDED).
+  // Compute the remaining seconds locally + use deriveEffectiveStatus so
+  // the submit button disables the moment countdown crosses 0:00, even if
+  // the backend's `market.status` hasn't refreshed yet.
+  const [secondsRemaining, setSecondsRemaining] = useState<number>(() =>
+    market?.endTime ? Math.max(0, market.endTime - Math.floor(Date.now() / 1000)) : 0,
+  );
+  useEffect(() => {
+    if (!market?.endTime) return;
+    const tick = () =>
+      setSecondsRemaining(Math.max(0, market.endTime - Math.floor(Date.now() / 1000)));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [market?.endTime]);
+
+  const countdownLabel = secondsRemaining > 0
+    ? `${Math.floor(secondsRemaining / 60)}:${(secondsRemaining % 60).toString().padStart(2, "0")}`
+    : "0:00";
+  const effectiveMarketStatus = market
+    ? deriveEffectiveStatus(market.status, countdownLabel)
+    : "";
+  const isMarketTradeable = effectiveMarketStatus === "ACTIVE";
+
   const { data: dmmStatus } = useQuery({
     queryKey: ["dmmStatus", address?.toLowerCase() ?? ""],
     queryFn: () => getDmmStatus(address!),
@@ -279,7 +307,27 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const submit = useMutation({
     mutationFn: async () => {
       if (!address || !cfg || !parsedKey) throw new Error("Connect wallet");
-      if (!market || market.status !== "ACTIVE") throw new Error("Market not active");
+      // F2: belt-and-suspenders — even with the disabled-button gate above,
+      // a click race could fire mutate() while the market is between ACTIVE
+      // and TRADING_ENDED. Throw early so the user gets the friendly toast
+      // (formatUserFacingError maps "Market not active" → user-facing copy)
+      // instead of waiting for the backend to reject after signing.
+      if (!market || !isMarketTradeable || market.status !== "ACTIVE") {
+        throw new Error("Market not active");
+      }
+      // F2: console trace so future debugging of "didn't persist" issues
+      // has a paper trail. One line per submit attempt; cheap.
+      console.info("[TradeForm] submit", {
+        market: parsedKey.composite,
+        marketStatus: market.status,
+        effectiveStatus: effectiveMarketStatus,
+        secondsRemaining,
+        side,
+        orderSide,
+        orderType,
+        dollars,
+        userPriceCentsInput: userPriceCentsInput || `(auto:${autoCentsDisplay}¢)`,
+      });
 
       // Path-1: ensure the EOA has approved settlement for USDT before BUY.
       // Idempotent on subsequent trades. SELL doesn't need allowance (no
@@ -601,16 +649,18 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
           type="button"
           disabled={
             submit.isPending ||
-            market?.status !== "ACTIVE" ||
+            !isMarketTradeable ||
             priceInputInvalid ||
             !smartAccount
           }
           title={
-            priceInputInvalid
-              ? (userPriceParsed.error ?? "Fix price before submitting")
-              : !smartAccount
-                ? "Finish wallet sign-in to enable trading"
-                : undefined
+            !isMarketTradeable
+              ? "Market is closing — pick the next live market"
+              : priceInputInvalid
+                ? (userPriceParsed.error ?? "Fix price before submitting")
+                : !smartAccount
+                  ? "Finish wallet sign-in to enable trading"
+                  : undefined
           }
           className={cn(
             "pp-btn pp-btn--lg pp-trade__cta",
