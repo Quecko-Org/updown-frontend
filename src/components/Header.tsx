@@ -4,10 +4,10 @@ import { Menu, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState, useRef, useEffect } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
-import { getBalance, getDmmStatus } from "@/lib/api";
+import { getBalance, getDmmStatus, getOrders } from "@/lib/api";
 import { userSmartAccount } from "@/store/atoms";
 import { formatUsdt } from "@/lib/format";
 import { DepositModal } from "./DepositModal";
@@ -72,6 +72,56 @@ export function Header() {
     enabled: !!walletAddress && isWalletConnected,
     staleTime: 60_000,
   });
+
+  // Phase2-PRE2: "in orders" derives from the open-orders list, NOT from
+  // backend `balance.inOrders`. Two reasons:
+  //   1. Backend SmartAccount.inOrders has a slow-leak class of bug — over
+  //      time, lock decrements miss some fill paths and the counter drifts
+  //      higher than the actual sum of locked-by-open-orders. (Verified
+  //      against dev: a wallet with 0 open orders had $40 stuck in
+  //      backend.inOrders.) Backend reconciliation is on the backlog.
+  //   2. Single source of truth for "user's open orders". Header and
+  //      /portfolio Active tab now read from the same `["orders", eoa]`
+  //      query key, so they cannot disagree.
+  // Result: the dropdown's "In orders" cell = sum(amount - filledAmount)
+  // across orders the same query Portfolio renders.
+  const { data: ordersResp } = useQuery({
+    queryKey: ["orders", walletAddress?.toLowerCase() ?? ""],
+    queryFn: () => getOrders(walletAddress!, { limit: 50 }),
+    enabled: !!walletAddress && isWalletConnected,
+    staleTime: 5_000,
+    retry: 1,
+  });
+
+  const inOrdersDerived = useMemo<string>(() => {
+    const orders = ordersResp?.orders ?? [];
+    let sum = BigInt(0);
+    for (const o of orders) {
+      if (o.status === "OPEN" || o.status === "PARTIALLY_FILLED") {
+        try {
+          sum += BigInt(o.amount) - BigInt(o.filledAmount);
+        } catch {
+          /* skip malformed */
+        }
+      }
+    }
+    return sum.toString();
+  }, [ordersResp]);
+
+  // "Available" = on-chain USDT − sum(open-order remaining). Same desync class
+  // as inOrders — backend's `available` is `cachedBalance - balance.inOrders`,
+  // which inherits the leak. Recompute from `cachedBalance` (on-chain truth)
+  // minus the derived in-orders.
+  const availableDerived = useMemo<string>(() => {
+    try {
+      const cached = BigInt(bal?.cachedBalance ?? "0");
+      const inOrd = BigInt(inOrdersDerived);
+      const av = cached > inOrd ? cached - inOrd : BigInt(0);
+      return av.toString();
+    } catch {
+      return bal?.available ?? "0";
+    }
+  }, [bal?.cachedBalance, bal?.available, inOrdersDerived]);
 
   // Path-1 architecture: USDT lives on the EOA. Deposit/withdraw target the
   // connected wallet address directly. The SA address is kept in state for
@@ -146,7 +196,7 @@ export function Header() {
                 <div className="group relative hidden sm:block">
                   <span className="pp-walletchip" aria-describedby="balance-breakdown">
                     <span className="pp-walletchip__dot" />
-                    <span className="pp-walletchip__bal">${formatUsdt(bal?.available ?? "0")}</span>
+                    <span className="pp-walletchip__bal">${formatUsdt(availableDerived)}</span>
                     <span className="pp-walletchip__sep" />
                     <span className="pp-walletchip__addr">{getFormattedAddress(walletAddress)}</span>
                   </span>
@@ -167,13 +217,13 @@ export function Header() {
                         <div className="flex items-baseline justify-between gap-4">
                           <dt style={{ color: "var(--fg-2)" }}>Available</dt>
                           <dd className="pp-tabular" style={{ color: "var(--fg-0)", fontWeight: 500 }}>
-                            ${formatUsdt(bal?.available ?? "0")}
+                            ${formatUsdt(availableDerived)}
                           </dd>
                         </div>
                         <div className="flex items-baseline justify-between gap-4">
                           <dt style={{ color: "var(--fg-2)" }}>In orders</dt>
                           <dd className="pp-tabular" style={{ color: "var(--fg-0)" }}>
-                            ${formatUsdt(bal?.inOrders ?? "0")}
+                            ${formatUsdt(inOrdersDerived)}
                           </dd>
                         </div>
                         <div
@@ -296,7 +346,7 @@ export function Header() {
               <div className="mt-3 flex flex-col gap-2 pt-3" style={{ borderTop: "1px solid var(--border-0)" }}>
                 <div className="flex items-center justify-between">
                   <span className="pp-walletchip__addr">{getFormattedAddress(walletAddress)}</span>
-                  <span className="pp-walletchip__bal">${formatUsdt(bal?.available ?? "0")}</span>
+                  <span className="pp-walletchip__bal">${formatUsdt(availableDerived)}</span>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
