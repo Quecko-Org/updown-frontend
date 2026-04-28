@@ -116,16 +116,20 @@ export function MarketPriceChart({
     [allPoints, marketStartSec, marketEndSec],
   );
 
-  // Anchor: the line must literally start on the strike line at marketStartSec,
-  // because the strike IS the opening price of the market (Chainlink snapshot at
-  // block time). Binance/oracle cross-feed drift is a visual distraction we
-  // don't want in a price-direction chart.
+  // Anchor (strike-fit only): the line literally starts on the strike line at
+  // marketStartSec, because the strike IS the opening price of the market
+  // (Chainlink snapshot at block time). Binance/oracle cross-feed drift is a
+  // visual distraction we don't want in a price-direction chart.
+  //
+  // Spot-fit explicitly omits the strike anchor — when strike falls outside
+  // the zoomed Y range, the synthetic anchor would draw the line shooting in
+  // from below/above the frame. Use the raw ticks only.
   //
   // If the market is resolved, also append the settlement at marketEndSec so
   // the chart spans the full window and clearly shows where we landed.
   const series = useMemo((): PricePoint[] => {
     const s: PricePoint[] = [...rawSeries];
-    if (strikeNum != null) {
+    if (yScaleMode === "strike" && strikeNum != null) {
       const firstT = s[0]?.t ?? marketEndSec;
       if (firstT > marketStartSec) {
         s.unshift({ t: marketStartSec, p: strikeNum });
@@ -142,7 +146,7 @@ export function MarketPriceChart({
       }
     }
     return s;
-  }, [rawSeries, strikeNum, settlementNum, isResolved, marketStartSec, marketEndSec]);
+  }, [rawSeries, strikeNum, settlementNum, isResolved, marketStartSec, marketEndSec, yScaleMode]);
 
   // Sub-second "tickNow" for smooth endpoint glide between WS ticks.
   const [tickNow, setTickNow] = useState(() => Math.floor(Date.now() / 1000));
@@ -163,13 +167,16 @@ export function MarketPriceChart({
     return null;
   }, [rawSeries, allPoints, isResolved, settlementNum]);
 
-  // Y range. Strike-fit (default) considers strike + current spot + series so
-  // everything visible stays inside the frame. Spot-fit excludes strike from
-  // the extrema computation — useful when spot has drifted far from strike
-  // and the strike-fit view compresses the price line into a thin band.
-  const priceMin = series.length ? Math.min(...series.map((p) => p.p)) : 0;
-  const priceMax = series.length ? Math.max(...series.map((p) => p.p)) : 0;
+  // Y range. Strike-fit (default) considers strike + current spot + the full
+  // anchored series (which starts on strike) so everything visible stays
+  // inside the frame. Spot-fit explicitly drops the strike anchor: extrema
+  // come from `rawSeries` (real ticks only) + currentSpot. Otherwise the
+  // first-point strike anchor would always force the range to span [strike,
+  // spot] regardless of mode — silently making the toggle a no-op.
   const includeStrike = yScaleMode === "strike";
+  const rangeSeries = includeStrike ? series : rawSeries;
+  const priceMin = rangeSeries.length ? Math.min(...rangeSeries.map((p) => p.p)) : (currentSpot ?? 0);
+  const priceMax = rangeSeries.length ? Math.max(...rangeSeries.map((p) => p.p)) : (currentSpot ?? 0);
   const ymin = Math.min(
     priceMin,
     includeStrike ? (strikeNum ?? priceMin) : priceMin,
