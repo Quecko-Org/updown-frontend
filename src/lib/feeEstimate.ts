@@ -110,3 +110,61 @@ export function probabilityFeeWeight(p: number): number {
 export function probabilityScaledFeePercent(totalBps: number, p: number): number {
   return (totalBps / BPS_SCALE) * 100 * probabilityFeeWeight(p);
 }
+
+/**
+ * Phase2-C share-pricing helpers — cents↔stake conversions for the new
+ * share-based trade panel. Backend payload stays bps-native (price in
+ * uint256 bps, amount in atomic USDT); these helpers convert at the UI
+ * boundary so the user experiences shares + cents while the wire stays
+ * unchanged.
+ */
+
+/** Display: bps → "45¢" (or "45.5¢" for half-cent precision). */
+export function bpsToCentsLabel(bps: number): string {
+  return formatShareCentsLabel(bps);
+}
+
+/** Math: shares × cents → atomic USDT (decimals = 6 for USDT). */
+export function sharesAtCentsToAtomicUsdt(shares: number, cents: number): bigint {
+  if (!Number.isFinite(shares) || shares <= 0) return BigInt(0);
+  if (!Number.isFinite(cents) || cents <= 0) return BigInt(0);
+  // shares × cents = total USD cents. Atomic USDT = total cents × 1e4 (since
+  // 1 USDT = 100 cents = 1_000_000 atomic). Use BigInt for exactness once
+  // the JS-number scale becomes risky.
+  const totalCents = Math.round(shares * cents);
+  return BigInt(totalCents) * BigInt(10_000);
+}
+
+/** Math: atomic USDT → "Total $X.XX" display. */
+export function atomicUsdtToDollarsDisplay(atomic: bigint): string {
+  // atomic / 1e6 USD. Render with 2dp.
+  const cents = atomic / BigInt(10_000); // total cents
+  const dollars = Number(cents) / 100;
+  return dollars.toFixed(2);
+}
+
+/** Effective price for a Market order against the visible book.
+ *  BUY against book takes the best ASK (lowest sell offer).
+ *  SELL hits the best BID (highest buy offer). When the relevant side
+ *  is empty, fall back to the mid so the UI still has a number to show.
+ */
+export function bestEffectivePriceCents(
+  side: 1 | 2,
+  orderSide: 0 | 1, // 0 = BUY, 1 = SELL
+  orderBook: {
+    up: { bestBid: { price: number } | null; bestAsk: { price: number } | null };
+    down: { bestBid: { price: number } | null; bestAsk: { price: number } | null };
+  },
+): number {
+  const ob = side === 1 ? orderBook.up : orderBook.down;
+  const bid = ob.bestBid?.price;
+  const ask = ob.bestAsk?.price;
+  if (orderSide === 0 /* BUY */) {
+    if (ask != null) return ask / 100;
+    if (bid != null) return bid / 100;
+  } else {
+    if (bid != null) return bid / 100;
+    if (ask != null) return ask / 100;
+  }
+  return sharePriceBpsFromOrderBookMid(side, orderBook) / 100;
+}
