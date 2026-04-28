@@ -4,6 +4,8 @@ import {
   buildTerminalOrderToast,
   deriveEffectiveStatus,
   formatResolutionOutcome,
+  isResolvedMarketStatus,
+  isTerminalMarketStatus,
   isValidPermissionsContext,
   validateLimitPriceCents,
 } from "./derivations";
@@ -431,5 +433,42 @@ describe("formatResolutionOutcome (Bug C + Display-1)", () => {
       base({ winner: 1, strikePrice: "0", settlementPrice: "100" }),
     );
     expect(r.deltaPctStr).toBeNull();
+  });
+});
+
+describe("isResolvedMarketStatus", () => {
+  it("true for RESOLVED and CLAIMED", () => {
+    expect(isResolvedMarketStatus("RESOLVED")).toBe(true);
+    expect(isResolvedMarketStatus("CLAIMED")).toBe(true);
+  });
+
+  it("false for ACTIVE / TRADING_ENDED / unknown / nullish", () => {
+    expect(isResolvedMarketStatus("ACTIVE")).toBe(false);
+    expect(isResolvedMarketStatus("TRADING_ENDED")).toBe(false);
+    expect(isResolvedMarketStatus("")).toBe(false);
+    expect(isResolvedMarketStatus(undefined)).toBe(false);
+    expect(isResolvedMarketStatus(null)).toBe(false);
+  });
+});
+
+// Phase2-PRE: trade panel must gate on this. RESOLVED/CLAIMED = settled.
+// TRADING_ENDED = countdown hit 0, on-chain settlement not yet final, but no
+// new orders can be matched.
+describe("isTerminalMarketStatus", () => {
+  it("true for RESOLVED, CLAIMED, and TRADING_ENDED (no new trades allowed)", () => {
+    expect(isTerminalMarketStatus("RESOLVED")).toBe(true);
+    expect(isTerminalMarketStatus("CLAIMED")).toBe(true);
+    expect(isTerminalMarketStatus("TRADING_ENDED")).toBe(true);
+  });
+
+  it("false for ACTIVE", () => {
+    expect(isTerminalMarketStatus("ACTIVE")).toBe(false);
+  });
+
+  it("false for unknown / empty / nullish", () => {
+    expect(isTerminalMarketStatus("")).toBe(false);
+    expect(isTerminalMarketStatus("PAUSED")).toBe(false);
+    expect(isTerminalMarketStatus(undefined)).toBe(false);
+    expect(isTerminalMarketStatus(null)).toBe(false);
   });
 });

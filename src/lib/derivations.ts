@@ -17,6 +17,30 @@ export function deriveEffectiveStatus(status: string, countdown: string): string
   return status;
 }
 
+/**
+ * RESOLVED / CLAIMED = on-chain settlement is final and the winner is known.
+ * Used by display sites that need to show outcome (winner badge, settled price).
+ */
+export function isResolvedMarketStatus(status: string | undefined | null): boolean {
+  return status === "RESOLVED" || status === "CLAIMED";
+}
+
+/**
+ * "Terminal" = no further trade activity is permitted on this market.
+ * Includes TRADING_ENDED (countdown hit 0 but settlement not yet final on-chain)
+ * because new orders would be rejected by the matching engine. Trade panels,
+ * cancel buttons, and order entry must gate on this — Phase2-PRE bug fix:
+ * the trade panel previously stayed interactive on resolved markets and
+ * accepted clicks that the backend would later reject.
+ */
+export function isTerminalMarketStatus(status: string | undefined | null): boolean {
+  return (
+    status === "RESOLVED" ||
+    status === "CLAIMED" ||
+    status === "TRADING_ENDED"
+  );
+}
+
 /** Validates that a `permissionsContext` string from Alchemy is a usable hex blob. */
 export function isValidPermissionsContext(value: unknown): value is `0x${string}` {
   return typeof value === "string" && value.length > 2 && value.startsWith("0x");
