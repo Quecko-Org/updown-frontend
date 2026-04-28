@@ -625,7 +625,8 @@
               color var(--dur-micro) var(--ease);
 }
 .pp-quicknav__chip:hover { border-color: var(--border-1); color: var(--fg-0); }
-.pp-quicknav__chip--on {
+.pp-quicknav__chip--on,
+.pp-quicknav__chip--on:hover {
   background: var(--fg-0); color: var(--bg-0); border-color: var(--fg-0);
   font-weight: 600;
 }
@@ -634,7 +635,8 @@
 }
 .pp-quicknav__chip--off:hover { border-color: var(--border-0); color: var(--fg-1); }
 .pp-quicknav__chip--urgent { color: var(--down); }
-.pp-quicknav__chip--urgent.pp-quicknav__chip--on { color: var(--bg-0); }
+.pp-quicknav__chip--urgent.pp-quicknav__chip--on,
+.pp-quicknav__chip--urgent.pp-quicknav__chip--on:hover { color: var(--bg-0); }
 .pp-quicknav__pair { font-weight: 600; }
 .pp-quicknav__tf { color: var(--fg-2); }
 .pp-quicknav__chip--on .pp-quicknav__tf { color: var(--bg-0); opacity: 0.8; }
