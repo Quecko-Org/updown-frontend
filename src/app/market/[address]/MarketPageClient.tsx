@@ -9,7 +9,11 @@ import { getMarket, getPositions, getPriceHistory, getDmmStatus } from "@/lib/ap
 import { formatStrikeUsd, marketDurationLabel, parseStrikeUsdNumber } from "@/lib/format";
 import { normalizePriceHistoryData } from "@/lib/priceChart";
 import { parseCompositeMarketKey } from "@/lib/marketKey";
-import { formatResolutionOutcome, isTerminalMarketStatus } from "@/lib/derivations";
+import {
+  formatMarketWindow,
+  formatResolutionOutcome,
+  isTerminalMarketStatus,
+} from "@/lib/derivations";
 import { MarketPriceChart } from "@/components/MarketPriceChart";
 import { TradeForm } from "@/components/TradeForm";
 import { OrderBookPanel } from "@/components/OrderBook";
@@ -297,6 +301,7 @@ export function MarketPageClient({ address }: { address: string }) {
           section. Single panel with two subsections (Open orders, Filled
           positions) so the user has one place to look. */}
       <YourActivityOnMarket
+        marketWindowLabel={formatMarketWindow(market)}
         marketComposite={marketKey}
         smartAccount={smartAccount}
         positions={localPositions}

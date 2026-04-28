@@ -107,3 +107,58 @@ export function formatResolutionOutcome(market: {
     statusLabel: formatStatusLabel(market.status),
   };
 }
+
+/**
+ * F3: human-readable label for the market's trading window. Used in
+ * Portfolio Resolved table + the YourActivityOnMarket "Filled positions"
+ * subsection so users can disambiguate "which 5-min BTC market did I
+ * trade?" at a glance.
+ *
+ * Format examples:
+ *   "BTC 5min · Apr 28 14:30–14:35"
+ *   "ETH 1h · Apr 28 14:00–15:00"
+ *   "BTC 15min · Apr 28 14:00–14:15"
+ *
+ * Times are LOCAL to the user's browser. UTC would be more "correct"
+ * for distributed users but local matches the at-a-glance use case
+ * better — users compare these against memory of when they traded.
+ */
+export function formatMarketWindow(market: {
+  startTime?: number;
+  endTime?: number;
+  duration?: number;
+  pairId?: string;
+  pairSymbol?: string;
+}): string | null {
+  if (!market.startTime || !market.endTime) return null;
+  const pairBase =
+    ((market.pairSymbol ?? market.pairId)?.split("-")[0] ?? "BTC").toUpperCase();
+  const tfLabel = formatDurationShort(market.duration);
+  const start = new Date(market.startTime * 1000);
+  const end = new Date(market.endTime * 1000);
+  const date = start.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+  const startStr = start.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const endStr = end.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  return `${pairBase} ${tfLabel} · ${date} ${startStr}–${endStr}`;
+}
+
+function formatDurationShort(duration?: number): string {
+  if (duration === 300) return "5min";
+  if (duration === 900) return "15min";
+  if (duration === 3600) return "1h";
+  if (typeof duration !== "number" || duration <= 0) return "—";
+  if (duration < 60) return `${duration}s`;
+  if (duration < 3600) return `${Math.round(duration / 60)}min`;
+  return `${Math.round(duration / 3600)}h`;
+}

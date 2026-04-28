@@ -3,6 +3,7 @@ import {
   applyOrderUpdateToList,
   buildTerminalOrderToast,
   deriveEffectiveStatus,
+  formatMarketWindow,
   formatResolutionOutcome,
   isResolvedMarketStatus,
   isTerminalMarketStatus,
@@ -503,5 +504,51 @@ describe("formatResolutionOutcome — Phase2-A new fields", () => {
     expect(set.settledPriceStr).toMatch(/^\$/);
     const unset = formatResolutionOutcome(make({ settlementPrice: undefined }));
     expect(unset.settledPriceStr).toBeNull();
+  });
+});
+
+describe("formatMarketWindow (F3)", () => {
+  // Times are local-rendered, so we don't pin exact strings — pin shape.
+  // 2026-04-28 14:30 UTC = epoch 1777731000
+  const start = 1777731000;
+  const end = start + 300;
+
+  it("returns formatted window for a 5-min BTC market", () => {
+    const out = formatMarketWindow({
+      startTime: start,
+      endTime: end,
+      duration: 300,
+      pairId: "BTC-USD",
+      pairSymbol: "BTC-USD",
+    });
+    expect(out).toMatch(/^BTC 5min · /);
+    // endpoint times are HH:MM zero-padded, separated by an en-dash
+    expect(out).toMatch(/ \d{2}:\d{2}–\d{2}:\d{2}$/);
+  });
+
+  it("uses ETH 1h label", () => {
+    const out = formatMarketWindow({
+      startTime: start,
+      endTime: start + 3600,
+      duration: 3600,
+      pairSymbol: "ETH-USD",
+    });
+    expect(out).toMatch(/^ETH 1h · /);
+  });
+
+  it("falls back gracefully when duration is missing", () => {
+    const out = formatMarketWindow({
+      startTime: start,
+      endTime: end,
+      pairId: "BTC-USD",
+    });
+    expect(out).toMatch(/^BTC — · /);
+  });
+
+  it("returns null when startTime or endTime are missing", () => {
+    expect(formatMarketWindow({ duration: 300, pairId: "BTC-USD" })).toBeNull();
+    expect(
+      formatMarketWindow({ startTime: start, duration: 300, pairId: "BTC-USD" }),
+    ).toBeNull();
   });
 });
