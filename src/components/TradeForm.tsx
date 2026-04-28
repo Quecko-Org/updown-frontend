@@ -24,12 +24,11 @@ import { buildOrderTypedData } from "@/lib/eip712";
 import { deriveEffectiveStatus, validateLimitPriceCents } from "@/lib/derivations";
 import { parseUsdtToAtomic } from "@/lib/format";
 import {
+  bestEffectivePriceCents,
   estimateTotalFee,
   formatShareCentsLabel,
-  impliedProbabilityForSide,
   sharePriceBpsFromOrderBookMid,
 } from "@/lib/feeEstimate";
-import { approxProfitIfSideWinsUsd } from "@/lib/payoutEstimate";
 import { parseCompositeMarketKey } from "@/lib/marketKey";
 import { cn } from "@/lib/cn";
 import { formatUserFacingError, isUserRejection } from "@/lib/errors";
@@ -39,7 +38,19 @@ import { WalletConnectorList } from "@/components/WalletConnectorList";
 import { MarketClosedPanel } from "@/components/MarketClosedPanel";
 import { apiConfigAtom, userSmartAccount } from "@/store/atoms";
 
-const PRESETS = [5, 25, 50, 100, 500];
+// Phase2-C: shares-based UI presets. Default $10 stake at 50¢ = 20 shares;
+// the +X buttons add to whatever value is currently in the input.
+const SHARE_QUICK_ADDS = [10, 100, 500];
+const EXPIRY_MODES: { id: "never" | "1h" | "close"; label: string; hint: string }[] = [
+  { id: "close", label: "Until close", hint: "expires when market resolves" },
+  { id: "1h", label: "1 hour", hint: "expires in 60 min" },
+  { id: "never", label: "Never", hint: "never expires" },
+];
+
+// Backend stake bounds (atomic USDT). Mirror with constants in TradeForm
+// validation; the share input is converted to stake before submission.
+const MIN_STAKE_USDT = 5;
+const MAX_STAKE_USDT = 500;
 
 // Ordered so the compact pill's short-click (Market ↔ Limit) matches index 0 / 1;
 // long-press reveals the full list including POST_ONLY + IOC.
@@ -67,10 +78,18 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const smartAccount = useAtomValue(userSmartAccount);
   const apiConfig = useAtomValue(apiConfigAtom);
   const [side, setSide] = useState<1 | 2>(1);
-  const [dollars, setDollars] = useState(25);
+  // Phase2-C: shares-based UI. Default 20 shares ≈ $10 at a 50¢ market.
+  const [shares, setShares] = useState<number>(20);
   const [orderSide, setOrderSide] = useState<0 | 1>(0);
   const [orderType, setOrderType] = useState<OrderApiType>("MARKET");
   const [userPriceCentsInput, setUserPriceCentsInput] = useState<string>("");
+  // Phase2-C: explicit expiry control. Default "close" so a resting LIMIT
+  // doesn't outlive the market window (matches the matching engine's
+  // MARKET_ENDED behavior — choosing it explicitly avoids the "where did my
+  // order go?" surprise from previous Until-MARKET_ENDED implicit cancels).
+  const [expiryMode, setExpiryMode] = useState<"never" | "1h" | "close">(
+    "close",
+  );
   const [otypeMenuOpen, setOtypeMenuOpen] = useState(false);
   const otypeRef = useRef<HTMLDivElement>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -124,10 +143,13 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     if (sideParam === "1") setSide(1);
     else if (sideParam === "2") setSide(2);
 
-    const amountParam = searchParams.get("amount");
-    if (amountParam) {
-      const n = parseInt(amountParam, 10);
-      if (n >= 5 && n <= 500) setDollars(n);
+    // Phase2-C: deep-link `?shares=N` (1-1000). The legacy `?amount=` (USD)
+    // is intentionally dropped — the UI is now share-denominated, and stake
+    // depends on the live mid which isn't known at mount time.
+    const sharesParam = searchParams.get("shares");
+    if (sharesParam) {
+      const n = parseInt(sharesParam, 10);
+      if (Number.isFinite(n) && n >= 1 && n <= 1000) setShares(n);
     }
   }, [searchParams]);
 
@@ -268,16 +290,54 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const autoCentsDisplay = Math.round(autoLimitPrice / 100);
   const priceInputInvalid = userPriceCentsInput !== "" && userPriceParsed.value == null;
 
-  const impliedP =
-    market != null ? impliedProbabilityForSide(side, market.upPrice, market.downPrice) : 0.5;
+  // Phase2-C: per-side mid prices for the BIG selector buttons. Both sides
+  // are computed regardless of which is selected so the user sees the live
+  // probability of the other side too. Polymarket parity.
+  const upMidCents = useMemo(
+    () => (market ? sharePriceBpsFromOrderBookMid(1, market.orderBook) / 100 : 50),
+    [market],
+  );
+  const downMidCents = useMemo(
+    () => (market ? sharePriceBpsFromOrderBookMid(2, market.orderBook) / 100 : 50),
+    [market],
+  );
 
-  const sharePriceBps = useMemo(() => {
-    if (!market) return 5000;
-    return sharePriceBpsFromOrderBookMid(side, market.orderBook);
-  }, [market, side]);
+  // Effective per-share price (cents) used for the Total + To-win + fee calc.
+  // For LIMIT/POST_ONLY/IOC, the user's `limitPrice` (bps→cents) is the
+  // effective price. For MARKET, the buyer pays best-ask / seller hits
+  // best-bid — `bestEffectivePriceCents` falls back to mid when that side
+  // of the book is empty.
+  const effectivePriceCents = useMemo(() => {
+    if (orderType !== "MARKET") {
+      return limitPrice / 100;
+    }
+    if (!market) return 50;
+    return bestEffectivePriceCents(side, orderSide, market.orderBook);
+  }, [orderType, limitPrice, market, side, orderSide]);
+
+  // Stake (USDT) = shares × cents / 100. Bound to the backend's $5–$500
+  // window so the disabled-button gate can refuse out-of-range trades
+  // before signing instead of letting the matching engine reject.
+  const stakeUsd = useMemo(() => {
+    if (!Number.isFinite(shares) || shares <= 0) return 0;
+    if (!Number.isFinite(effectivePriceCents) || effectivePriceCents <= 0) return 0;
+    return Math.round(shares * effectivePriceCents) / 100;
+  }, [shares, effectivePriceCents]);
+
+  const stakeOutOfRange =
+    stakeUsd > 0 && (stakeUsd < MIN_STAKE_USDT || stakeUsd > MAX_STAKE_USDT);
+
+  // Phase2-C: the share price feeding fee math is the EFFECTIVE price the
+  // trade fills at, not the order-book mid. For LIMIT/POST_ONLY/IOC at a
+  // user-chosen cents that's exactly what they pay; for MARKET it's the
+  // best-ask / best-bid fallback. Matches what the user sees in "Total".
+  const sharePriceBps = useMemo(
+    () => Math.max(1, Math.min(9999, Math.round(effectivePriceCents * 100))),
+    [effectivePriceCents],
+  );
 
   const { feeUsd: feeUsdDisplay, effectivePercentOfNotional } = estimateTotalFee(
-    Number(dollars),
+    stakeUsd,
     totalBps,
     sharePriceBps,
     cfg?.feeModel,
@@ -286,23 +346,12 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const peakFeeBps = cfg?.peakFeeBps ?? totalBps;
   const peakFeePct = (peakFeeBps / 100).toFixed(2);
 
-  const payoutIfWin = approxProfitIfSideWinsUsd(Number(dollars), impliedP, totalBps, {
-    feeModel: cfg?.feeModel,
-    sharePriceBps,
-  });
-
-  // Best-book price for each side — shown inside the UP/DOWN tabs so trader
-  // has a single line of truth without glancing at the book ladder.
-  const upCents = useMemo(() => {
-    if (!market) return null;
-    const p = market.orderBook.up.bestAsk?.price ?? market.orderBook.up.bestBid?.price;
-    return p != null ? Math.round(p / 100) : null;
-  }, [market]);
-  const downCents = useMemo(() => {
-    if (!market) return null;
-    const p = market.orderBook.down.bestAsk?.price ?? market.orderBook.down.bestBid?.price;
-    return p != null ? Math.round(p / 100) : null;
-  }, [market]);
+  // Polymarket-parity: To-win = shares × $1 (each winning share pays $1).
+  // For BUY: net profit ≈ toWin − stakeUsd − fee. For SELL: stakeUsd is the
+  // proceeds the user receives; toWin doubles as the exposure if their side
+  // wins (they'd owe shares × $1).
+  const toWinUsd = shares;
+  const profitIfBuyWin = Math.max(0, toWinUsd - stakeUsd - feeUsdDisplay);
 
   const submit = useMutation({
     mutationFn: async () => {
@@ -325,8 +374,11 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         side,
         orderSide,
         orderType,
-        dollars,
+        shares,
+        effectivePriceCents,
+        stakeUsd,
         userPriceCentsInput: userPriceCentsInput || `(auto:${autoCentsDisplay}¢)`,
+        expiryMode,
       });
 
       // Path-1: ensure the EOA has approved settlement for USDT before BUY.
@@ -336,10 +388,14 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         await ensureSettlementAllowance();
       }
 
-      const amount = parseUsdtToAtomic(String(dollars));
-      const min = parseUsdtToAtomic("5");
-      const max = parseUsdtToAtomic("500");
-      if (amount < min || amount > max) throw new Error("Amount must be $5–$500");
+      // Phase2-C: shares × price → stake. Backend payload remains stake-based;
+      // the share-input is purely a UI abstraction.
+      const amount = parseUsdtToAtomic(stakeUsd.toFixed(2));
+      const min = parseUsdtToAtomic(String(MIN_STAKE_USDT));
+      const max = parseUsdtToAtomic(String(MAX_STAKE_USDT));
+      if (amount < min || amount > max) {
+        throw new Error(`Amount must be $${MIN_STAKE_USDT}–$${MAX_STAKE_USDT}`);
+      }
 
       if (orderType !== "MARKET" && userPriceCentsInput !== "") {
         const v = validateLimitPriceCents(userPriceCentsInput);
@@ -367,7 +423,16 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       }
 
       const nonce = Math.floor(Math.random() * 1e12);
-      const expiry = Math.floor(Date.now() / 1000) + 3600;
+      // Phase2-C: explicit expiry mode chosen by the user.
+      //   "never" → expiry=0 (matching engine's "no expiry" sentinel)
+      //   "1h"    → now + 3600 (legacy default; kept for users who want it)
+      //   "close" → market.endTime (default; expires at market close)
+      const expiry =
+        expiryMode === "never"
+          ? 0
+          : expiryMode === "1h"
+            ? Math.floor(Date.now() / 1000) + 3600
+            : market.endTime;
       const typeNum = ORDER_TYPE_U8[orderType];
       const priceNum = orderType === "MARKET" ? 0 : limitPrice;
 
@@ -503,10 +568,15 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         </button>
       </div>
 
-      {/* UP / DOWN — nested price span uses font-variant-numeric inline rather
-          than .pp-tabular so color inherits from the parent button (bg-0 on
-          active green/red, fg-1 on inactive) instead of forcing fg-1 which
-          would wash out against the solid accent when the side is selected. */}
+      {/* Phase2-C: BIG UP / DOWN side selector — Polymarket-parity. Each
+          button shows the current implied probability (mid in cents) for
+          its side. Click to choose which outcome to trade.
+
+          For BUY: the price the user effectively pays settles into Total +
+          fee math via `effectivePriceCents` (best ASK / mid fallback).
+          For SELL: the price they effectively receive does the same via
+          best BID / mid. Both side buttons display the MID so the user
+          always sees the live probability of both outcomes. */}
       <div className="pp-trade__ud">
         <button
           type="button"
@@ -516,9 +586,9 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             if (!isConnected) scrollToConnect();
           }}
         >
-          <span>▲ UP</span>
-          <span style={{ fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums" }}>
-            {upCents != null ? `${upCents}¢` : "—"}
+          <span>▲ Up</span>
+          <span style={{ fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums", fontSize: 18, fontWeight: 600 }}>
+            {Math.round(upMidCents)}¢
           </span>
         </button>
         <button
@@ -529,23 +599,34 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             if (!isConnected) scrollToConnect();
           }}
         >
-          <span>▼ DOWN</span>
-          <span style={{ fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums" }}>
-            {downCents != null ? `${downCents}¢` : "—"}
+          <span>▼ Down</span>
+          <span style={{ fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums", fontSize: 18, fontWeight: 600 }}>
+            {Math.round(downMidCents)}¢
           </span>
         </button>
       </div>
 
       {/* Limit price — only visible when the order type rests on the book.
           Pre-fills with the auto-derived cents (best-ask + 50 bps / best-bid
-          − 50 bps) so the user sees a sensible number they can edit in place,
-          rather than a greyed-out placeholder. */}
+          − 50 bps) so the user sees a sensible number they can edit in place. */}
       {orderType !== "MARKET" && (
         <div className="mt-3">
           <label className="pp-micro" htmlFor="limit-price-cents">
             Limit price · cents
           </label>
           <div className="mt-1 flex items-center gap-2">
+            <button
+              type="button"
+              className="pp-btn pp-btn--secondary pp-btn--sm"
+              onClick={() => {
+                const cur = userPriceCentsInput === "" ? autoCentsDisplay : Number(userPriceCentsInput);
+                const next = Math.max(1, (Number.isFinite(cur) ? cur : 0) - 1);
+                setUserPriceCentsInput(String(next));
+              }}
+              aria-label="Decrease limit price by 1¢"
+            >
+              −
+            </button>
             <input
               id="limit-price-cents"
               type="number"
@@ -563,7 +644,21 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
               aria-invalid={priceInputInvalid}
               aria-describedby="limit-price-hint"
             />
-            <span className="pp-caption">= {limitPrice} bps</span>
+            <button
+              type="button"
+              className="pp-btn pp-btn--secondary pp-btn--sm"
+              onClick={() => {
+                const cur = userPriceCentsInput === "" ? autoCentsDisplay : Number(userPriceCentsInput);
+                const next = Math.min(99, (Number.isFinite(cur) ? cur : 0) + 1);
+                setUserPriceCentsInput(String(next));
+              }}
+              aria-label="Increase limit price by 1¢"
+            >
+              +
+            </button>
+            <span className="pp-caption" style={{ marginLeft: "auto" }}>
+              {limitPrice} bps
+            </span>
           </div>
           {priceInputInvalid && (
             <p id="limit-price-hint" className="pp-caption mt-1 pp-down">
@@ -573,74 +668,127 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         </div>
       )}
 
-      {/* Size — editable input with preset quick-sets. Range slider removed
-          so the input reads as the primary control; presets populate it. */}
+      {/* Phase2-C: Shares input + +N quick-add. Polymarket-parity: user
+          buys a number of shares; each share pays $1 if their side wins. */}
       <div className="mt-3">
-        <label className="pp-micro" htmlFor="trade-size-usdt">
-          Size · USDT
+        <label className="pp-micro" htmlFor="trade-shares">
+          Shares
         </label>
         <div className="mt-1 flex items-center gap-2">
-          <span className="pp-micro" style={{ color: "var(--fg-2)" }}>$</span>
           <input
-            id="trade-size-usdt"
+            id="trade-shares"
             type="number"
-            inputMode="decimal"
-            min={5}
-            max={500}
+            inputMode="numeric"
+            min={1}
             step={1}
-            value={dollars}
+            value={shares}
             onChange={(e) => {
-              const n = Number(e.target.value);
-              if (Number.isFinite(n)) setDollars(n);
+              const n = Math.floor(Number(e.target.value));
+              if (Number.isFinite(n) && n >= 0) setShares(n);
             }}
             onFocus={(e) => e.currentTarget.select()}
             className={cn(
               "pp-input pp-input--mono flex-1 text-right",
-              (dollars < 5 || dollars > 500) && "pp-input--invalid",
+              stakeOutOfRange && "pp-input--invalid",
             )}
-            aria-invalid={dollars < 5 || dollars > 500}
+            aria-invalid={stakeOutOfRange}
           />
         </div>
         <div className="pp-trade__presets mt-2">
-          {PRESETS.map((p) => (
+          {SHARE_QUICK_ADDS.map((n) => (
             <button
-              key={p}
+              key={n}
               type="button"
-              className={cn(
-                "pp-trade__preset",
-                dollars === p && "pp-trade__preset--on",
-              )}
-              onClick={() => setDollars(p)}
+              className="pp-trade__preset"
+              onClick={() => setShares((s) => Math.max(0, (Number.isFinite(s) ? s : 0) + n))}
             >
-              ${p}
+              +{n}
             </button>
           ))}
+          <button
+            type="button"
+            className="pp-trade__preset"
+            onClick={() => setShares(0)}
+            aria-label="Clear shares"
+          >
+            Clear
+          </button>
         </div>
-        {(dollars < 5 || dollars > 500) && (
-          <p className="pp-caption mt-1 pp-down">Amount must be $5–$500.</p>
-        )}
+        {stakeOutOfRange ? (
+          <p className="pp-caption mt-1 pp-down">
+            Total must be ${MIN_STAKE_USDT}–${MAX_STAKE_USDT}.
+          </p>
+        ) : null}
       </div>
 
-      {/* Summary */}
+      {/* Phase2-C: Total + To win. Total = shares × cents / 100; To win =
+          shares × $1. For BUY the user pays Total now and may receive
+          To win if their side wins. For SELL the user receives Total now;
+          To win is the exposure if their side wins. */}
       <div className="pp-trade__summary">
-        <div>
-          If {side === 1 ? "UP" : "DOWN"} wins:{" "}
-          <span className={side === 1 ? "pp-up" : "pp-down"}>+${payoutIfWin.toFixed(2)}</span>{" "}
-          <span className="pp-caption">(est., after fees)</span>
+        <div className="flex items-baseline justify-between">
+          <span className="pp-micro">{orderSide === 0 ? "Total cost" : "You receive"}</span>
+          <span className="pp-tabular" style={{ color: "var(--fg-0)", fontWeight: 600 }}>
+            ${stakeUsd.toFixed(2)}
+          </span>
         </div>
-        <div className="pp-caption">
-          Fee: <span className="pp-tabular" style={{ color: "var(--fg-0)" }}>
+        <div className="flex items-baseline justify-between">
+          <span className="pp-micro">
+            {orderSide === 0 ? "To win" : "Exposure if " + (side === 1 ? "Up" : "Down") + " wins"}
+          </span>
+          <span
+            className="pp-tabular"
+            style={{
+              color: orderSide === 0 ? "var(--up)" : "var(--fg-2)",
+              fontWeight: 500,
+            }}
+          >
+            ${toWinUsd.toFixed(2)}
+          </span>
+        </div>
+        {orderSide === 0 ? (
+          <div className="flex items-baseline justify-between">
+            <span className="pp-micro">Net profit if {side === 1 ? "Up" : "Down"} wins</span>
+            <span className="pp-tabular pp-up" style={{ fontWeight: 500 }}>
+              +${profitIfBuyWin.toFixed(2)}
+            </span>
+          </div>
+        ) : null}
+        <div className="pp-caption" style={{ marginTop: 4 }}>
+          Fee:{" "}
+          <span className="pp-tabular" style={{ color: "var(--fg-0)" }}>
             ${feeUsdDisplay.toFixed(2)} ({effectivePercentOfNotional.toFixed(2)}% at {shareCentsLabel})
           </span>
           <InfoTip
             text={`Peak ${peakFeePct}% at 50¢. Probability-weighted, tapers at extremes.`}
           />
         </div>
-        {rebateBps != null && rebateBps > 0 && (
+        {rebateBps != null && rebateBps > 0 ? (
           <div className="pp-caption pp-up" style={{ fontWeight: 500 }}>
             Earns {(rebateBps / 100).toFixed(2)}% rebate on this fill
           </div>
-        )}
+        ) : null}
+      </div>
+
+      {/* Phase2-C: Expires dropdown. Default "Until close" — typical
+          prediction-market expectation is the order vanishes when the
+          market window closes. Long-press not used here; segmented buttons
+          are clearer than a dropdown for 3 options. */}
+      <div className="mt-3">
+        <label className="pp-micro">Expires</label>
+        <div className="pp-seg mt-1">
+          {EXPIRY_MODES.map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              className={cn("pp-seg__btn", expiryMode === m.id && "pp-seg__btn--on")}
+              onClick={() => setExpiryMode(m.id)}
+              title={m.hint}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Submit / connect */}
@@ -651,7 +799,9 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             submit.isPending ||
             !isMarketTradeable ||
             priceInputInvalid ||
-            !smartAccount
+            !smartAccount ||
+            shares <= 0 ||
+            stakeOutOfRange
           }
           title={
             !isMarketTradeable
@@ -660,7 +810,11 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
                 ? (userPriceParsed.error ?? "Fix price before submitting")
                 : !smartAccount
                   ? "Finish wallet sign-in to enable trading"
-                  : undefined
+                  : shares <= 0
+                    ? "Enter a positive number of shares"
+                    : stakeOutOfRange
+                      ? `Total must be $${MIN_STAKE_USDT}–$${MAX_STAKE_USDT}`
+                      : undefined
           }
           className={cn(
             "pp-btn pp-btn--lg pp-trade__cta",
@@ -670,7 +824,9 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         >
           {submit.isPending
             ? "Signing…"
-            : `${orderSide === 0 ? "Buy" : "Sell"} ${side === 1 ? "UP" : "DOWN"} · ${orderType === "MARKET" ? "MKT" : `${Math.round(limitPrice / 100)}¢`}`}
+            : shares <= 0
+              ? "Trade"
+              : `${orderSide === 0 ? "Buy" : "Sell"} ${shares} ${side === 1 ? "Up" : "Down"} · $${stakeUsd.toFixed(2)}`}
         </button>
       ) : (
         <div

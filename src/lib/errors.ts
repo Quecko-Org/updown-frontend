@@ -35,6 +35,11 @@ export function formatUserFacingError(e: unknown): string {
     if (/Invalid signature/i.test(m)) {
       return "Wallet signature couldn't be verified. Please try again.";
     }
+    // Phase2-C: backend rejects POST_ONLY orders that would cross the book.
+    // Surface a friendly nudge instead of the engineering string.
+    if (/POST_ONLY order would match immediately/i.test(m)) {
+      return "Post-only would have filled immediately. Try a price further from the book.";
+    }
     if (m.length > 220) return `${m.slice(0, 220)}…`;
     return m;
   }
