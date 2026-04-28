@@ -20,7 +20,11 @@ import { CancelOrderButton } from "@/components/CancelOrderButton";
 import { EmptyState } from "@/components/EmptyState";
 import { cn } from "@/lib/cn";
 import { marketPathFromAddress } from "@/lib/marketKey";
-import { isResolvedMarketStatus, isTerminalMarketStatus } from "@/lib/derivations";
+import {
+  formatMarketWindow,
+  isResolvedMarketStatus,
+  isTerminalMarketStatus,
+} from "@/lib/derivations";
 import { userSmartAccount } from "@/store/atoms";
 
 /**
@@ -117,6 +121,17 @@ function PortfolioInner() {
     return map;
   }, [resolvedMarketKeys, marketQueries]);
 
+  // F3: market-window label per resolved market. Lets users
+  // disambiguate "which 5-min BTC market did I trade?" at a glance.
+  const windowByMarket = useMemo(() => {
+    const map = new Map<string, string | null>();
+    resolvedMarketKeys.forEach((m, i) => {
+      const d = marketQueries[i]?.data;
+      map.set(m, d ? formatMarketWindow(d) : null);
+    });
+    return map;
+  }, [resolvedMarketKeys, marketQueries]);
+
   const summary = useMemo(() => computeSummary(positions ?? [], winnerByMarket), [positions, winnerByMarket]);
 
   const claim = useMutation({
@@ -205,6 +220,7 @@ function PortfolioInner() {
           loading={positionsLoading}
           positions={resolvedPositions}
           winnerByMarket={winnerByMarket}
+          windowByMarket={windowByMarket}
           onClaim={(m) => claim.mutate(m)}
           claimPending={claim.isPending}
         />
@@ -352,12 +368,14 @@ function ResolvedTab({
   loading,
   positions,
   winnerByMarket,
+  windowByMarket,
   onClaim,
   claimPending,
 }: {
   loading: boolean;
   positions: PositionRow[];
   winnerByMarket: Map<string, number | null>;
+  windowByMarket: Map<string, string | null>;
   onClaim: (market: string) => void;
   claimPending: boolean;
 }) {
@@ -383,6 +401,7 @@ function ResolvedTab({
         <thead>
           <tr>
             <th>Market</th>
+            <th className="hidden md:table-cell">Window</th>
             <th>Side</th>
             <th>Outcome</th>
             <th className="r">Shares</th>
@@ -393,6 +412,8 @@ function ResolvedTab({
         <tbody>
           {positions.map((p) => {
             const winner = winnerByMarket.get(p.market.toLowerCase()) ?? null;
+            const windowLabel =
+              windowByMarket.get(p.market.toLowerCase()) ?? null;
             const won = winner != null && winner !== 0 && p.option === winner;
             const lost = winner != null && winner !== 0 && p.option !== winner;
             const cost = safeBigInt(p.costBasis);
@@ -411,6 +432,16 @@ function ResolvedTab({
                   >
                     <span className="pp-hash">{shortenMarket(p.market)}</span>
                   </Link>
+                </td>
+                <td
+                  className="hidden md:table-cell pp-tabular"
+                  style={{ color: "var(--fg-2)", fontSize: 12 }}
+                >
+                  {windowLabel ?? (
+                    <span className="pp-caption" style={{ color: "var(--fg-2)" }}>
+                      …
+                    </span>
+                  )}
                 </td>
                 <td>
                   <span className={cn(p.option === 1 ? "pp-chip-up" : "pp-chip-down")}>

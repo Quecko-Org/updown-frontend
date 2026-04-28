@@ -24,10 +24,16 @@ export function YourActivityOnMarket({
   marketComposite,
   smartAccount,
   positions,
+  marketWindowLabel,
 }: {
   marketComposite: string;
   smartAccount: string | null | undefined;
   positions: PositionRow[];
+  /** F3: human-readable trading window label, e.g. "BTC 5min · Apr 28 14:30–14:35".
+   *  Rendered as caption above Filled positions so users disambiguate which
+   *  market a position belongs to when scanning the portfolio + jumping
+   *  between detail pages. */
+  marketWindowLabel?: string | null;
 }) {
   const { address, isConnected } = useAccount();
   const addrLower = address?.toLowerCase() ?? "";
@@ -87,7 +93,17 @@ export function YourActivityOnMarket({
 
       {positions.length > 0 ? (
         <div className="space-y-2">
-          <h3 className="pp-h3">Filled positions</h3>
+          <div className="flex items-baseline justify-between gap-2 flex-wrap">
+            <h3 className="pp-h3">Filled positions</h3>
+            {marketWindowLabel ? (
+              <span
+                className="pp-caption pp-tabular"
+                style={{ color: "var(--fg-2)" }}
+              >
+                {marketWindowLabel}
+              </span>
+            ) : null}
+          </div>
           <PositionsSubtable rows={positions} />
         </div>
       ) : null}

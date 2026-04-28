@@ -11,6 +11,7 @@
 import { fmtUsd } from "../format";
 
 export {
+  formatMarketWindow,
   formatResolutionOutcome,
   isResolvedMarketStatus,
   isTerminalMarketStatus,
