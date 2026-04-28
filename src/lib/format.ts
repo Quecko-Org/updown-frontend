@@ -17,6 +17,26 @@ export function parseUsdtToAtomic(dollars: string): bigint {
   return parseUnits(normalized || "0", USDT_DECIMALS);
 }
 
+/** Compact "$X.XK" USD label for tight surfaces (market cards). Uses K above
+ *  $1k, M above $1M, otherwise plain $X. Sub-dollar volumes show as "$0".
+ *  Phase2-D: introduced for market-card volume readouts where horizontal
+ *  space is limited and exact cents add no value. */
+export function formatUsdCompact(raw: string | bigint | undefined | null): string {
+  if (raw == null) return "$0";
+  try {
+    const v = typeof raw === "bigint" ? raw : BigInt(raw || "0");
+    const s = formatUnits(v, USDT_DECIMALS);
+    const n = Number(s);
+    if (!Number.isFinite(n) || n <= 0) return "$0";
+    if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
+    if (n >= 1_000) return `$${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}K`;
+    if (n >= 1) return `$${Math.round(n)}`;
+    return "<$1";
+  } catch {
+    return "$0";
+  }
+}
+
 /** Short "$X.XX" USD label from a USDT atomic amount (6 decimals) string or bigint. */
 export function fmtUsd(raw: string | bigint | undefined | null): string {
   if (raw == null) return "$0.00";

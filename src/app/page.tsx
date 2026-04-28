@@ -31,6 +31,8 @@ function splitMarkets(list: MarketListItem[] | undefined) {
 
 type FeeConfig = Pick<ApiConfig, "platformFeeBps" | "makerFeeBps" | "feeModel" | "peakFeeBps"> | null;
 
+type ResolvedSortKey = "newest" | "volume";
+
 function TimeframeRowWithToggle({
   tf,
   btcData,
@@ -42,6 +44,7 @@ function TimeframeRowWithToggle({
   feeConfig,
   btcLoading,
   ethLoading,
+  resolvedSort,
 }: {
   tf: number;
   btcData: { active: MarketListItem | null; history: MarketListItem[] };
@@ -53,6 +56,7 @@ function TimeframeRowWithToggle({
   feeConfig: FeeConfig;
   btcLoading: boolean;
   ethLoading: boolean;
+  resolvedSort: ResolvedSortKey;
 }) {
   const [selectedPair, setSelectedPair] = useState<"BTC-USD" | "ETH-USD">("BTC-USD");
 
@@ -66,7 +70,22 @@ function TimeframeRowWithToggle({
   // visually distinct rows. A single mixed row made it hard to see at a
   // glance which markets were live.
   const active = data.active ? [data.active] : [];
-  const resolved = data.history.slice(0, MAX_CARDS_PER_ROW);
+  // Phase2-D: resolved tail sort. `history` arrives endTime-desc from
+  // splitMarkets; volume sort is opt-in. BigInt compare avoids the Number
+  // overflow when atomic USDT volumes climb past 2**53.
+  const resolved = useMemo(() => {
+    const list = data.history.slice(0, MAX_CARDS_PER_ROW);
+    if (resolvedSort !== "volume") return list;
+    return [...list].sort((a, b) => {
+      try {
+        const av = BigInt(a.volume || "0");
+        const bv = BigInt(b.volume || "0");
+        return av < bv ? 1 : av > bv ? -1 : 0;
+      } catch {
+        return 0;
+      }
+    });
+  }, [data.history, resolvedSort]);
 
   return (
     <div>
@@ -134,6 +153,11 @@ function TimeframeRowWithToggle({
 export default function HomePage() {
   const cfg = useAtomValue(apiConfigAtom);
   const qc = useQueryClient();
+  // Phase2-D: home-level sort for the resolved-cards tail. Active markets
+  // aren't sorted (one per pair × timeframe). Default "newest" preserves
+  // the prior endTime-desc behavior so the layout doesn't change for users
+  // who don't touch the toggle.
+  const [resolvedSort, setResolvedSort] = useState<ResolvedSortKey>("newest");
 
   const marketQueries = useQueries({
     queries: PAIRS.flatMap((pair) =>
@@ -261,6 +285,31 @@ export default function HomePage() {
           <span className="pp-price-xl">{traders != null ? traders : "—"}</span>
         </div>
       </div>
+      <div className="flex items-center justify-between gap-2">
+        <span className="pp-micro" style={{ color: "var(--fg-2)" }}>
+          Resolved tail
+        </span>
+        <div className="pp-tab" role="tablist" aria-label="Sort resolved markets">
+          <button
+            type="button"
+            className={cn("pp-tab__btn", resolvedSort === "newest" && "pp-tab__btn--on")}
+            onClick={() => setResolvedSort("newest")}
+            aria-selected={resolvedSort === "newest"}
+            role="tab"
+          >
+            Newest
+          </button>
+          <button
+            type="button"
+            className={cn("pp-tab__btn", resolvedSort === "volume" && "pp-tab__btn--on")}
+            onClick={() => setResolvedSort("volume")}
+            aria-selected={resolvedSort === "volume"}
+            role="tab"
+          >
+            Volume
+          </button>
+        </div>
+      </div>
       {TFS.map((tf, ti) => (
         <TimeframeRowWithToggle
           key={tf}
@@ -280,6 +329,7 @@ export default function HomePage() {
             marketQueries[1 * TFS.length + ti]?.isPending === true &&
             marketQueries[1 * TFS.length + ti]?.data === undefined
           }
+          resolvedSort={resolvedSort}
         />
       ))}
     </div>

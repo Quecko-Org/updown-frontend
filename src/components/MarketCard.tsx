@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { ApiConfig, MarketListItem } from "@/lib/api";
 import { estimateTotalFee, formatShareCentsLabel, sharePriceBpsFromImpliedUp } from "@/lib/feeEstimate";
-import { formatStrikeUsd, marketDurationLabel, parseStrikeUsdNumber } from "@/lib/format";
+import { formatStrikeUsd, formatUsdCompact, marketDurationLabel, parseStrikeUsdNumber } from "@/lib/format";
 import type { PricePoint } from "@/lib/priceChart";
 import { cn } from "@/lib/cn";
 import { deriveEffectiveStatus, formatResolutionOutcome } from "@/lib/derivations";
@@ -100,6 +100,10 @@ export function MarketCard({
 
   const isResolved = market.status === "RESOLVED" || market.status === "CLAIMED";
   const resolving = !isResolved && effectiveStatus !== "ACTIVE";
+  // Phase2-D: 24h volume display. The market lifetime is ≤ 1h so cumulative
+  // volume IS effectively a recent-window number; no separate 24h slice
+  // needed. Compact format keeps the foot row from wrapping on small cards.
+  const volumeLabel = formatUsdCompact(market.volume);
 
   const displayPrice: number | null = useMemo(() => {
     if (resolving) return null;
@@ -164,6 +168,15 @@ export function MarketCard({
             </span>
           </div>
         </div>
+        <div className="pp-tile__foot">
+          <span className="pp-caption">Ended</span>
+          <span className="pp-caption">
+            Vol{" "}
+            <span className="pp-tabular" style={{ color: "var(--fg-0)" }}>
+              {volumeLabel}
+            </span>
+          </span>
+        </div>
       </article>
     );
   }
@@ -222,14 +235,14 @@ export function MarketCard({
       {effectiveStatus === "ACTIVE" ? (
         <div className="pp-tile__ladder">
           <Link
-            href={`${marketHref}?side=1&amount=25`}
+            href={`${marketHref}?side=1&shares=50`}
             className="pp-tile__side pp-tile__side--up"
           >
             <span className="pp-tile__side-label">▲ UP</span>
             <span className="pp-tile__side-price">{upCents != null ? `${upCents}¢` : "—"}</span>
           </Link>
           <Link
-            href={`${marketHref}?side=2&amount=25`}
+            href={`${marketHref}?side=2&shares=50`}
             className="pp-tile__side pp-tile__side--down"
           >
             <span className="pp-tile__side-label">▼ DOWN</span>
@@ -258,17 +271,22 @@ export function MarketCard({
         ) : (
           <span className="pp-caption">Ended</span>
         )}
-        {feePreview ? (
-          <span
-            className="pp-caption"
-            title={`Peak ~${feePreview.peakPct}% at 50¢`}
-          >
-            Fee on ${NOTIONAL_PREVIEW}:{" "}
+        <span className="pp-caption" style={{ display: "inline-flex", gap: 10 }}>
+          <span>
+            Vol{" "}
             <span className="pp-tabular" style={{ color: "var(--fg-0)" }}>
-              ~${feePreview.feeUsd.toFixed(2)}
+              {volumeLabel}
             </span>
           </span>
-        ) : null}
+          {feePreview ? (
+            <span title={`Peak ~${feePreview.peakPct}% at 50¢`}>
+              Fee ${NOTIONAL_PREVIEW}{" "}
+              <span className="pp-tabular" style={{ color: "var(--fg-0)" }}>
+                ~${feePreview.feeUsd.toFixed(2)}
+              </span>
+            </span>
+          ) : null}
+        </span>
       </div>
     </article>
   );
