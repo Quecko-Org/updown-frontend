@@ -2,9 +2,20 @@
  * Small pure helpers extracted from React components so they can be unit-tested
  * without a DOM / React test harness. Keep everything here synchronous and
  * side-effect-free.
+ *
+ * Phase2-A reorganization: this directory replaces the previous single-file
+ * `lib/derivations.ts`. Market outcome rendering moved to `marketOutcome.ts`
+ * (re-exported here for back-compat with existing imports).
  */
 
-import { fmtUsd } from "./format";
+import { fmtUsd } from "../format";
+
+export {
+  formatResolutionOutcome,
+  isResolvedMarketStatus,
+  isTerminalMarketStatus,
+  type MarketOutcome,
+} from "./marketOutcome";
 
 /**
  * Countdown-driven state flip: if a market's backend status still says ACTIVE but
@@ -17,92 +28,9 @@ export function deriveEffectiveStatus(status: string, countdown: string): string
   return status;
 }
 
-/**
- * RESOLVED / CLAIMED = on-chain settlement is final and the winner is known.
- * Used by display sites that need to show outcome (winner badge, settled price).
- */
-export function isResolvedMarketStatus(status: string | undefined | null): boolean {
-  return status === "RESOLVED" || status === "CLAIMED";
-}
-
-/**
- * "Terminal" = no further trade activity is permitted on this market.
- * Includes TRADING_ENDED (countdown hit 0 but settlement not yet final on-chain)
- * because new orders would be rejected by the matching engine. Trade panels,
- * cancel buttons, and order entry must gate on this — Phase2-PRE bug fix:
- * the trade panel previously stayed interactive on resolved markets and
- * accepted clicks that the backend would later reject.
- */
-export function isTerminalMarketStatus(status: string | undefined | null): boolean {
-  return (
-    status === "RESOLVED" ||
-    status === "CLAIMED" ||
-    status === "TRADING_ENDED"
-  );
-}
-
 /** Validates that a `permissionsContext` string from Alchemy is a usable hex blob. */
 export function isValidPermissionsContext(value: unknown): value is `0x${string}` {
   return typeof value === "string" && value.length > 2 && value.startsWith("0x");
-}
-
-/**
- * Single source of truth for resolved-market outcome rendering. Pre-extraction
- * the home card (MarketCard), the market detail page (MarketPageClient), and
- * the History trade rows each had their own derivation — the detail page was
- * showing live spot direction labelled "Currently" even AFTER resolution,
- * which contradicted the home card's "DOWN won" badge whenever the spot had
- * recovered above strike post-resolve. Bug C in the audit.
- *
- * Display-1: when the rounded delta would render as "+0.00%" (sub-cent gap),
- * fall back to 4-decimal precision instead so the user can see why DOWN won
- * an apparent tie. The settlement rule on-chain is `settled > strike => UP,
- * settled <= strike => DOWN`, so a tie always favors DOWN.
- */
-export type ResolutionOutcome = {
-  /** "UP won" / "DOWN won" — null if market hasn't resolved (winner === 0 or null). */
-  label: string | null;
-  /** 1 = UP, 2 = DOWN, null if not yet resolved. */
-  winnerSide: 1 | 2 | null;
-  /** Pretty-formatted delta percent (signed), null when no settlement price. */
-  deltaPctStr: string | null;
-  /** True when the rendered delta required extra precision (Display-1 path). */
-  deltaUsedFinePrecision: boolean;
-};
-
-export function formatResolutionOutcome(market: {
-  status: string;
-  winner: number | null;
-  strikePrice?: string;
-  settlementPrice?: string;
-}): ResolutionOutcome {
-  const isResolved = market.status === "RESOLVED" || market.status === "CLAIMED";
-  const winnerSide: 1 | 2 | null =
-    isResolved && market.winner === 1 ? 1 : isResolved && market.winner === 2 ? 2 : null;
-
-  const label = winnerSide === 1 ? "UP won" : winnerSide === 2 ? "DOWN won" : null;
-
-  let deltaPctStr: string | null = null;
-  let deltaUsedFinePrecision = false;
-  const strike = market.strikePrice ? Number(market.strikePrice) : NaN;
-  const settled = market.settlementPrice ? Number(market.settlementPrice) : NaN;
-  if (Number.isFinite(strike) && Number.isFinite(settled) && strike !== 0) {
-    const pct = ((settled - strike) / strike) * 100;
-    const sign = pct >= 0 ? "+" : "−";
-    const abs = Math.abs(pct);
-    // Display-1: a sub-cent gap rounds to "0.00%" but the winner is determined
-    // by the exact comparison. Show extra precision when the 2dp render would
-    // collapse to "0.00%", so the user sees a non-zero delta that justifies
-    // the resolution rather than appearing to contradict it.
-    if (abs > 0 && abs < 0.005) {
-      deltaPctStr = `${sign}${abs.toFixed(4)}%`;
-      deltaUsedFinePrecision = true;
-    } else {
-      deltaPctStr = `${sign}${abs.toFixed(2)}%`;
-    }
-  }
-
-  return { label, winnerSide, deltaPctStr, deltaUsedFinePrecision };
 }
 
 /**

@@ -6,18 +6,16 @@ import { useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { useAccount } from "wagmi";
 import { getMarket, getPositions, getPriceHistory, getDmmStatus } from "@/lib/api";
-import { formatStrikeUsd, formatUsdt, marketDurationLabel, parseStrikeUsdNumber } from "@/lib/format";
+import { formatStrikeUsd, marketDurationLabel, parseStrikeUsdNumber } from "@/lib/format";
 import { normalizePriceHistoryData } from "@/lib/priceChart";
 import { parseCompositeMarketKey } from "@/lib/marketKey";
 import { formatResolutionOutcome, isTerminalMarketStatus } from "@/lib/derivations";
 import { MarketPriceChart } from "@/components/MarketPriceChart";
 import { TradeForm } from "@/components/TradeForm";
 import { OrderBookPanel } from "@/components/OrderBook";
-import { MyOrdersOnMarket } from "@/components/MyOrdersOnMarket";
+import { YourActivityOnMarket } from "@/components/YourActivityOnMarket";
 import { EmptyState } from "@/components/EmptyState";
 import { CancelAllMarketOrders } from "@/components/CancelAllMarketOrders";
-import { WalletConnectorList } from "@/components/WalletConnectorList";
-import { cn } from "@/lib/cn";
 import { userSmartAccount } from "@/store/atoms";
 
 function useEndsInCountdown(endTimeSec: number) {
@@ -192,7 +190,7 @@ export function MarketPageClient({ address }: { address: string }) {
                 >
                   {resolution.winnerSide === 1 ? "▲ UP won" : "▼ DOWN won"}
                 </span>
-                {resolution.deltaPctStr ? (
+                {resolution.deltaStr ? (
                   <span
                     className="pp-caption pp-tabular"
                     style={{ color: "var(--fg-2)" }}
@@ -202,7 +200,7 @@ export function MarketPageClient({ address }: { address: string }) {
                         : undefined
                     }
                   >
-                    Δ {resolution.deltaPctStr}
+                    Δ {resolution.deltaStr}
                   </span>
                 ) : null}
               </span>
@@ -254,75 +252,18 @@ export function MarketPageClient({ address }: { address: string }) {
         </div>
         <div className="lg:sticky lg:top-20">
           <TradeForm marketAddress={marketKey} />
-          {/* Resting BUY UP / SELL DOWN hidden by the unified ladder; surfaced here
-              so the trader can see + cancel their own liquidity. */}
-          <MyOrdersOnMarket marketComposite={marketKey} />
         </div>
       </div>
 
-      {/* Your positions */}
-      <section className="mt-6">
-        <h2 className="pp-h2">Your positions</h2>
-        {!smartAccount && (
-          <EmptyState
-            icon="wallet"
-            title="Connect wallet"
-            subtitle="Connect a wallet to see holdings for this market."
-            className="min-h-0 py-6 mt-3"
-          >
-            <WalletConnectorList className="w-full max-w-xs" />
-          </EmptyState>
-        )}
-        {smartAccount && localPositions.length === 0 && (
-          <EmptyState
-            icon="trade"
-            title="No position in this market"
-            subtitle="Use the form above to place a trade."
-            className="min-h-0 py-6 mt-3"
-          />
-        )}
-        {localPositions.length > 0 && (
-          <div
-            className="mt-3 overflow-hidden overflow-x-auto rounded-[6px] border"
-            style={{ borderColor: "var(--border-0)", background: "var(--bg-1)" }}
-          >
-            <table className="pp-table min-w-full">
-              <thead>
-                <tr>
-                  <th>Side</th>
-                  <th className="r">Shares</th>
-                  <th className="r">Avg price</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {localPositions.map((p) => (
-                  <tr key={`${p.market}-${p.option}`}>
-                    <td>
-                      <span className={cn(p.option === 1 ? "pp-chip-up" : "pp-chip-down")}>
-                        {p.optionLabel}
-                      </span>
-                    </td>
-                    <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
-                      ${formatUsdt(p.shares)}
-                    </td>
-                    <td className="r pp-tabular" style={{ color: "var(--fg-2)" }}>
-                      {p.avgPrice} bps
-                    </td>
-                    <td>
-                      <span className="pp-chip pp-chip--cd">
-                        <span className="pp-tabular">
-                          {p.marketStatus === "CLAIMED" ? "RESOLVED" : p.marketStatus}
-                        </span>
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+      {/* Phase2-A: combined "Your activity in this market" panel — replaces
+          the old MyOrdersOnMarket-in-trade-form-rail + separate "Your positions"
+          section. Single panel with two subsections (Open orders, Filled
+          positions) so the user has one place to look. */}
+      <YourActivityOnMarket
+        marketComposite={marketKey}
+        smartAccount={smartAccount}
+        positions={localPositions}
+      />
     </div>
   );
 }

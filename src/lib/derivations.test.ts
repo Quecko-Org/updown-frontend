@@ -359,31 +359,31 @@ describe("formatResolutionOutcome (Bug C + Display-1)", () => {
 
   it("returns UP-won label and winnerSide=1 for resolved UP markets", () => {
     const r = formatResolutionOutcome(base({ winner: 1 }));
-    expect(r.label).toBe("UP won");
+    expect(r.winnerLabel).toBe("UP won");
     expect(r.winnerSide).toBe(1);
   });
 
   it("returns DOWN-won label and winnerSide=2 for resolved DOWN markets", () => {
     const r = formatResolutionOutcome(base({ winner: 2 }));
-    expect(r.label).toBe("DOWN won");
+    expect(r.winnerLabel).toBe("DOWN won");
     expect(r.winnerSide).toBe(2);
   });
 
   it("returns null label for unresolved (ACTIVE) markets even with non-null winner", () => {
     const r = formatResolutionOutcome(base({ status: "ACTIVE", winner: 1 }));
-    expect(r.label).toBeNull();
+    expect(r.winnerLabel).toBeNull();
     expect(r.winnerSide).toBeNull();
   });
 
   it("returns null label for status=CLAIMED + winner=0 (resolved-tie sentinel)", () => {
     const r = formatResolutionOutcome(base({ status: "CLAIMED", winner: 0 }));
-    expect(r.label).toBeNull();
+    expect(r.winnerLabel).toBeNull();
     expect(r.winnerSide).toBeNull();
   });
 
   it("treats CLAIMED the same as RESOLVED for the winner badge", () => {
     const r = formatResolutionOutcome(base({ status: "CLAIMED", winner: 2 }));
-    expect(r.label).toBe("DOWN won");
+    expect(r.winnerLabel).toBe("DOWN won");
     expect(r.winnerSide).toBe(2);
   });
 
@@ -391,7 +391,7 @@ describe("formatResolutionOutcome (Bug C + Display-1)", () => {
     const r = formatResolutionOutcome(
       base({ winner: 1, strikePrice: "100", settlementPrice: "105" }),
     );
-    expect(r.deltaPctStr).toBe("+5.00%");
+    expect(r.deltaStr).toBe("+5.00%");
     expect(r.deltaUsedFinePrecision).toBe(false);
   });
 
@@ -399,7 +399,7 @@ describe("formatResolutionOutcome (Bug C + Display-1)", () => {
     const r = formatResolutionOutcome(
       base({ winner: 2, strikePrice: "100", settlementPrice: "95" }),
     );
-    expect(r.deltaPctStr).toBe("−5.00%");
+    expect(r.deltaStr).toBe("−5.00%");
   });
 
   // Display-1: when |delta| would round to 0.00% but is non-zero, switch to
@@ -410,14 +410,14 @@ describe("formatResolutionOutcome (Bug C + Display-1)", () => {
       base({ winner: 2, strikePrice: "7781684", settlementPrice: "7781683" }),
     );
     expect(r.deltaUsedFinePrecision).toBe(true);
-    expect(r.deltaPctStr).toMatch(/^−0\.\d{4}%$/);
+    expect(r.deltaStr).toMatch(/^−0\.\d{4}%$/);
   });
 
   it("Display-1 — exact tie (settled == strike) returns 0.00 (no fine precision)", () => {
     const r = formatResolutionOutcome(
       base({ winner: 2, strikePrice: "100", settlementPrice: "100" }),
     );
-    expect(r.deltaPctStr).toBe("+0.00%");
+    expect(r.deltaStr).toBe("+0.00%");
     expect(r.deltaUsedFinePrecision).toBe(false);
   });
 
@@ -425,14 +425,14 @@ describe("formatResolutionOutcome (Bug C + Display-1)", () => {
     const r = formatResolutionOutcome(
       base({ winner: 1, settlementPrice: undefined }),
     );
-    expect(r.deltaPctStr).toBeNull();
+    expect(r.deltaStr).toBeNull();
   });
 
   it("returns null deltaPctStr when strikePrice is zero (avoid division-by-zero)", () => {
     const r = formatResolutionOutcome(
       base({ winner: 1, strikePrice: "0", settlementPrice: "100" }),
     );
-    expect(r.deltaPctStr).toBeNull();
+    expect(r.deltaStr).toBeNull();
   });
 });
 
@@ -470,5 +470,38 @@ describe("isTerminalMarketStatus", () => {
     expect(isTerminalMarketStatus("PAUSED")).toBe(false);
     expect(isTerminalMarketStatus(undefined)).toBe(false);
     expect(isTerminalMarketStatus(null)).toBe(false);
+  });
+});
+
+// Phase2-A new MarketOutcome fields
+describe("formatResolutionOutcome — Phase2-A new fields", () => {
+  const make = (over: Record<string, unknown> = {}) => ({
+    status: "RESOLVED",
+    winner: 1 as number | null,
+    strikePrice: "5000000000000",
+    settlementPrice: "5050000000000",
+    ...over,
+  });
+
+  it("statusLabel renders friendly text per state", () => {
+    expect(formatResolutionOutcome(make({ status: "ACTIVE" })).statusLabel).toBe("Live");
+    expect(formatResolutionOutcome(make({ status: "TRADING_ENDED" })).statusLabel).toBe("Trading ended");
+    expect(formatResolutionOutcome(make({ status: "RESOLVED" })).statusLabel).toBe("Resolved");
+    expect(formatResolutionOutcome(make({ status: "CLAIMED" })).statusLabel).toBe("Resolved");
+  });
+
+  it("statusLabel falls back to title-cased raw status for unknown values", () => {
+    expect(formatResolutionOutcome(make({ status: "PAUSED" })).statusLabel).toBe("Paused");
+  });
+
+  it("statusLabel handles missing status defensively", () => {
+    expect(formatResolutionOutcome(make({ status: "" })).statusLabel).toBe("—");
+  });
+
+  it("settledPriceStr is formatted USD when settlement set, null otherwise", () => {
+    const set = formatResolutionOutcome(make({ settlementPrice: "5050000000000" }));
+    expect(set.settledPriceStr).toMatch(/^\$/);
+    const unset = formatResolutionOutcome(make({ settlementPrice: undefined }));
+    expect(unset.settledPriceStr).toBeNull();
   });
 });
