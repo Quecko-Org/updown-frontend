@@ -2,7 +2,7 @@
 
 import { Info } from "lucide-react";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { useAccount, useSignTypedData, useWriteContract, useWalletClient } from "wagmi";
@@ -74,6 +74,8 @@ function InfoTip({ text }: { text: string }) {
 
 function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const { address, isConnected } = useAccount();
   const smartAccount = useAtomValue(userSmartAccount);
   const apiConfig = useAtomValue(apiConfigAtom);
@@ -143,14 +145,32 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     if (sideParam === "1") setSide(1);
     else if (sideParam === "2") setSide(2);
 
-    // Phase2-C: deep-link `?shares=N` (1-1000). The legacy `?amount=` (USD)
-    // is intentionally dropped — the UI is now share-denominated, and stake
-    // depends on the live mid which isn't known at mount time.
+    // Phase2-C deep-link: `?shares=N` (1-1000).
     const sharesParam = searchParams.get("shares");
     if (sharesParam) {
       const n = parseInt(sharesParam, 10);
       if (Number.isFinite(n) && n >= 1 && n <= 1000) setShares(n);
     }
+
+    // Phase2-D legacy redirect: pre-Phase2-C cards/links used `?amount=N`
+    // (stake in USD). Convert to shares assuming a 50¢ default mid (so
+    // amount=25 → shares=50 ≈ $25 stake at 50¢) and rewrite the URL so the
+    // address bar matches the share-denominated UI. The legacy param is
+    // dropped from the URL on rewrite — bookmarks land on the new format
+    // next time the user follows them.
+    const amountParam = searchParams.get("amount");
+    if (amountParam && !sharesParam) {
+      const a = parseInt(amountParam, 10);
+      if (Number.isFinite(a) && a >= 1 && a <= 500) {
+        const synthesizedShares = Math.min(1000, Math.max(1, a * 2));
+        setShares(synthesizedShares);
+        const next = new URLSearchParams(searchParams.toString());
+        next.delete("amount");
+        next.set("shares", String(synthesizedShares));
+        router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
   function scrollToConnect() {
