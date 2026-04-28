@@ -33,8 +33,10 @@ import { approxProfitIfSideWinsUsd } from "@/lib/payoutEstimate";
 import { parseCompositeMarketKey } from "@/lib/marketKey";
 import { cn } from "@/lib/cn";
 import { formatUserFacingError, isUserRejection } from "@/lib/errors";
+import { isTerminalMarketStatus } from "@/lib/derivations";
 import { EmptyState } from "@/components/EmptyState";
 import { WalletConnectorList } from "@/components/WalletConnectorList";
+import { MarketClosedPanel } from "@/components/MarketClosedPanel";
 import { apiConfigAtom, userSmartAccount } from "@/store/atoms";
 
 const PRESETS = [5, 25, 50, 100, 500];
@@ -373,6 +375,15 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         subtitle="This URL does not match a valid market key (settlement address and market id)."
       />
     );
+  }
+
+  // Phase2-PRE bug fix: when the market is terminal (RESOLVED/CLAIMED/
+  // TRADING_ENDED) replace the trade form with a closed-state panel. Prior
+  // behavior left the full Buy/Sell UI rendered with only the submit button
+  // disabled — UP/DOWN selector, type pill, size input, and fee math all
+  // stayed interactive and visually live.
+  if (market && isTerminalMarketStatus(market.status)) {
+    return <MarketClosedPanel market={market} />;
   }
 
   const rebateBps = dmmStatus?.isDmm ? apiConfig?.dmmRebateBps : undefined;

@@ -9,7 +9,7 @@ import { getMarket, getPositions, getPriceHistory, getDmmStatus } from "@/lib/ap
 import { formatStrikeUsd, formatUsdt, marketDurationLabel, parseStrikeUsdNumber } from "@/lib/format";
 import { normalizePriceHistoryData } from "@/lib/priceChart";
 import { parseCompositeMarketKey } from "@/lib/marketKey";
-import { formatResolutionOutcome } from "@/lib/derivations";
+import { formatResolutionOutcome, isTerminalMarketStatus } from "@/lib/derivations";
 import { MarketPriceChart } from "@/components/MarketPriceChart";
 import { TradeForm } from "@/components/TradeForm";
 import { OrderBookPanel } from "@/components/OrderBook";
@@ -145,7 +145,11 @@ export function MarketPageClient({ address }: { address: string }) {
         ? "var(--up)"
         : "var(--down)";
 
-  const showCancelAll = !!eoa && dmmStatus?.isDmm;
+  // Phase2-PRE: even DMMs can't cancel-all on a terminal market — orders are
+  // already cancelled by the matching engine at MARKET_ENDED. Hide the kill
+  // switch so it doesn't fire a no-op DELETE that the backend would reject.
+  const showCancelAll =
+    !!eoa && dmmStatus?.isDmm && !isTerminalMarketStatus(market.status);
 
   return (
     <div>
@@ -245,7 +249,7 @@ export function MarketPageClient({ address }: { address: string }) {
           />
           <section>
             <h2 className="pp-micro mb-2">Order book</h2>
-            <OrderBookPanel marketId={marketKey} />
+            <OrderBookPanel marketId={marketKey} marketStatus={market.status} />
           </section>
         </div>
         <div className="lg:sticky lg:top-20">

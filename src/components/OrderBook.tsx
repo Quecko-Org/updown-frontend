@@ -28,7 +28,15 @@ type Row =
   | { kind: "up-ask"; price: number; depth: string; count: number; depthVal: number }
   | { kind: "down-bid"; price: number; depth: string; count: number; depthVal: number };
 
-export function OrderBookPanel({ marketId }: { marketId: string }) {
+export function OrderBookPanel({
+  marketId,
+  marketStatus,
+}: {
+  marketId: string;
+  /** Optional. When the market is terminal, the book is dimmed + labelled
+   *  closed so a stale snapshot can't be misread as live depth. */
+  marketStatus?: string;
+}) {
   const wsConnected = useAtomValue(wsConnectedAtom);
   const wsLastEventAt = useAtomValue(wsLastEventAtAtom);
   const [now, setNow] = useState(() => Date.now());
@@ -38,11 +46,16 @@ export function OrderBookPanel({ marketId }: { marketId: string }) {
     return () => clearInterval(id);
   }, []);
 
+  const isClosed =
+    marketStatus === "RESOLVED" ||
+    marketStatus === "CLAIMED" ||
+    marketStatus === "TRADING_ENDED";
+
   const { data, isLoading } = useQuery({
     queryKey: ["orderbook", marketId.toLowerCase()],
     queryFn: () => getOrderbook(marketId),
-    refetchInterval: 20_000,
-    refetchOnWindowFocus: true,
+    refetchInterval: isClosed ? false : 20_000,
+    refetchOnWindowFocus: !isClosed,
   });
 
   const staleHint =
@@ -82,6 +95,16 @@ export function OrderBookPanel({ marketId }: { marketId: string }) {
 
   if (isLoading || !data) {
     return <div className="pp-panel pp-caption text-center">Loading order book…</div>;
+  }
+
+  if (isClosed) {
+    return (
+      <div className="pp-panel">
+        <p className="pp-caption text-center" style={{ color: "var(--fg-2)" }}>
+          Order book closed — market resolved.
+        </p>
+      </div>
+    );
   }
 
   if (!hasOrders) {
