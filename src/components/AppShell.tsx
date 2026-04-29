@@ -9,6 +9,7 @@ import { getConfig } from "@/lib/api";
 import { apiConfigAtom } from "@/store/atoms";
 import { useUpDownWebSocket } from "@/hooks/useUpDownWebSocket";
 import { useLivePriceFeed } from "@/hooks/useLivePriceFeed";
+import { Footer } from "./Footer";
 import { Header } from "./Header";
 import { QuickMarketsStrip } from "./QuickMarketsStrip";
 import { cn } from "@/lib/cn";
@@ -44,17 +45,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useLivePriceFeed(LIVE_SYMBOLS);
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="flex min-h-screen flex-col bg-background">
       <Header />
       <QuickMarketsStrip />
       <main
         className={cn(
-          "mx-auto w-full px-4 pb-12 pt-6 sm:px-6 lg:px-8",
+          "mx-auto w-full flex-1 px-4 pb-12 pt-6 sm:px-6 lg:px-8",
           isMarketPage ? "max-w-[1440px]" : "max-w-[1280px]",
         )}
       >
         {children}
       </main>
+      <Footer />
     </div>
   );
 }

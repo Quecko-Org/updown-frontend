@@ -293,19 +293,27 @@ export function Header() {
               </div>
             )}
 
-            {/* Mobile hamburger */}
-            <button
-              type="button"
-              className="pp-btn pp-btn--ghost pp-btn--sm ml-1 sm:hidden"
-              onClick={() => setMobileMenuOpen((o) => !o)}
-              aria-label={mobileMenuOpen ? "Close menu" : "Menu"}
-            >
-              {mobileMenuOpen ? (
-                <X size={18} strokeWidth={1.5} />
-              ) : (
-                <Menu size={18} strokeWidth={1.5} />
-              )}
-            </button>
+            {/* Mobile hamburger.
+                Wrapper carries the responsive hide rule because `pp-btn` sets
+                an explicit `display: inline-flex` that loads after Tailwind
+                and otherwise wins the cascade — leaving the button visible
+                on desktop with a click handler whose drawer (correctly
+                sm:hidden) never appears. */}
+            <div className="ml-1 sm:hidden">
+              <button
+                type="button"
+                className="pp-btn pp-btn--ghost pp-btn--sm"
+                onClick={() => setMobileMenuOpen((o) => !o)}
+                aria-label={mobileMenuOpen ? "Close menu" : "Menu"}
+                aria-expanded={mobileMenuOpen}
+              >
+                {mobileMenuOpen ? (
+                  <X size={18} strokeWidth={1.5} />
+                ) : (
+                  <Menu size={18} strokeWidth={1.5} />
+                )}
+              </button>
+            </div>
           </div>
         </div>
 
