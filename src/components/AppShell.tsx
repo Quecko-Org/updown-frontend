@@ -9,6 +9,7 @@ import { getConfig } from "@/lib/api";
 import { apiConfigAtom } from "@/store/atoms";
 import { useUpDownWebSocket } from "@/hooks/useUpDownWebSocket";
 import { useLivePriceFeed } from "@/hooks/useLivePriceFeed";
+import { CookieConsentBanner } from "./CookieConsentBanner";
 import { Footer } from "./Footer";
 import { GeoBlockOverlay } from "./GeoBlockOverlay";
 import { Header } from "./Header";
@@ -65,6 +66,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </main>
       <Footer />
       <GeoBlockOverlay />
+      <CookieConsentBanner />
     </div>
   );
 }
