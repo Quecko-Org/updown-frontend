@@ -11,9 +11,11 @@ import Link from "next/link";
  * pages the footer simply renders below content as normal flow.
  */
 const FOOTER_LINKS = [
+  { href: "/how-it-works", label: "How it works" },
+  { href: "/faq", label: "FAQ" },
   { href: "/terms", label: "Terms" },
   { href: "/privacy", label: "Privacy" },
-  { href: "/faq", label: "FAQ" },
+  { href: "/risk", label: "Risk" },
   { href: "/contact", label: "Contact" },
 ];
 

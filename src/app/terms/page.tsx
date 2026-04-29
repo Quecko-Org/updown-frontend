@@ -1,12 +1,12 @@
-import { PlaceholderPage } from "@/components/PlaceholderPage";
+import { LegalPlaceholder } from "@/components/LegalPlaceholder";
 
 export const metadata = { title: "Terms of Service | PulsePairs" };
 
 export default function TermsPage() {
   return (
-    <PlaceholderPage
+    <LegalPlaceholder
       title="Terms of Service"
-      subtitle="By accessing PulsePairs you agree to abide by the platform's terms governing trading, settlement, and dispute resolution."
+      lastUpdated="2026-04-29"
     />
   );
 }
