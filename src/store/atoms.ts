@@ -37,3 +37,11 @@ export type GeoState = {
 };
 
 export const geoStateAtom = atom<GeoState>({ status: "loading", country: null });
+
+/**
+ * Cookie / analytics consent (EU GDPR-grade). `unset` triggers the consent
+ * banner. `accepted` is the only state that lets analytics SDKs (PR E)
+ * initialize. Persisted via lib/cookieConsent.
+ */
+export type CookieConsentStatus = "unset" | "accepted" | "rejected";
+export const cookieConsentAtom = atom<CookieConsentStatus>("unset");
