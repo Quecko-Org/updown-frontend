@@ -39,6 +39,7 @@ const NAV = [
 // regardless of whether the top bar is showing primary nav (≥sm) or hiding
 // it (<sm — the dropdown supplies primary nav too in that case).
 const SECONDARY_NAV = [
+  { href: "/settings", label: "Settings" },
   { href: "/faq", label: "FAQ" },
   { href: "/fees", label: "Fees" },
   { href: "/risk", label: "Risk disclosures" },
