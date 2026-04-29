@@ -1,11 +1,11 @@
 import { LegalPlaceholder } from "@/components/LegalPlaceholder";
 
-export const metadata = { title: "Privacy Policy | PulsePairs" };
+export const metadata = { title: "Risk Disclosures | PulsePairs" };
 
-export default function PrivacyPage() {
+export default function RiskPage() {
   return (
     <LegalPlaceholder
-      title="Privacy Policy"
+      title="Risk Disclosures"
       lastUpdated="2026-04-29"
     />
   );

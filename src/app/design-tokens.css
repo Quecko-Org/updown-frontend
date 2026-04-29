@@ -215,6 +215,17 @@
   color: var(--fg-2);
 }
 
+/* Inline link inside body copy. Underline-on-hover is the affordance —
+   default state stays subtle so a paragraph dense with links doesn't
+   rainbow-out. */
+.pp-link {
+  color: var(--fg-0);
+  text-decoration: none;
+  border-bottom: 1px solid var(--border-1);
+  transition: border-color var(--dur-micro) var(--ease);
+}
+.pp-link:hover { border-bottom-color: var(--fg-0); }
+
 .pp-micro {
   font-family: var(--font-sans);
   font-size: var(--fs-micro);
