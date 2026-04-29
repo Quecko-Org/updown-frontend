@@ -59,7 +59,7 @@ export function GeoBlockOverlay() {
             comply with applicable laws and regulations.
           </p>
           <p className="pp-caption" style={{ color: "var(--fg-2)", marginTop: 4 }}>
-            If you believe you've reached this page in error, contact{" "}
+            If you believe you’ve reached this page in error, contact{" "}
             <a href="mailto:hello@pulsepairs.com" className="pp-link">
               hello@pulsepairs.com
             </a>
