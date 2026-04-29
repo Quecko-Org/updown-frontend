@@ -4,7 +4,12 @@ import { useEffect, useRef } from "react";
 import { useSetAtom } from "jotai";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { wsConnectedAtom, wsLastEventAtAtom } from "@/store/atoms";
+import {
+  addNotificationAtom,
+  wsConnectedAtom,
+  wsLastEventAtAtom,
+} from "@/store/atoms";
+import { notificationFromTerminalOrder } from "@/lib/notifications";
 import { wsStreamUrl } from "@/lib/env";
 import type { BalanceResponse, MarketListItem, OrderBookResponse } from "@/lib/api";
 import { applyOrderUpdateToList, buildTerminalOrderToast, type OrderUpdateLike } from "@/lib/derivations";
@@ -46,6 +51,7 @@ export function useUpDownWebSocket(opts: {
   const queryClient = useQueryClient();
   const setWsConnected = useSetAtom(wsConnectedAtom);
   const setWsLastEventAt = useSetAtom(wsLastEventAtAtom);
+  const addNotification = useSetAtom(addNotificationAtom);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -160,6 +166,26 @@ export function useUpDownWebSocket(opts: {
         if (t) {
           if (t.kind === "info") toast.info(t.message, { id: t.id });
           else toast.success(t.message, { id: t.id });
+        }
+        // Persisted bell notification — survives reload, optionally
+        // mirrored as an OS push (see addNotificationAtom). Same wallet-
+        // match guard `buildTerminalOrderToast` runs internally.
+        if (
+          w &&
+          update.id &&
+          update.market &&
+          update.status &&
+          (!update.maker || update.maker.toLowerCase() === w.toLowerCase())
+        ) {
+          const n = notificationFromTerminalOrder({
+            orderId: String(update.id),
+            marketAddress: update.market,
+            status: String(update.status),
+            amount: update.amount,
+            filledAmount: update.filledAmount,
+            reason: update.reason,
+          });
+          if (n) addNotification({ wallet: w, notification: n });
         }
       }
       setWsLastEventAt(Date.now());
