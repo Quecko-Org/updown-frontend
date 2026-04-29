@@ -14,6 +14,7 @@ import { formatUsdt } from "@/lib/format";
 import { DepositModal } from "./DepositModal";
 import { WithdrawModal } from "./WithdrawModal";
 import { SignModal } from "./SignModal";
+import { StatusIndicator } from "./StatusIndicator";
 import { useWalletContext } from "@/context/WalletContext";
 import { WalletConnectorList } from "@/components/WalletConnectorList";
 import { getFormattedAddress } from "@/utils/walletHelpers";
@@ -247,6 +248,7 @@ export function Header() {
 
           {/* Right: balance + actions */}
           <div className="pp-hdr__right">
+            <StatusIndicator />
             {isWalletConnected && walletAddress && (
               <>
                 {/* Balance + address chip — hover for in-orders / total breakdown. */}
