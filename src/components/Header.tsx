@@ -66,18 +66,35 @@ export function Header() {
   const connectRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // Outside-click dismiss: only attach the listener while the corresponding
+  // popover is open, and listen for `mousedown` instead of `click`.
+  // The previous "always-on click + stopPropagation" pattern was fragile —
+  // some real-mouse click sequences (mousedown → focus → mouseup → click)
+  // closed the menu the same instant they opened it. Mousedown fires before
+  // the toggle button's click handler; when the menu is closed, the listener
+  // is unmounted, so the opening click cannot self-close. Same pattern is
+  // used elsewhere (TradeForm.otypeMenu) and is the React idiom here.
   useEffect(() => {
-    function onDocClick(e: MouseEvent) {
+    if (!connectOpen) return;
+    function onDoc(e: MouseEvent) {
       if (connectRef.current && !connectRef.current.contains(e.target as Node)) {
         setConnectOpen(false);
       }
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [connectOpen]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onDoc(e: MouseEvent) {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpen(false);
       }
     }
-    document.addEventListener("click", onDocClick);
-    return () => document.removeEventListener("click", onDocClick);
-  }, []);
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [menuOpen]);
 
   const { data: bal } = useQuery({
     queryKey: ["balance", walletAddress?.toLowerCase() ?? ""],
@@ -322,10 +339,7 @@ export function Header() {
               <button
                 type="button"
                 className="pp-btn pp-btn--ghost pp-btn--sm"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setMenuOpen((o) => !o);
-                }}
+                onClick={() => setMenuOpen((o) => !o)}
                 aria-label={menuOpen ? "Close menu" : "Menu"}
                 aria-expanded={menuOpen}
               >
