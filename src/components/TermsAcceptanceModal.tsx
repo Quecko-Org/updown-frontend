@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Modal } from "./Modal";
+import { track } from "@/lib/analytics";
 import { TERMS_VERSION, acceptCurrentVersion } from "@/lib/termsAcceptance";
 
 /**
@@ -35,6 +36,7 @@ export function TermsAcceptanceModal({
     if (!wallet) return;
     if (!checked) return;
     acceptCurrentVersion(wallet);
+    track("terms_accepted", { version: TERMS_VERSION });
     setChecked(false);
     onAccepted();
   }
