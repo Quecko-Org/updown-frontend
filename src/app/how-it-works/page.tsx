@@ -29,7 +29,7 @@ export default function HowItWorksPage() {
         <p className="pp-caption">
           Plain-English walkthrough of the product — what a market is, how
           pricing maps to probability, how fees and resolution work, and where
-          your funds live. If you'd rather skim quick answers, check the{" "}
+          your funds live. If you’d rather skim quick answers, check the{" "}
           <Link href="/faq" className="pp-link">
             FAQ
           </Link>
@@ -53,7 +53,7 @@ export default function HowItWorksPage() {
           When a market opens, we snapshot the current Chainlink BTC/USD or
           ETH/USD price as the <em>strike</em>. The market trades for the
           full window — 5 min, 15 min, or 1 hour. At the closing time, the
-          oracle's price is snapshotted again as the <em>settlement</em> price.
+          oracle’s price is snapshotted again as the <em>settlement</em> price.
           If the settlement price is above strike, UP wins. Below or equal,
           DOWN wins.
         </p>
@@ -67,8 +67,8 @@ export default function HowItWorksPage() {
       <Section id="pricing" title="How pricing works">
         <p>
           UP and DOWN trade on separate order books. Prices are quoted in
-          cents (1¢ to 99¢). A share's price <em>is</em> the market's implied
-          probability: if UP is trading at 60¢, the market thinks there's a
+          cents (1¢ to 99¢). A share’s price <em>is</em> the market’s implied
+          probability: if UP is trading at 60¢, the market thinks there’s a
           ~60% chance UP wins. UP and DOWN cents add up to roughly 100¢ in a
           healthy book — anything else is an arbitrage opportunity.
         </p>
@@ -81,13 +81,13 @@ export default function HowItWorksPage() {
 
       <Section id="fees" title="How fees work">
         <p>
-          Fees scale with the trade's certainty. The schedule peaks at 50¢
+          Fees scale with the trade’s certainty. The schedule peaks at 50¢
           (a coin-flip trade is the riskiest for the platform to facilitate)
           and tapers to nearly zero at extremes. Peak fee is{" "}
           <strong>1.5% of notional</strong> at 50¢ — at 90¢, the same trade
           pays under 0.5%. The formula is{" "}
           <code>fee = totalBps × 4 × p × (1 − p)</code>, where{" "}
-          <code>p</code> is the trade's price as a probability and{" "}
+          <code>p</code> is the trade’s price as a probability and{" "}
           <code>totalBps</code> = platform (0.7%) + maker (0.8%).
         </p>
         <p>
@@ -100,17 +100,17 @@ export default function HowItWorksPage() {
           <Link href="/rebates" className="pp-link">
             /rebates
           </Link>{" "}
-          if you're a DMM.
+          if you’re a DMM.
         </p>
       </Section>
 
       <Section id="resolution" title="How resolution works">
         <p>
-          When a market's window closes, the resolver pulls the current
+          When a market’s window closes, the resolver pulls the current
           Chainlink price for the relevant pair and compares it to the strike
           captured at open. The on-chain settlement contract credits winning
           positions $1 per share. Losing positions go to $0. The same oracle
-          feed is used for both snapshots, so there's no cross-feed
+          feed is used for both snapshots, so there’s no cross-feed
           drift to argue with.
         </p>
         <p>
@@ -129,7 +129,7 @@ export default function HowItWorksPage() {
           one-time approval transaction.
         </p>
         <p>
-          Send USDT to your connected wallet — that's it. There's no separate
+          Send USDT to your connected wallet — that’s it. There’s no separate
           deposit step into a custodial vault. The first BUY triggers a
           one-time <code>USDT.approve</code> transaction (paid in ETH gas)
           that grants the settlement contract permission to pull USDT at
@@ -141,14 +141,14 @@ export default function HowItWorksPage() {
       <Section id="claim" title="How to claim winnings">
         <p>
           Winnings are auto-claimed by the relayer when a market resolves —
-          you don't need to do anything. USDT lands in your wallet within a
+          you don’t need to do anything. USDT lands in your wallet within a
           few seconds of resolution.
         </p>
         <p>
           If the relayer is rate-limited or hits a transient error, your
-          Portfolio's Resolved tab will show a <strong>Claim</strong> button
+          Portfolio’s Resolved tab will show a <strong>Claim</strong> button
           for any unclaimed winning position. Clicking it nudges the relayer
-          to retry. You'll never lose unclaimed winnings — they sit on the
+          to retry. You’ll never lose unclaimed winnings — they sit on the
           settlement contract until claimed.
         </p>
       </Section>

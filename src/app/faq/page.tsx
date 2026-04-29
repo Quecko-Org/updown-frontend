@@ -8,8 +8,8 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
     a: (
       <>
         Each market is a fixed-window prediction on whether BTC or ETH will
-        close above ("UP") or below ("DOWN") its opening price within
-        5 minutes, 15 minutes, or 1 hour. The opening price ("strike") is
+        close above (“UP”) or below (“DOWN”) its opening price within
+        5 minutes, 15 minutes, or 1 hour. The opening price (“strike”) is
         snapshotted from the Chainlink BTC/USD or ETH/USD oracle when the
         market opens. Buy UP shares if you think the price will be higher at
         the closing snapshot, DOWN shares if you think it will be lower.
@@ -39,7 +39,7 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
     a: (
       <>
         Send USDT (the <code>0xCa4f…25F4</code> token on Arbitrum One) to your
-        connected wallet — that's your trading balance. There's no separate
+        connected wallet — that’s your trading balance. There’s no separate
         deposit step into a custodial vault: PulsePairs is non-custodial, your
         USDT stays in your wallet. The first BUY triggers a one-time
         approval (paid in ETH gas) granting the settlement contract permission
@@ -67,7 +67,7 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
         Common reasons:
         <ul className="ml-5 mt-2 list-disc space-y-1">
           <li>
-            <strong>Insufficient USDT balance</strong> — the wallet doesn't
+            <strong>Insufficient USDT balance</strong> — the wallet doesn’t
             have enough USDT for the stake.
           </li>
           <li>
@@ -97,7 +97,7 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
       <>
         Each side (UP / DOWN) trades on its own order book in cents. The
         midpoint between best bid and best ask is the implied probability:
-        a UP price of 60¢ means the market collectively thinks there's a
+        a UP price of 60¢ means the market collectively thinks there’s a
         ~60% chance of an UP outcome at resolution. UP and DOWN cents sum to
         roughly 100¢ in a healthy book.
       </>
