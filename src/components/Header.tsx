@@ -8,6 +8,7 @@ import { useMemo, useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { getBalance, getDmmStatus, getOrders } from "@/lib/api";
+import { identifyHashed, resetIdentity, track } from "@/lib/analytics";
 import { geoStateAtom, userSmartAccount } from "@/store/atoms";
 import { formatUsdt } from "@/lib/format";
 import { DepositModal } from "./DepositModal";
@@ -59,6 +60,19 @@ export function Header() {
 
   const smartAccount = useAtomValue(userSmartAccount);
   const geo = useAtomValue(geoStateAtom);
+
+  // Track connect-success once per session per wallet — `wagmi` flips
+  // `isWalletConnected` after the user picks a connector and signs in.
+  // Reset PostHog identity on disconnect so a subsequent visitor on the
+  // same browser doesn't inherit the previous wallet's events.
+  useEffect(() => {
+    if (isWalletConnected && walletAddress) {
+      track("connect_wallet_succeeded");
+      void identifyHashed(walletAddress);
+    } else {
+      resetIdentity();
+    }
+  }, [isWalletConnected, walletAddress]);
   /** Defense-in-depth: even if the overlay element is removed via
    *  DevTools, this flag short-circuits the connect dropdown so a
    *  restricted visitor still can't initiate the wallet flow. */
@@ -318,6 +332,7 @@ export function Header() {
                   onClick={(e) => {
                     e.stopPropagation();
                     if (geoBlocked) return;
+                    track("connect_wallet_attempted");
                     setConnectOpen((o) => !o);
                   }}
                 >

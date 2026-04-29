@@ -14,6 +14,7 @@ import { Footer } from "./Footer";
 import { GeoBlockOverlay } from "./GeoBlockOverlay";
 import { Header } from "./Header";
 import { QuickMarketsStrip } from "./QuickMarketsStrip";
+import { useAnalytics } from "@/hooks/useAnalytics";
 import { useGeoCheck } from "@/hooks/useGeoCheck";
 import { cn } from "@/lib/cn";
 
@@ -51,6 +52,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // and gates wallet-connect + trade-submit. Lookup runs in parallel with
   // every other startup work so it doesn't add to TTFB.
   useGeoCheck();
+
+  // Analytics — consent-gated PostHog init + per-route page_view.
+  useAnalytics();
 
   return (
     <div className="flex min-h-screen flex-col bg-background">

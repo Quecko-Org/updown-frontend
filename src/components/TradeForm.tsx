@@ -32,6 +32,7 @@ import {
 import { parseCompositeMarketKey } from "@/lib/marketKey";
 import { cn } from "@/lib/cn";
 import { formatUserFacingError, isUserRejection } from "@/lib/errors";
+import { track } from "@/lib/analytics";
 import { isTerminalMarketStatus } from "@/lib/derivations";
 import { EmptyState } from "@/components/EmptyState";
 import { WalletConnectorList } from "@/components/WalletConnectorList";
@@ -267,6 +268,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       args: [address as `0x${string}`, settlement],
     })) as bigint;
     if (current >= THRESHOLD) return;
+    track("approve_attempted");
     toast.info("One-time approval needed — confirm in your wallet (small ETH gas).");
     // Auto-retry-once on transient RPC layer failures ("JSON is not a valid
     // request object" etc). User-rejections are NOT retried — if they declined,
@@ -290,6 +292,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       });
     }
     await pub.waitForTransactionReceipt({ hash });
+    track("approve_succeeded", { txHash: hash });
   }, [address, cfg, wc, writeContractAsync]);
 
   const totalBps = (cfg?.platformFeeBps ?? 70) + (cfg?.makerFeeBps ?? 80);
@@ -499,6 +502,14 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     },
     onSuccess: () => {
       toast.success("Order submitted");
+      track("order_placed", {
+        type: orderType,
+        side: orderSide === 0 ? "BUY" : "SELL",
+        option: side === 1 ? "UP" : "DOWN",
+        pair: market?.pairSymbol ?? "unknown",
+        amountUsd: stakeUsd,
+        priceCents: orderType === "MARKET" ? null : Math.round(limitPrice / 100),
+      });
       const sa = smartAccount?.toLowerCase() ?? "";
       const addrLower = address?.toLowerCase() ?? "";
       qc.invalidateQueries({ queryKey: ["positions", sa] });
