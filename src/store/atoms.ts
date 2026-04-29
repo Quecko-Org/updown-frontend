@@ -21,3 +21,19 @@ export const wsConnectedAtom = atom(false);
 export const wsLastEventAtAtom = atom<number | null>(null);
 
 export const balanceSnapshotAtom = atom<BalanceResponse | null>(null);
+
+/**
+ * Geo-block status. `loading` while the lookup is in flight, `restricted`
+ * if the resolved country is on the block list, `allowed` otherwise.
+ * `unknown` means the lookup failed — UI treats it as ALLOWED (fail-open
+ * is the right call for usability; production lockdown lives at the edge
+ * via the CloudFront-Viewer-Country header, see lib/geo.ts).
+ */
+export type GeoStatus = "loading" | "allowed" | "restricted" | "unknown";
+
+export type GeoState = {
+  status: GeoStatus;
+  country: string | null;
+};
+
+export const geoStateAtom = atom<GeoState>({ status: "loading", country: null });

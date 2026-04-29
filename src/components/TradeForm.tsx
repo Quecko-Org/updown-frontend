@@ -38,7 +38,7 @@ import { WalletConnectorList } from "@/components/WalletConnectorList";
 import { MarketClosedPanel } from "@/components/MarketClosedPanel";
 import { TermsAcceptanceModal } from "@/components/TermsAcceptanceModal";
 import { hasAcceptedCurrentVersion } from "@/lib/termsAcceptance";
-import { apiConfigAtom, userSmartAccount } from "@/store/atoms";
+import { apiConfigAtom, geoStateAtom, userSmartAccount } from "@/store/atoms";
 
 // Phase2-C: shares-based UI presets. Default $10 stake at 50¢ = 20 shares;
 // the +X buttons add to whatever value is currently in the input.
@@ -81,6 +81,8 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const { address, isConnected } = useAccount();
   const smartAccount = useAtomValue(userSmartAccount);
   const apiConfig = useAtomValue(apiConfigAtom);
+  const geo = useAtomValue(geoStateAtom);
+  const geoBlocked = geo.status === "restricted";
   const [side, setSide] = useState<1 | 2>(1);
   // Phase2-C: shares-based UI. Default 20 shares ≈ $10 at a 50¢ market.
   const [shares, setShares] = useState<number>(20);
@@ -828,26 +830,33 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             priceInputInvalid ||
             !smartAccount ||
             shares <= 0 ||
-            stakeOutOfRange
+            stakeOutOfRange ||
+            geoBlocked
           }
           title={
-            !isMarketTradeable
-              ? "Market is closing — pick the next live market"
-              : priceInputInvalid
-                ? (userPriceParsed.error ?? "Fix price before submitting")
-                : !smartAccount
-                  ? "Finish wallet sign-in to enable trading"
-                  : shares <= 0
-                    ? "Enter a positive number of shares"
-                    : stakeOutOfRange
-                      ? `Total must be $${MIN_STAKE_USDT}–$${MAX_STAKE_USDT}`
-                      : undefined
+            geoBlocked
+              ? "Not available in your region"
+              : !isMarketTradeable
+                ? "Market is closing — pick the next live market"
+                : priceInputInvalid
+                  ? (userPriceParsed.error ?? "Fix price before submitting")
+                  : !smartAccount
+                    ? "Finish wallet sign-in to enable trading"
+                    : shares <= 0
+                      ? "Enter a positive number of shares"
+                      : stakeOutOfRange
+                        ? `Total must be $${MIN_STAKE_USDT}–$${MAX_STAKE_USDT}`
+                        : undefined
           }
           className={cn(
             "pp-btn pp-btn--lg pp-trade__cta",
             side === 1 ? "pp-btn--up" : "pp-btn--down",
           )}
           onClick={() => {
+            // WS3 PR C: defense-in-depth — even if the geo overlay is
+            // removed via DevTools, we don't let a restricted visitor
+            // produce a signed payload.
+            if (geoBlocked) return;
             // WS2 PR B: gate the first trade behind Terms acceptance for the
             // connected wallet. After accept, the user clicks Trade again —
             // we deliberately don't auto-resubmit so the price they see at

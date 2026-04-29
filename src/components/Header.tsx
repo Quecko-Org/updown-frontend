@@ -8,7 +8,7 @@ import { useMemo, useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { getBalance, getDmmStatus, getOrders } from "@/lib/api";
-import { userSmartAccount } from "@/store/atoms";
+import { geoStateAtom, userSmartAccount } from "@/store/atoms";
 import { formatUsdt } from "@/lib/format";
 import { DepositModal } from "./DepositModal";
 import { WithdrawModal } from "./WithdrawModal";
@@ -58,6 +58,11 @@ export function Header() {
   } = useWalletContext();
 
   const smartAccount = useAtomValue(userSmartAccount);
+  const geo = useAtomValue(geoStateAtom);
+  /** Defense-in-depth: even if the overlay element is removed via
+   *  DevTools, this flag short-circuits the connect dropdown so a
+   *  restricted visitor still can't initiate the wallet flow. */
+  const geoBlocked = geo.status === "restricted";
 
   const [depositOpen, setDepositOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
@@ -308,15 +313,17 @@ export function Header() {
                 <button
                   type="button"
                   className="pp-btn pp-btn--primary pp-btn--md"
-                  disabled={isLoading}
+                  disabled={isLoading || geoBlocked}
+                  title={geoBlocked ? "Not available in your region" : undefined}
                   onClick={(e) => {
                     e.stopPropagation();
+                    if (geoBlocked) return;
                     setConnectOpen((o) => !o);
                   }}
                 >
                   {isLoading ? "Connecting…" : "Connect wallet"}
                 </button>
-                {connectOpen && (
+                {connectOpen && !geoBlocked && (
                   <div
                     className="absolute right-0 top-full z-50 mt-2 min-w-[220px] rounded-[6px] border py-1"
                     style={{
