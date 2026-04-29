@@ -31,7 +31,7 @@ export default function ContactPage() {
         className="pp-caption mt-4"
         style={{ color: "var(--fg-2)", textAlign: "center" }}
       >
-        Social channels (X, Discord) will be linked here once they're live. For
+        Social channels (X, Discord) will be linked here once they’re live. For
         self-serve answers, see the{" "}
         <Link href="/faq" className="pp-link">
           FAQ
