@@ -10,8 +10,10 @@ import { apiConfigAtom } from "@/store/atoms";
 import { useUpDownWebSocket } from "@/hooks/useUpDownWebSocket";
 import { useLivePriceFeed } from "@/hooks/useLivePriceFeed";
 import { Footer } from "./Footer";
+import { GeoBlockOverlay } from "./GeoBlockOverlay";
 import { Header } from "./Header";
 import { QuickMarketsStrip } from "./QuickMarketsStrip";
+import { useGeoCheck } from "@/hooks/useGeoCheck";
 import { cn } from "@/lib/cn";
 
 const LIVE_SYMBOLS = ["BTC", "ETH"];
@@ -44,6 +46,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Binance WebSocket for real-time BTC/ETH prices → updates chart cache every 1s
   useLivePriceFeed(LIVE_SYMBOLS);
 
+  // Resolve visitor country once on mount; the result lives in geoStateAtom
+  // and gates wallet-connect + trade-submit. Lookup runs in parallel with
+  // every other startup work so it doesn't add to TTFB.
+  useGeoCheck();
+
   return (
     <div className="flex min-h-screen flex-col bg-background">
       <Header />
@@ -57,6 +64,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {children}
       </main>
       <Footer />
+      <GeoBlockOverlay />
     </div>
   );
 }
