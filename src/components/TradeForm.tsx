@@ -36,6 +36,8 @@ import { isTerminalMarketStatus } from "@/lib/derivations";
 import { EmptyState } from "@/components/EmptyState";
 import { WalletConnectorList } from "@/components/WalletConnectorList";
 import { MarketClosedPanel } from "@/components/MarketClosedPanel";
+import { TermsAcceptanceModal } from "@/components/TermsAcceptanceModal";
+import { hasAcceptedCurrentVersion } from "@/lib/termsAcceptance";
 import { apiConfigAtom, userSmartAccount } from "@/store/atoms";
 
 // Phase2-C: shares-based UI presets. Default $10 stake at 50¢ = 20 shares;
@@ -96,6 +98,11 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const otypeRef = useRef<HTMLDivElement>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFired = useRef(false);
+  // WS2 PR B: terms acceptance gate. Modal only opens on the first trade
+  // attempt for an unaccepted wallet — connecting alone does not trigger
+  // it, so users can browse / inspect markets without a forced legal
+  // interstitial.
+  const [termsModalOpen, setTermsModalOpen] = useState(false);
 
   // Short-click toggles Market ↔ Limit; long-press (>LONG_PRESS_MS) opens a
   // popover with all four order types. Pointer events rather than mousedown
@@ -840,7 +847,18 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             "pp-btn pp-btn--lg pp-trade__cta",
             side === 1 ? "pp-btn--up" : "pp-btn--down",
           )}
-          onClick={() => submit.mutate()}
+          onClick={() => {
+            // WS2 PR B: gate the first trade behind Terms acceptance for the
+            // connected wallet. After accept, the user clicks Trade again —
+            // we deliberately don't auto-resubmit so the price they see at
+            // the moment they confirm is the price they signed for (no
+            // hidden re-fetch between accept and signature).
+            if (address && !hasAcceptedCurrentVersion(address)) {
+              setTermsModalOpen(true);
+              return;
+            }
+            submit.mutate();
+          }}
         >
           {submit.isPending
             ? "Signing…"
@@ -861,6 +879,13 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
           <WalletConnectorList className="mt-3" />
         </div>
       )}
+
+      <TermsAcceptanceModal
+        open={termsModalOpen}
+        wallet={address ?? null}
+        onAccepted={() => setTermsModalOpen(false)}
+        onDismiss={() => setTermsModalOpen(false)}
+      />
     </div>
   );
 }
