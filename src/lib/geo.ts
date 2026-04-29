@@ -1,16 +1,16 @@
 /**
- * Geo-blocking — client-side check.
+ * Geo-blocking — shared constants + client-side fallback.
  *
- * v1 strategy: free ipapi.co lookup on mount, country code stored in an
- * atom, UI gates wallet-connect + trade-submit on the result. Wide-open
- * (`status === "unknown"`) is treated as ALLOWED — better to err toward
- * usability when the lookup fails than lock everyone out.
+ * Production strategy: `middleware.ts` reads the
+ * `CloudFront-Viewer-Country` header and 451-blocks restricted countries
+ * at the edge before the SPA loads. For non-restricted visitors the
+ * middleware also stamps a `pp-country` cookie that `useGeoCheck` reads
+ * on hydration, so no client-side lookup is needed in production.
  *
- * Production hardening (post-launch P0): migrate to a Next.js middleware
- * that reads the `CloudFront-Viewer-Country` header set by the dev /
- * prod CloudFront distribution. That moves the check to the edge,
- * costs nothing extra, and survives client-side bypass. The atom
- * surface here stays the same — only the source changes.
+ * `fetchClientCountry` (ipapi.co) remains as a belt for environments
+ * where the header isn't present — local dev, preview deploys, or any
+ * non-CloudFront origin. `unknown` (lookup failed) is still treated as
+ * ALLOWED so a transient ipapi outage doesn't lock everyone out.
  *
  * Restricted-list: lawyer will populate the real values before mainnet
  * launch. The default below is a PLACEHOLDER for QA — verify the gate
