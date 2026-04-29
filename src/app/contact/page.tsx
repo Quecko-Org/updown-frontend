@@ -4,14 +4,16 @@ export const metadata = { title: "Contact | PulsePairs" };
 
 export default function ContactPage() {
   return (
-    <div className="space-y-4" style={{ maxWidth: 640 }}>
-      <h1 className="pp-h1">Contact</h1>
-      <p className="pp-body" style={{ color: "var(--fg-1)" }}>
-        Questions, bug reports, partnership requests, or designated-market-maker
-        applications — reach the team directly:
-      </p>
+    <div className="mx-auto" style={{ maxWidth: 640 }}>
+      <header className="pp-pagetop">
+        <h1 className="pp-h1">Contact</h1>
+        <p className="pp-caption">
+          Questions, bug reports, partnerships, or DMM applications — reach
+          the team directly.
+        </p>
+      </header>
       <div
-        className="rounded-[6px] border p-4"
+        className="rounded-[6px] border p-5"
         style={{ background: "var(--bg-1)", borderColor: "var(--border-0)" }}
       >
         <p className="pp-body-strong">Email</p>
@@ -25,9 +27,12 @@ export default function ContactPage() {
           </a>
         </p>
       </div>
-      <p className="pp-caption" style={{ color: "var(--fg-2)" }}>
-        Social channels (X, Discord) will be linked here once they're live.
-        For self-serve answers, see the{" "}
+      <p
+        className="pp-caption mt-4"
+        style={{ color: "var(--fg-2)", textAlign: "center" }}
+      >
+        Social channels (X, Discord) will be linked here once they're live. For
+        self-serve answers, see the{" "}
         <Link href="/faq" className="pp-link">
           FAQ
         </Link>{" "}

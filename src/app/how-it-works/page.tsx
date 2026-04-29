@@ -23,10 +23,10 @@ function Section({
 
 export default function HowItWorksPage() {
   return (
-    <div className="space-y-8" style={{ maxWidth: 760 }}>
-      <header className="space-y-2">
+    <div className="mx-auto space-y-8" style={{ maxWidth: 760 }}>
+      <header className="pp-pagetop">
         <h1 className="pp-h1">How PulsePairs works</h1>
-        <p className="pp-body" style={{ color: "var(--fg-1)" }}>
+        <p className="pp-caption">
           Plain-English walkthrough of the product — what a market is, how
           pricing maps to probability, how fees and resolution work, and where
           your funds live. If you'd rather skim quick answers, check the{" "}

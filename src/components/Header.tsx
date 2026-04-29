@@ -21,10 +21,27 @@ import { cn } from "@/lib/cn";
 // Phase2-A: collapsed Positions + History into a single "Portfolio" surface
 // with tabs (Active / Resolved). Old /positions and /history routes redirect
 // into the right tab so any external link / bookmark continues working.
+//
+// WS2 PR A2: top-nav promotes "How it works" out of secondary into primary
+// so first-time users land on the explainer. /fees still lives — moves to
+// the secondary dropdown + an inline link inside /how-it-works.
 const NAV = [
   { href: "/", label: "Markets" },
   { href: "/portfolio", label: "Portfolio" },
+  { href: "/how-it-works", label: "How it works" },
+];
+
+// Secondary nav opens from the hamburger. Visible on all viewport sizes so
+// /fees, /risk, /faq, /contact, /terms, /privacy stay one click away
+// regardless of whether the top bar is showing primary nav (≥sm) or hiding
+// it (<sm — the dropdown supplies primary nav too in that case).
+const SECONDARY_NAV = [
+  { href: "/faq", label: "FAQ" },
   { href: "/fees", label: "Fees" },
+  { href: "/risk", label: "Risk disclosures" },
+  { href: "/contact", label: "Contact" },
+  { href: "/terms", label: "Terms" },
+  { href: "/privacy", label: "Privacy" },
 ];
 
 export function Header() {
@@ -45,13 +62,17 @@ export function Header() {
   const [depositOpen, setDepositOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const connectRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
       if (connectRef.current && !connectRef.current.contains(e.target as Node)) {
         setConnectOpen(false);
+      }
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
       }
     }
     document.addEventListener("click", onDocClick);
@@ -293,95 +314,125 @@ export function Header() {
               </div>
             )}
 
-            {/* Mobile hamburger.
-                Wrapper carries the responsive hide rule because `pp-btn` sets
-                an explicit `display: inline-flex` that loads after Tailwind
-                and otherwise wins the cascade — leaving the button visible
-                on desktop with a click handler whose drawer (correctly
-                sm:hidden) never appears. */}
-            <div className="ml-1 sm:hidden">
+            {/* Hamburger menu — visible on all viewports.
+                Wrapper carries `position: relative` so the absolutely-
+                positioned dropdown anchors to it. Clicks outside close via
+                the document-level handler in useEffect above. */}
+            <div ref={menuRef} className="relative ml-1">
               <button
                 type="button"
                 className="pp-btn pp-btn--ghost pp-btn--sm"
-                onClick={() => setMobileMenuOpen((o) => !o)}
-                aria-label={mobileMenuOpen ? "Close menu" : "Menu"}
-                aria-expanded={mobileMenuOpen}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen((o) => !o);
+                }}
+                aria-label={menuOpen ? "Close menu" : "Menu"}
+                aria-expanded={menuOpen}
               >
-                {mobileMenuOpen ? (
+                {menuOpen ? (
                   <X size={18} strokeWidth={1.5} />
                 ) : (
                   <Menu size={18} strokeWidth={1.5} />
                 )}
               </button>
+              {menuOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 top-full z-50 mt-2 min-w-[220px] rounded-[6px] border py-1"
+                  style={{
+                    background: "var(--bg-1)",
+                    borderColor: "var(--border-0)",
+                    boxShadow: "var(--shadow-overlay)",
+                  }}
+                >
+                  {/* Primary nav — only when the top bar hides it on small
+                      viewports. Keeps the dropdown lean on desktop since
+                      Markets / Portfolio / How it works already render up
+                      top there. */}
+                  <div className="sm:hidden">
+                    {NAV.map((n) => (
+                      <Link
+                        key={n.href}
+                        href={n.href}
+                        onClick={() => setMenuOpen(false)}
+                        className={cn(
+                          "pp-menu__item",
+                          navActive(n.href) && "pp-menu__item--on",
+                        )}
+                        role="menuitem"
+                      >
+                        {n.label}
+                      </Link>
+                    ))}
+                    {isWalletConnected && dmmStatus?.isDmm ? (
+                      <Link
+                        href="/rebates"
+                        onClick={() => setMenuOpen(false)}
+                        className={cn(
+                          "pp-menu__item",
+                          pathname === "/rebates" && "pp-menu__item--on",
+                        )}
+                        role="menuitem"
+                      >
+                        Rebates
+                      </Link>
+                    ) : null}
+                    <div className="pp-menu__divider" />
+                  </div>
+
+                  {/* Secondary nav — always visible. /fees, /risk, /faq,
+                      /contact, /terms, /privacy. Stays one click away
+                      regardless of viewport. */}
+                  {SECONDARY_NAV.map((n) => (
+                    <Link
+                      key={n.href}
+                      href={n.href}
+                      onClick={() => setMenuOpen(false)}
+                      className={cn(
+                        "pp-menu__item",
+                        pathname === n.href && "pp-menu__item--on",
+                      )}
+                      role="menuitem"
+                    >
+                      {n.label}
+                    </Link>
+                  ))}
+
+                  {/* Wallet actions — only when top bar hides them
+                      (<sm). Desktop already has Withdraw / Disconnect
+                      buttons in the right cluster. */}
+                  {isWalletConnected && walletAddress && (
+                    <div className="sm:hidden">
+                      <div className="pp-menu__divider" />
+                      <button
+                        type="button"
+                        className="pp-menu__item"
+                        onClick={() => {
+                          setWithdrawOpen(true);
+                          setMenuOpen(false);
+                        }}
+                        role="menuitem"
+                      >
+                        Withdraw
+                      </button>
+                      <button
+                        type="button"
+                        className="pp-menu__item"
+                        onClick={() => {
+                          void disconnectWallet();
+                          setMenuOpen(false);
+                        }}
+                        role="menuitem"
+                      >
+                        Disconnect
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
-
-        {/* Mobile menu */}
-        {mobileMenuOpen && (
-          <div
-            className="px-4 pb-4 pt-2 sm:hidden"
-            style={{ background: "var(--bg-0)", borderTop: "1px solid var(--border-0)" }}
-          >
-            <nav className="flex flex-col gap-1">
-              {NAV.map((n) => (
-                <Link
-                  key={n.href}
-                  href={n.href}
-                  onClick={() => setMobileMenuOpen(false)}
-                  className={cn(
-                    "pp-hdr__navlink",
-                    navActive(n.href) && "pp-hdr__navlink--on",
-                  )}
-                >
-                  {n.label}
-                </Link>
-              ))}
-              {isWalletConnected && dmmStatus?.isDmm ? (
-                <Link
-                  href="/rebates"
-                  onClick={() => setMobileMenuOpen(false)}
-                  className={cn(
-                    "pp-hdr__navlink",
-                    pathname === "/rebates" && "pp-hdr__navlink--on",
-                  )}
-                >
-                  Rebates
-                </Link>
-              ) : null}
-            </nav>
-            {isWalletConnected && walletAddress && (
-              <div className="mt-3 flex flex-col gap-2 pt-3" style={{ borderTop: "1px solid var(--border-0)" }}>
-                <div className="flex items-center justify-between">
-                  <span className="pp-walletchip__addr">{getFormattedAddress(walletAddress)}</span>
-                  <span className="pp-walletchip__bal">${formatUsdt(availableDerived)}</span>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className="pp-btn pp-btn--secondary pp-btn--sm flex-1"
-                    onClick={() => {
-                      setWithdrawOpen(true);
-                      setMobileMenuOpen(false);
-                    }}
-                  >
-                    Withdraw
-                  </button>
-                  <button
-                    type="button"
-                    className="pp-btn pp-btn--ghost pp-btn--sm flex-1"
-                    onClick={() => {
-                      void disconnectWallet();
-                      setMobileMenuOpen(false);
-                    }}
-                  >
-                    Disconnect
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
       </header>
 
       <DepositModal open={depositOpen} onClose={() => setDepositOpen(false)} depositAddress={depositAddress ?? ""} />

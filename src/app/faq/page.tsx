@@ -139,10 +139,10 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
 
 export default function FaqPage() {
   return (
-    <div className="space-y-6" style={{ maxWidth: 760 }}>
-      <header className="space-y-2">
+    <div className="mx-auto" style={{ maxWidth: 760 }}>
+      <header className="pp-pagetop">
         <h1 className="pp-h1">Frequently asked questions</h1>
-        <p className="pp-body" style={{ color: "var(--fg-1)" }}>
+        <p className="pp-caption">
           Quick answers about how PulsePairs works. Need more detail? Read{" "}
           <Link href="/how-it-works" className="pp-link">
             How it works
@@ -158,10 +158,10 @@ export default function FaqPage() {
         {FAQ.map((item, i) => (
           <li
             key={i}
-            className="rounded-[6px] border p-4"
+            className="rounded-[6px] border p-5"
             style={{ background: "var(--bg-1)", borderColor: "var(--border-0)" }}
           >
-            <h2 className="pp-h3" style={{ marginBottom: 6 }}>
+            <h2 className="pp-h3" style={{ marginBottom: 8 }}>
               {item.q}
             </h2>
             <div className="pp-body" style={{ color: "var(--fg-1)" }}>

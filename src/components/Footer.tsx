@@ -10,13 +10,12 @@ import Link from "next/link";
  * height when content is short, pushing the footer to the bottom. On long
  * pages the footer simply renders below content as normal flow.
  */
+// Footer carries the legal-essentials only — Terms + Privacy. Everything
+// else (How it works, FAQ, Risk, Fees, Contact) lives in the header
+// dropdown so the footer stays unobtrusive across long content pages.
 const FOOTER_LINKS = [
-  { href: "/how-it-works", label: "How it works" },
-  { href: "/faq", label: "FAQ" },
   { href: "/terms", label: "Terms" },
   { href: "/privacy", label: "Privacy" },
-  { href: "/risk", label: "Risk" },
-  { href: "/contact", label: "Contact" },
 ];
 
 export function Footer() {

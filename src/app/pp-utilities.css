@@ -647,6 +647,29 @@
   .pp-quicknav__label { display: none; }
 }
 
+/* ---------- Header dropdown menu (hamburger) ---------- */
+.pp-menu__item {
+  display: block;
+  padding: 8px 14px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--fg-1);
+  text-decoration: none;
+  background: transparent;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-micro) var(--ease), color var(--dur-micro) var(--ease);
+}
+.pp-menu__item:hover { background: var(--bg-hover); color: var(--fg-0); }
+.pp-menu__item--on { color: var(--fg-0); font-weight: 600; }
+.pp-menu__divider {
+  height: 1px;
+  background: var(--border-0);
+  margin: 4px 0;
+}
+
 /* ---------- Phase2-F market header actions (share / embed / bookmark) ---------- */
 .pp-mhdr-actions {
   display: inline-flex; gap: 4px;
