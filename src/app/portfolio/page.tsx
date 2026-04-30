@@ -9,6 +9,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 import {
   getMarket,
+  getMarkets,
   getOrders,
   getPositions,
   postMarketClaim,
@@ -93,6 +94,26 @@ function PortfolioInner() {
     staleTime: 10_000,
   });
   const orders: OrderRow[] = ordersResp?.orders ?? [];
+
+  // Markets snapshot — used to gate the per-row Cancel button on the
+  // Active tab. Cancels on closed markets are rejected by the backend
+  // (post-Path-1 PR #54), but exposing the button still implies the
+  // trade is reversible after the user already lost. Fail-safe: if the
+  // market isn't in the cached list (closed markets often drop off),
+  // treat it as non-ACTIVE and hide the button. Reuses the cached
+  // `["markets"]` query so the network cost is shared with the rest of
+  // the app.
+  const { data: marketsList } = useQuery({
+    queryKey: ["markets"],
+    queryFn: () => getMarkets(),
+    enabled: isConnected,
+    staleTime: 30_000,
+  });
+  const marketStatusByAddress = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const m of marketsList ?? []) map.set(m.address.toLowerCase(), m.status);
+    return map;
+  }, [marketsList]);
 
   // Resolved-position winner lookup so we can compute realized P&L without
   // a backend trade-aggregation endpoint. Mirrors the per-market query
@@ -214,6 +235,7 @@ function PortfolioInner() {
           loading={positionsLoading}
           positions={activePositions}
           openOrders={openOrders}
+          marketStatusByAddress={marketStatusByAddress}
         />
       ) : (
         <ResolvedTab
@@ -329,10 +351,12 @@ function ActiveTab({
   loading,
   positions,
   openOrders,
+  marketStatusByAddress,
 }: {
   loading: boolean;
   positions: PositionRow[];
   openOrders: OrderRow[];
+  marketStatusByAddress: Map<string, string>;
 }) {
   if (loading) {
     return <div className="py-8 text-center pp-caption">Loading…</div>;
@@ -357,7 +381,7 @@ function ActiveTab({
       {openOrders.length > 0 ? (
         <section className="space-y-3">
           <h2 className="pp-h3">Open orders</h2>
-          <OrderTable orders={openOrders} />
+          <OrderTable orders={openOrders} marketStatusByAddress={marketStatusByAddress} />
         </section>
       ) : null}
     </div>
@@ -551,7 +575,13 @@ function PositionTable({
   );
 }
 
-function OrderTable({ orders }: { orders: OrderRow[] }) {
+function OrderTable({
+  orders,
+  marketStatusByAddress,
+}: {
+  orders: OrderRow[];
+  marketStatusByAddress: Map<string, string>;
+}) {
   return (
     <div
       className="overflow-hidden overflow-x-auto rounded-[6px] border"
@@ -601,7 +631,8 @@ function OrderTable({ orders }: { orders: OrderRow[] }) {
                 <span className={statusChipClass(o.status)}>{o.status}</span>
               </td>
               <td className="r">
-                {o.status === "OPEN" || o.status === "PARTIALLY_FILLED" ? (
+                {(o.status === "OPEN" || o.status === "PARTIALLY_FILLED") &&
+                marketStatusByAddress.get(o.market.toLowerCase()) === "ACTIVE" ? (
                   <CancelOrderButton orderId={o.orderId} />
                 ) : null}
               </td>

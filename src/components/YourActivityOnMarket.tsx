@@ -25,6 +25,7 @@ export function YourActivityOnMarket({
   smartAccount,
   positions,
   marketWindowLabel,
+  marketStatus,
 }: {
   marketComposite: string;
   smartAccount: string | null | undefined;
@@ -34,6 +35,11 @@ export function YourActivityOnMarket({
    *  market a position belongs to when scanning the portfolio + jumping
    *  between detail pages. */
   marketWindowLabel?: string | null;
+  /** Parent market's lifecycle status. Used to hide the per-row Cancel
+   *  button once trading has stopped — backend rejects the cancel anyway
+   *  (see DELETE /orders/:id market-status guard), so the button being
+   *  visible would just imply reversibility that doesn't exist. */
+  marketStatus?: string | null;
 }) {
   const { address, isConnected } = useAccount();
   const addrLower = address?.toLowerCase() ?? "";
@@ -87,7 +93,7 @@ export function YourActivityOnMarket({
       {openOrders.length > 0 ? (
         <div className="space-y-2">
           <h3 className="pp-h3">Open orders</h3>
-          <OrdersSubtable rows={openOrders} />
+          <OrdersSubtable rows={openOrders} marketStatus={marketStatus ?? null} />
         </div>
       ) : null}
 
@@ -111,7 +117,13 @@ export function YourActivityOnMarket({
   );
 }
 
-function OrdersSubtable({ rows }: { rows: OrderRow[] }) {
+function OrdersSubtable({
+  rows,
+  marketStatus,
+}: {
+  rows: OrderRow[];
+  marketStatus: string | null;
+}) {
   return (
     <div
       className="overflow-hidden overflow-x-auto rounded-[6px] border"
@@ -163,7 +175,9 @@ function OrdersSubtable({ rows }: { rows: OrderRow[] }) {
                 </span>
               </td>
               <td className="r">
-                <CancelOrderButton orderId={o.orderId} />
+                {marketStatus === "ACTIVE" ? (
+                  <CancelOrderButton orderId={o.orderId} />
+                ) : null}
               </td>
             </tr>
           ))}

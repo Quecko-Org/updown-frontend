@@ -315,6 +315,7 @@ export function MarketPageClient({ address }: { address: string }) {
         marketComposite={marketKey}
         smartAccount={smartAccount}
         positions={localPositions}
+        marketStatus={market?.status ?? null}
       />
     </div>
   );
