@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useSetAtom } from "jotai";
 import { useQueryClient } from "@tanstack/react-query";
+import { useSignTypedData } from "wagmi";
 import { toast } from "sonner";
 import {
   addNotificationAtom,
@@ -11,6 +12,12 @@ import {
 } from "@/store/atoms";
 import { notificationFromTerminalOrder } from "@/lib/notifications";
 import { wsStreamUrl } from "@/lib/env";
+import {
+  buildWsAuthTypedData,
+  getCachedToken,
+  newSessionId,
+  setCachedToken,
+} from "@/lib/wsAuth";
 import type { BalanceResponse, MarketListItem, OrderBookResponse } from "@/lib/api";
 import { applyOrderUpdateToList, buildTerminalOrderToast, type OrderUpdateLike } from "@/lib/derivations";
 
@@ -41,6 +48,16 @@ function marketChannels(marketLower: string) {
 /**
  * Subscribes to `/stream`. Merges balance + order book updates into React Query.
  * Market list updates come from debounced invalidation on WS events plus focus refetch.
+ *
+ * TODO (test-debt, post-PR-19, P0-18 follow-up): this hook has zero unit-test
+ * coverage — including the new EIP-712 auth handshake added in PR-19. The
+ * file pre-dates a test infrastructure for hook+WebSocket interactions; any
+ * future change here is on the hook author's eyeball + manual verification
+ * via the dev wscat runbook. Eventual fix: add a tests/__mocks__/ws.ts
+ * mock server harness and cover the auth state-machine transitions
+ * (cached-token replay, sign-prompt, auth_ok deferred subscribe, wallet-
+ * change re-auth, auth_error degradation to public-channels-only).
+ * Tracked in TRACKING.md → Known test gaps.
  */
 export function useUpDownWebSocket(opts: {
   wallet: string | null | undefined;
@@ -52,6 +69,7 @@ export function useUpDownWebSocket(opts: {
   const setWsConnected = useSetAtom(wsConnectedAtom);
   const setWsLastEventAt = useSetAtom(wsLastEventAtAtom);
   const addNotification = useSetAtom(addNotificationAtom);
+  const { signTypedDataAsync } = useSignTypedData();
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -66,13 +84,45 @@ export function useUpDownWebSocket(opts: {
   const subscribedWalletRef = useRef<string | null>(null);
   /** Last market address we applied (raw); null if none. */
   const subscribedMarketRef = useRef<string | null>(null);
+  /** Wallet the current connection has successfully auth'd as. Cleared on
+   *  every ws close so reconnect re-auths (or replays the cached token). */
+  const authedWalletRef = useRef<string | null>(null);
+  /** Set during an in-flight auth handshake to prevent double-prompts on
+   *  rapid effect reruns or message-driven retries. */
+  const authInFlightRef = useRef(false);
 
   const handleMessageRef = useRef<(ev: MessageEvent) => void>(() => {});
 
   handleMessageRef.current = (ev: MessageEvent) => {
     try {
-      const msg = JSON.parse(String(ev.data)) as WsPayload;
+      const msg = JSON.parse(String(ev.data)) as WsPayload & {
+        wallet?: string;
+        token?: string;
+        expiresAt?: number;
+      };
       const w = walletRef.current;
+      // Auth handshake replies — set authedWalletRef so private subscribes
+      // can fire, cache the token for transient reconnects.
+      if (msg.type === "auth_ok" && typeof msg.wallet === "string") {
+        authedWalletRef.current = msg.wallet.toLowerCase();
+        if (typeof msg.token === "string" && typeof msg.expiresAt === "number") {
+          setCachedToken(msg.wallet, msg.token, msg.expiresAt);
+        }
+        // Now safe to subscribe to private channels.
+        const ws = wsRef.current;
+        if (ws) syncWalletMarketSubscriptionsRef.current(ws);
+        authInFlightRef.current = false;
+        return;
+      }
+      if (msg.type === "auth_error") {
+        authInFlightRef.current = false;
+        // Don't loop-prompt the user — leave authedWallet null. Public
+        // channels stay live; private channel subscribes will be silently
+        // dropped by the server until the next connect cycle (or until
+        // wallet changes and a fresh auth fires).
+        console.warn("[ws] auth rejected; private channels disabled this session");
+        return;
+      }
       if (msg.type === "balance_update" && w) {
         const data = msg.data as BalanceResponse;
         queryClient.setQueryData(["balance", w.toLowerCase()], data);
@@ -209,28 +259,93 @@ export function useUpDownWebSocket(opts: {
     const oldMKey = oldM?.toLowerCase() ?? null;
     const newMKey = newM?.toLowerCase() ?? null;
 
+    // Wallet-private subscriptions (orders:, balance:) require the WS to
+    // have completed the auth handshake for that exact wallet — see
+    // PR-19. If we haven't auth'd (or auth is still in flight, or auth
+    // failed) we skip the private subscribe; it'll fire after auth_ok.
+    const authReady = newWKey != null && authedWalletRef.current === newWKey;
+
     if (oldWKey !== newWKey) {
       if (oldWKey && oldW) {
         const ch = [...walletChannels(oldWKey)];
-        ws.send(JSON.stringify({ type: "unsubscribe", channels: ch, wallet: oldW }));
+        ws.send(JSON.stringify({ type: "unsubscribe", channels: ch }));
       }
-      if (newWKey && newW) {
+      if (newWKey && newW && authReady) {
         const ch = [...walletChannels(newWKey)];
-        ws.send(JSON.stringify({ type: "subscribe", channels: ch, wallet: newW }));
+        ws.send(JSON.stringify({ type: "subscribe", channels: ch }));
+        subscribedWalletRef.current = newW;
+      } else if (!newWKey) {
+        subscribedWalletRef.current = null;
       }
+      // If auth not ready yet, leave subscribedWalletRef null so a
+      // later auth_ok-driven sync picks it up.
+    } else if (newWKey && authReady && subscribedWalletRef.current === null) {
+      // Auth completed after the initial sync — fire the deferred subscribe now.
+      const ch = [...walletChannels(newWKey)];
+      ws.send(JSON.stringify({ type: "subscribe", channels: ch }));
       subscribedWalletRef.current = newW;
     }
 
     if (oldMKey !== newMKey) {
       if (oldMKey && oldM) {
         const ch = [...marketChannels(oldMKey)];
-        ws.send(JSON.stringify({ type: "unsubscribe", channels: ch, wallet: undefined }));
+        ws.send(JSON.stringify({ type: "unsubscribe", channels: ch }));
       }
       if (newMKey && newM) {
         const ch = [...marketChannels(newMKey)];
-        ws.send(JSON.stringify({ type: "subscribe", channels: ch, wallet: newW ?? undefined }));
+        ws.send(JSON.stringify({ type: "subscribe", channels: ch }));
       }
       subscribedMarketRef.current = newM;
+    }
+  };
+
+  /** Auth handshake. Tries cached token first, falls back to a signed
+   *  EIP-712 prompt. Triggered once per ws.onopen when a wallet is
+   *  connected. */
+  const runAuthHandshakeRef = useRef<() => Promise<void>>(async () => {});
+  runAuthHandshakeRef.current = async () => {
+    const ws = wsRef.current;
+    const w = walletRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!w) return;
+    if (authInFlightRef.current) return;
+    authInFlightRef.current = true;
+
+    const cached = getCachedToken(w);
+    if (cached) {
+      ws.send(JSON.stringify({ type: "auth", token: cached }));
+      // auth_ok handler clears authInFlightRef
+      return;
+    }
+
+    try {
+      const timestamp = BigInt(Math.floor(Date.now() / 1000));
+      const sessionId = newSessionId();
+      const typed = buildWsAuthTypedData({
+        wallet: w as `0x${string}`,
+        timestamp,
+        sessionId,
+      });
+      const signature = await signTypedDataAsync(typed);
+      // The connection might have closed while we waited for the user to
+      // sign — the next onopen will retry.
+      const sock = wsRef.current;
+      if (!sock || sock.readyState !== WebSocket.OPEN) {
+        authInFlightRef.current = false;
+        return;
+      }
+      sock.send(
+        JSON.stringify({
+          type: "auth",
+          wallet: w,
+          timestamp: Number(timestamp),
+          sessionId,
+          signature,
+        }),
+      );
+    } catch (err) {
+      authInFlightRef.current = false;
+      console.warn("[ws] auth signature prompt failed/rejected", err);
     }
   };
 
@@ -248,8 +363,20 @@ export function useUpDownWebSocket(opts: {
         setWsConnected(true);
         subscribedWalletRef.current = null;
         subscribedMarketRef.current = null;
-        ws.send(JSON.stringify({ type: "subscribe", channels: ["markets"], wallet: undefined }));
+        authedWalletRef.current = null;
+        authInFlightRef.current = false;
+        // Public channel — open to all, no auth needed.
+        ws.send(JSON.stringify({ type: "subscribe", channels: ["markets"] }));
+        // Market channels (orderbook, trades) — public, fire immediately.
+        // Wallet-scoped channels are deferred until auth_ok, see
+        // syncWalletMarketSubscriptionsRef.
         syncWalletMarketSubscriptionsRef.current(ws);
+        // Kick off the auth handshake if a wallet is connected. Cached
+        // token replays without prompting; otherwise the user signs
+        // once. auth_ok handler retriggers sync to subscribe private.
+        if (walletRef.current) {
+          void runAuthHandshakeRef.current();
+        }
       };
 
       ws.onmessage = (ev) => {
@@ -260,6 +387,8 @@ export function useUpDownWebSocket(opts: {
         setWsConnected(false);
         subscribedWalletRef.current = null;
         subscribedMarketRef.current = null;
+        authedWalletRef.current = null;
+        authInFlightRef.current = false;
         const attempt = reconnectRef.current;
         reconnectRef.current += 1;
         const exp = Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5));
@@ -293,6 +422,17 @@ export function useUpDownWebSocket(opts: {
     if (!enabled) return;
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    // If the wallet changed (connect → reconnect-different-wallet) we
+    // need to re-auth before the new wallet's private channels can be
+    // subscribed. Drop the stale auth flag; sync will skip private
+    // subscribes until auth_ok arrives.
+    const newWLower = wallet?.toLowerCase() ?? null;
+    if (authedWalletRef.current !== null && authedWalletRef.current !== newWLower) {
+      authedWalletRef.current = null;
+    }
     syncWalletMarketSubscriptionsRef.current(ws);
+    if (newWLower && authedWalletRef.current !== newWLower && !authInFlightRef.current) {
+      void runAuthHandshakeRef.current();
+    }
   }, [wallet, marketAddress, enabled]);
 }
