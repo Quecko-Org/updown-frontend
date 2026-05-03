@@ -239,8 +239,24 @@ export function MarketPriceChart({
       PAD_L + (Math.max(t0, Math.min(t1, t)) - t0) / dt * CHART_W;
     const py = (p: number) => PAD_T + CHART_H - ((p - pMin) / dp) * CHART_H;
 
+    // 2026-05-04: step-after interpolation. Price was P[i-1] from t[i-1]
+    // until t[i], at which point it stepped to P[i]. Each segment becomes
+    // two SVG commands: a horizontal line holding the prior y until the
+    // new x, then a vertical line stepping to the new y. Pre-fix the
+    // raw `M ... L ... L ...` was linear interpolation between samples,
+    // which visually invented gradual transitions that didn't actually
+    // happen — Coinbase ticker fires per-match and the price held flat
+    // between matches. Step-after matches reality.
     const lineD = series
-      .map((pt, i) => `${i === 0 ? "M" : "L"}${tx(pt.t).toFixed(1)},${py(pt.p).toFixed(1)}`)
+      .map((pt, i) => {
+        const x = tx(pt.t).toFixed(1);
+        const y = py(pt.p).toFixed(1);
+        if (i === 0) return `M${x},${y}`;
+        const prev = series[i - 1]!;
+        const prevY = py(prev.p).toFixed(1);
+        // Horizontal at prior y to new x, then vertical to new y.
+        return `L${x},${prevY} L${x},${y}`;
+      })
       .join(" ");
 
     const xFirst = tx(series[0]!.t);
