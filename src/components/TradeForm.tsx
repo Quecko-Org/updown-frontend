@@ -12,6 +12,7 @@ import { arbitrum } from "viem/chains";
 import { ALCHEMY_RPC_URL } from "@/config/environment";
 import { toast } from "sonner";
 import {
+  getBalance,
   getConfig,
   getMarket,
   getDmmStatus,
@@ -37,6 +38,7 @@ import {
   walkBookForAvgFillPrice,
 } from "@/lib/orderBookFill";
 import {
+  MAX_STAKE_ATOMIC,
   MAX_STAKE_USDT,
   MIN_STAKE_USDT,
   maxStakeForBalance,
@@ -284,6 +286,26 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     staleTime: 60_000,
   });
 
+  // PR-18 P0-11: available-balance gate. Pull the user's off-chain
+  // available USDT (cachedBalance - inOrders) so we can disable submit
+  // BEFORE the wallet popup if their stake exceeds available. Same
+  // queryKey as Header — React Query dedupes, no extra request.
+  const { data: balanceData } = useQuery({
+    queryKey: ["balance", address?.toLowerCase() ?? ""],
+    queryFn: () => getBalance(address!),
+    enabled: !!address && isConnected,
+    refetchInterval: 15_000,
+    staleTime: 5_000,
+  });
+  const availableUsdAtomic = useMemo(() => {
+    if (!balanceData) return BigInt(0);
+    try {
+      return BigInt(balanceData.available);
+    } catch {
+      return BigInt(0);
+    }
+  }, [balanceData]);
+
   const { signTypedDataAsync } = useSignTypedData();
   const { writeContractAsync } = useWriteContract();
   const { data: wc } = useWalletClient();
@@ -465,6 +487,27 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
 
   const stakeOutOfRange =
     stakeUsd > 0 && (stakeUsd < MIN_STAKE_USDT || stakeUsd > MAX_STAKE_USDT);
+
+  // P0-11: insufficient-balance gate. Only relevant for BUY (the only
+  // side that locks USDT collateral via the off-chain inOrders ledger).
+  // SELL collateral is shares, not USDT, so a SELL can succeed even
+  // when available USDT == 0. Submit-button title surfaces the missing
+  // amount to the cent so the user knows exactly how much to top up.
+  const stakeAtomic = useMemo(() => {
+    if (stakeUsd <= 0) return BigInt(0);
+    return parseUsdtToAtomic(stakeUsd.toFixed(2));
+  }, [stakeUsd]);
+  const insufficientBalance =
+    orderSide === 0 &&
+    stakeAtomic > BigInt(0) &&
+    isConnected &&
+    !!balanceData &&
+    availableUsdAtomic < stakeAtomic;
+  const insufficientBalanceShortfallUsd = useMemo(() => {
+    if (!insufficientBalance) return 0;
+    const short = stakeAtomic - availableUsdAtomic;
+    return Number(short) / 1_000_000;
+  }, [insufficientBalance, stakeAtomic, availableUsdAtomic]);
 
   // Phase2-C: the share price feeding fee math is the EFFECTIVE price the
   // trade fills at, not the order-book mid. For LIMIT/POST_ONLY/IOC at a
@@ -912,12 +955,15 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
                 type="button"
                 className="pp-trade__preset"
                 onClick={() => {
-                  // PR-18: "Max" = min(availableBalance, MAX_STAKE_USDT).
-                  // Available balance integration arrives in PR-18 part 4
-                  // (P0-11 gate). Until then, Max fills MAX_STAKE_USDT —
-                  // the user-facing cap — and the part-4 commit narrows
-                  // it by the actual on-chain balance.
-                  setStakeUsdInput(maxStakeForBalance(BigInt(MAX_STAKE_USDT) * BigInt(1_000_000)));
+                  // PR-18 P0-11: "Max" = min(availableBalance, MAX_STAKE_USDT).
+                  // Falls back to MAX_STAKE_USDT cap when balance hasn't
+                  // loaded yet (rare — the query usually resolves before
+                  // the user clicks Max).
+                  setStakeUsdInput(
+                    maxStakeForBalance(
+                      availableUsdAtomic > BigInt(0) ? availableUsdAtomic : MAX_STAKE_ATOMIC,
+                    ),
+                  );
                 }}
                 aria-label="Set stake to max"
               >
@@ -1040,6 +1086,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             !smartAccount ||
             stakeUsd <= 0 ||
             stakeOutOfRange ||
+            insufficientBalance ||
             noLiquidity ||
             insufficientDepth ||
             geoBlocked
@@ -1057,11 +1104,13 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
                       ? "Enter a stake amount"
                       : stakeOutOfRange
                         ? `Stake must be $${MIN_STAKE_USDT}–$${MAX_STAKE_USDT}`
-                        : noLiquidity
-                          ? `No liquidity on ${side === 1 ? "Up" : "Down"} ${orderSide === 0 ? "asks" : "bids"} — try a Limit order or wait for new orders`
-                          : insufficientDepth
-                            ? `Insufficient liquidity for $${stakeUsd.toFixed(2)} stake (max $${insufficientDepthMaxUsd.toFixed(2)} available now)`
-                            : undefined
+                        : insufficientBalance
+                          ? `You need $${insufficientBalanceShortfallUsd.toFixed(2)} more USDT in your wallet`
+                          : noLiquidity
+                            ? `No liquidity on ${side === 1 ? "Up" : "Down"} ${orderSide === 0 ? "asks" : "bids"} — try a Limit order or wait for new orders`
+                            : insufficientDepth
+                              ? `Insufficient liquidity for $${stakeUsd.toFixed(2)} stake (max $${insufficientDepthMaxUsd.toFixed(2)} available now)`
+                              : undefined
           }
           className={cn(
             "pp-btn pp-btn--lg pp-trade__cta",
