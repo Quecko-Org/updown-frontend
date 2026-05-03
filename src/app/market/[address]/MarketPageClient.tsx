@@ -138,18 +138,12 @@ export function MarketPageClient({ address }: { address: string }) {
   const isResolvedView = resolution.winnerSide != null;
   const settledLabel = market.settlementPrice ? formatStrikeUsd(market.settlementPrice) : null;
 
-  const directionLabel =
-    strikeNum == null || spotUsd == null
-      ? "—"
-      : spotUsd >= strikeNum
-        ? "UP ▲"
-        : "DOWN ▼";
-  const directionColor =
-    strikeNum == null || spotUsd == null
-      ? "var(--fg-2)"
-      : spotUsd >= strikeNum
-        ? "var(--up)"
-        : "var(--down)";
+  // PR-18 OBS-2: removed "Currently UP ▲ / DOWN ▼" arrow that derived
+  // direction from spot vs strike. Polymarket has no equivalent — they
+  // surface implied probability only, not a parallel directional badge.
+  // The implied-probability bar already covers directional sentiment;
+  // the arrow duplicated and confused. spotUsd / strikeNum keep their
+  // other consumers (chart anchor, header readouts).
 
   // Phase2-PRE: even DMMs can't cancel-all on a terminal market — orders are
   // already cancelled by the matching engine at MARKET_ENDED. Hide the kill
@@ -238,12 +232,6 @@ export function MarketPageClient({ address }: { address: string }) {
               <span className="flex flex-col gap-1">
                 <span className="pp-micro">Ends in</span>
                 <span className="pp-price-md">{endsIn}</span>
-              </span>
-              <span className="flex flex-col gap-1">
-                <span className="pp-micro">Currently</span>
-                <span className="pp-price-md" style={{ color: directionColor }}>
-                  {directionLabel}
-                </span>
               </span>
               <span className="flex flex-col gap-1">
                 <span className="pp-micro">Volume</span>
