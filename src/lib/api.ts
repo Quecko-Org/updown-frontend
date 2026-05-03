@@ -270,12 +270,23 @@ export async function postOrder(body: PostOrderBody): Promise<unknown> {
 
 export async function cancelOrder(
   orderId: string,
-  body: { maker: string; signature: string }
+  body: {
+    maker: string;
+    signature: string;
+    /** PR-13 (P1-4): backend requires nonce + expiry on every cancel. */
+    nonce: bigint | string;
+    expiry: bigint | string;
+  }
 ): Promise<unknown> {
   const res = await fetch(url(`/orders/${orderId}`), {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({
+      maker: body.maker,
+      signature: body.signature,
+      nonce: body.nonce.toString(),
+      expiry: body.expiry.toString(),
+    }),
   });
   return parseJson(res);
 }

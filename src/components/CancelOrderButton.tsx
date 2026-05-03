@@ -5,7 +5,11 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { useAccount, useSignTypedData } from "wagmi";
 import { toast } from "sonner";
-import { buildCancelTypedData } from "@/lib/eip712";
+import {
+  buildCancelTypedData,
+  freshCancelNonce,
+  cancelExpirySeconds,
+} from "@/lib/eip712";
 import { cancelOrder } from "@/lib/api";
 import { formatUserFacingError } from "@/lib/errors";
 import { apiConfigAtom } from "@/store/atoms";
@@ -35,9 +39,19 @@ export function CancelOrderButton({
     mutationFn: async () => {
       if (!address) throw new Error("Connect wallet");
       if (!apiConfig) throw new Error("Config not loaded yet — try again in a moment");
-      const typed = buildCancelTypedData(apiConfig, address as `0x${string}`, orderId);
+      // PR-13: each cancel sig is unique-per-attempt (random nonce + 5-min
+      // expiry) so a leaked sig can't replay forever.
+      const nonce = freshCancelNonce();
+      const expiry = cancelExpirySeconds();
+      const typed = buildCancelTypedData(
+        apiConfig,
+        address as `0x${string}`,
+        orderId,
+        nonce,
+        expiry,
+      );
       const signature = await signTypedDataAsync(typed);
-      await cancelOrder(orderId, { maker: address, signature });
+      await cancelOrder(orderId, { maker: address, signature, nonce, expiry });
     },
     onSuccess: () => {
       toast.info("Cancel submitted");
