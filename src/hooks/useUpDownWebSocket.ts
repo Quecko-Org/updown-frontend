@@ -201,7 +201,7 @@ export function useUpDownWebSocket(opts: {
       // dollars; do the same here so cache entries are uniform regardless
       // of source.
       if (
-        msg.type === "market_price_snapshot" &&
+        msg.type === "price_snapshot" &&
         msg.data &&
         typeof msg.data === "object"
       ) {
