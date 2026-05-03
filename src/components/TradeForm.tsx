@@ -529,10 +529,16 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const peakFeePct = (peakFeeBps / 100).toFixed(2);
 
   // Polymarket-parity: To-win = shares × $1 (each winning share pays $1).
-  // For BUY: net profit ≈ toWin − stakeUsd − fee. For SELL: stakeUsd is the
-  // proceeds the user receives; toWin doubles as the exposure if their side
-  // wins (they'd owe shares × $1).
+  // For BUY: net profit ≈ toWin − stakeUsd − fee.
+  // For SELL (PR-5-bundle, formula (c)): the seller receives `price ×
+  // stake` cash atomically on-chain (clean price, no fee deduction).
+  // Fees come from the buyer's residual, NOT from the seller's proceeds.
+  // Pre-PR-5-bundle the engine credited the seller with `stake − fees` to
+  // an off-chain BalanceModel ledger that had no API surface (the P0-7
+  // bug); post-bundle the seller is paid the price-based amount via the
+  // contract's atomic outflow.
   const toWinUsd = sharesPreview;
+  const sellProceedsUsd = stakeUsd * (sharePriceBps / 10000);
   const profitIfBuyWin = Math.max(0, toWinUsd - stakeUsd - feeUsdDisplay);
 
   const submit = useMutation({
@@ -1007,7 +1013,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         <div className="flex items-baseline justify-between">
           <span className="pp-micro">{orderSide === 0 ? "You spend" : "You receive"}</span>
           <span className="pp-tabular" style={{ color: "var(--fg-0)", fontWeight: 600 }}>
-            ${stakeUsd.toFixed(2)}
+            ${(orderSide === 0 ? stakeUsd : sellProceedsUsd).toFixed(2)}
           </span>
         </div>
         <div className="flex items-baseline justify-between">
@@ -1039,7 +1045,11 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
           </div>
         ) : null}
         <div className="pp-caption" style={{ marginTop: 4 }}>
-          Fee:{" "}
+          {/* PR-5-bundle (formula (c)): fees come from the buyer's residual,
+              not the seller's proceeds. Label the line accordingly so a SELL
+              user doesn't see "Fee" and assume it's deducted from their
+              receipt above. */}
+          {orderSide === 0 ? "Fee" : "Buyer pays fee"}:{" "}
           <span className="pp-tabular" style={{ color: "var(--fg-0)" }}>
             ${feeUsdDisplay.toFixed(2)} ({effectivePercentOfNotional.toFixed(2)}% at {shareCentsLabel})
           </span>
