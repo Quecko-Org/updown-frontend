@@ -190,6 +190,48 @@ export function useUpDownWebSocket(opts: {
           }
         }
       }
+      // PR-20 Phase 2: per-market Chainlink snapshot pushed by the
+      // backend snapshotter. Append to the corresponding ["marketPrices",
+      // address] cache so MarketPriceChart redraws without re-fetching.
+      // Namespaced distinctly from `price_update` (Binance-sourced spot
+      // feed in useLivePriceFeed) so the two streams don't collide.
+      //
+      // Backend emits Chainlink's raw 8-decimals integer (`9000000000000`
+      // for BTC at $90k). `getMarketPrices` descales the REST payload to
+      // dollars; do the same here so cache entries are uniform regardless
+      // of source.
+      if (
+        msg.type === "market_price_snapshot" &&
+        msg.data &&
+        typeof msg.data === "object"
+      ) {
+        const d = msg.data as {
+          address?: string;
+          timestampMs?: number;
+          price?: string | number;
+        };
+        if (d.address && d.timestampMs && d.price) {
+          const addr = String(d.address).toLowerCase();
+          const t = Number(d.timestampMs);
+          const rawN = typeof d.price === "string" ? Number(d.price) : d.price;
+          if (Number.isFinite(t) && Number.isFinite(rawN) && rawN > 0) {
+            const priceStr = (rawN / 1e8).toString();
+            queryClient.setQueryData<unknown>(
+              ["marketPrices", addr],
+              (prev: unknown) => {
+                if (!Array.isArray(prev)) return [[t, priceStr]];
+                // Drop any existing entry at the same timestamp so a
+                // chainlink-wins overwrite from the backend doesn't
+                // produce a duplicate frame on the chart.
+                const filtered = (prev as [number, string][]).filter(
+                  (row) => row?.[0] !== t,
+                );
+                return [...filtered, [t, priceStr]];
+              },
+            );
+          }
+        }
+      }
       if (msg.type === "market_created" || msg.type === "market_resolved") {
         if (marketInvalidateTimerRef.current) clearTimeout(marketInvalidateTimerRef.current);
         marketInvalidateTimerRef.current = setTimeout(() => {

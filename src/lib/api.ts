@@ -235,6 +235,43 @@ export async function getPriceHistory(symbol: string, query?: Record<string, str
   return parseJson<unknown>(res);
 }
 
+/**
+ * PR-20 Phase 2: per-market Chainlink + Coinbase-backfill price history,
+ * keyed by market address. Replaces the symbol-wide `getPriceHistory`
+ * call for the market-detail chart so resolved markets keep their full
+ * journey instead of falling back to a moving symbol-wide feed.
+ *
+ * Returns `[[timestampMs, priceString], ...]` (oldest first), same wire
+ * shape as `getPriceHistory` so the existing chart parser
+ * (`normalizePriceHistoryData`) handles both without branching.
+ *
+ * The backend stores Chainlink's raw 8-decimals integer (e.g. BTC at $90k
+ * is `9000000000000`). The chart compares price points to strike, which
+ * arrives as the same 8-decimals raw and is descaled by `formatUnits` in
+ * `parseStrikeUsdNumber`. We descale here for symmetry — every consumer
+ * of `[timestampMs, priceString]` (chart, sparkline, sortByTime helpers)
+ * already treats the second cell as a dollar-denominated string from the
+ * Coinbase proxy, so emitting dollars keeps the call sites untouched.
+ */
+const PRICE_SCALE_8DEC = 1e8;
+
+export async function getMarketPrices(
+  address: string,
+  from?: number,
+  to?: number,
+): Promise<[number, string][]> {
+  const query: Record<string, string | number | undefined> = {};
+  if (typeof from === "number" && Number.isFinite(from)) query.from = from;
+  if (typeof to === "number" && Number.isFinite(to)) query.to = to;
+  const res = await fetch(url(`/markets/${encodeURIComponent(address)}/prices`, query));
+  const raw = await parseJson<[number, string | number][]>(res);
+  return raw.map(([t, p]) => {
+    const n = typeof p === "string" ? Number(p) : p;
+    if (!Number.isFinite(n) || n <= 0) return [t, "0"];
+    return [t, (n / PRICE_SCALE_8DEC).toString()];
+  });
+}
+
 export type OrderApiType = "LIMIT" | "MARKET" | "POST_ONLY" | "IOC";
 
 /** Must match backend order `type` uint8 enum. */
