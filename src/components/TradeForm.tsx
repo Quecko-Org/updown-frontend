@@ -29,6 +29,12 @@ import {
   formatShareCentsLabel,
   sharePriceBpsFromOrderBookMid,
 } from "@/lib/feeEstimate";
+import { usdToShares } from "@/lib/orderBookFill";
+import {
+  MAX_STAKE_USDT,
+  MIN_STAKE_USDT,
+  maxStakeForBalance,
+} from "@/lib/stakeBounds";
 import { parseCompositeMarketKey } from "@/lib/marketKey";
 import { cn } from "@/lib/cn";
 import { formatUserFacingError, isUserRejection } from "@/lib/errors";
@@ -41,19 +47,22 @@ import { TermsAcceptanceModal } from "@/components/TermsAcceptanceModal";
 import { hasAcceptedCurrentVersion } from "@/lib/termsAcceptance";
 import { apiConfigAtom, geoStateAtom, userSmartAccount } from "@/store/atoms";
 
-// Phase2-C: shares-based UI presets. Default $10 stake at 50¢ = 20 shares;
-// the +X buttons add to whatever value is currently in the input.
-const SHARE_QUICK_ADDS = [10, 100, 500];
+// PR-18: USD-stake-based UI presets. Polymarket-parity. The +$X buttons
+// add to whatever value is currently in the stake input; "Max" fills with
+// `min(availableBalance, MAX_STAKE_USDT)` per the lib/stakeBounds clamp.
+type StakeQuickAdd = { kind: "add"; usd: number } | { kind: "max" };
+const STAKE_QUICK_ADDS: StakeQuickAdd[] = [
+  { kind: "add", usd: 5 },
+  { kind: "add", usd: 25 },
+  { kind: "add", usd: 100 },
+  { kind: "max" },
+];
+
 const EXPIRY_MODES: { id: "never" | "1h" | "close"; label: string; hint: string }[] = [
   { id: "close", label: "Until close", hint: "expires when market resolves" },
   { id: "1h", label: "1 hour", hint: "expires in 60 min" },
   { id: "never", label: "Never", hint: "never expires" },
 ];
-
-// Backend stake bounds (atomic USDT). Mirror with constants in TradeForm
-// validation; the share input is converted to stake before submission.
-const MIN_STAKE_USDT = 5;
-const MAX_STAKE_USDT = 500;
 
 // Ordered so the compact pill's short-click (Market ↔ Limit) matches index 0 / 1;
 // long-press reveals the full list including POST_ONLY + IOC.
@@ -85,8 +94,11 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const geo = useAtomValue(geoStateAtom);
   const geoBlocked = geo.status === "restricted";
   const [side, setSide] = useState<1 | 2>(1);
-  // Phase2-C: shares-based UI. Default 20 shares ≈ $10 at a 50¢ market.
-  const [shares, setShares] = useState<number>(20);
+  // PR-18 P1-19: USD-stake-based primary input. Polymarket-parity. The
+  // string-typed state lets the user type partial / decimal values
+  // ("5", "5.50", "") without forcing a number coercion on every
+  // keystroke. We parse to a number (then atomic) at use-sites.
+  const [stakeUsdInput, setStakeUsdInput] = useState<string>("");
   const [orderSide, setOrderSide] = useState<0 | 1>(0);
   const [orderType, setOrderType] = useState<OrderApiType>("MARKET");
   const [userPriceCentsInput, setUserPriceCentsInput] = useState<string>("");
@@ -155,28 +167,41 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     if (sideParam === "1") setSide(1);
     else if (sideParam === "2") setSide(2);
 
-    // Phase2-C deep-link: `?shares=N` (1-1000).
-    const sharesParam = searchParams.get("shares");
-    if (sharesParam) {
-      const n = parseInt(sharesParam, 10);
-      if (Number.isFinite(n) && n >= 1 && n <= 1000) setShares(n);
+    // PR-18 P1-19: deep-link `?stake=N` (USD dollars, 1..500).
+    const stakeParam = searchParams.get("stake");
+    if (stakeParam) {
+      const n = parseFloat(stakeParam);
+      if (Number.isFinite(n) && n >= 1 && n <= MAX_STAKE_USDT) {
+        setStakeUsdInput(n.toFixed(2));
+      }
     }
 
-    // Phase2-D legacy redirect: pre-Phase2-C cards/links used `?amount=N`
-    // (stake in USD). Convert to shares assuming a 50¢ default mid (so
-    // amount=25 → shares=50 ≈ $25 stake at 50¢) and rewrite the URL so the
-    // address bar matches the share-denominated UI. The legacy param is
-    // dropped from the URL on rewrite — bookmarks land on the new format
-    // next time the user follows them.
+    // Legacy redirect: `?shares=N` (Phase2-C share-denominated input)
+    // convert to USD stake assuming a 50¢ default (shares × $0.50 = stake).
+    // `?amount=N` (pre-Phase2-C, USD) is the same shape as the new
+    // `?stake` so we just rename the param. Both legacy params are
+    // dropped from the URL on rewrite — bookmarks land on the new format.
+    const sharesParam = searchParams.get("shares");
     const amountParam = searchParams.get("amount");
-    if (amountParam && !sharesParam) {
-      const a = parseInt(amountParam, 10);
-      if (Number.isFinite(a) && a >= 1 && a <= 500) {
-        const synthesizedShares = Math.min(1000, Math.max(1, a * 2));
-        setShares(synthesizedShares);
+    if (!stakeParam && (sharesParam || amountParam)) {
+      let stakeUsdRedirect: number | null = null;
+      if (sharesParam) {
+        const s = parseInt(sharesParam, 10);
+        if (Number.isFinite(s) && s >= 1 && s <= 1000) {
+          stakeUsdRedirect = Math.min(MAX_STAKE_USDT, Math.max(MIN_STAKE_USDT, s * 0.5));
+        }
+      } else if (amountParam) {
+        const a = parseFloat(amountParam);
+        if (Number.isFinite(a) && a >= 1 && a <= MAX_STAKE_USDT) {
+          stakeUsdRedirect = a;
+        }
+      }
+      if (stakeUsdRedirect != null) {
+        setStakeUsdInput(stakeUsdRedirect.toFixed(2));
         const next = new URLSearchParams(searchParams.toString());
         next.delete("amount");
-        next.set("shares", String(synthesizedShares));
+        next.delete("shares");
+        next.set("stake", stakeUsdRedirect.toFixed(2));
         router.replace(`${pathname}?${next.toString()}`, { scroll: false });
       }
     }
@@ -347,14 +372,31 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     return bestEffectivePriceCents(side, orderSide, market.orderBook);
   }, [orderType, limitPrice, market, side, orderSide]);
 
-  // Stake (USDT) = shares × cents / 100. Bound to the backend's $5–$500
-  // window so the disabled-button gate can refuse out-of-range trades
-  // before signing instead of letting the matching engine reject.
+  // PR-18 P1-19: stake comes directly from the user's USD input. Parse
+  // tolerantly — empty string / non-numeric / negative all collapse to 0
+  // (which trips the disabled-button gate's `stakeUsd <= 0` check).
   const stakeUsd = useMemo(() => {
-    if (!Number.isFinite(shares) || shares <= 0) return 0;
-    if (!Number.isFinite(effectivePriceCents) || effectivePriceCents <= 0) return 0;
-    return Math.round(shares * effectivePriceCents) / 100;
-  }, [shares, effectivePriceCents]);
+    const n = parseFloat(stakeUsdInput);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    // Round to cents to match the wire's 2dp atomic-USDT precision.
+    return Math.round(n * 100) / 100;
+  }, [stakeUsdInput]);
+
+  // Shares-acquired preview (display only). Computed via the integer
+  // BigInt helper to match the wire's rounding rule exactly: floor
+  // division so actualCost ≤ stakeUsd always holds. The display number
+  // is what the user will see in their position post-fill, so it must
+  // never overstate.
+  const sharesPreview = useMemo(() => {
+    if (stakeUsd <= 0 || effectivePriceCents <= 0) return 0;
+    const stakeAtomic = parseUsdtToAtomic(stakeUsd.toFixed(2));
+    const priceBps = BigInt(Math.max(1, Math.min(9999, Math.round(effectivePriceCents * 100))));
+    const sharesAtomic = usdToShares(stakeAtomic, priceBps);
+    // Atomic USDT scale (6 decimals) → display dollars. "Shares acquired"
+    // and "to win" are equivalent dollar amounts in our model (1 share =
+    // $1 if winning); see PR-18 design §5 wire-shape note.
+    return Number(sharesAtomic) / 1_000_000;
+  }, [stakeUsd, effectivePriceCents]);
 
   const stakeOutOfRange =
     stakeUsd > 0 && (stakeUsd < MIN_STAKE_USDT || stakeUsd > MAX_STAKE_USDT);
@@ -382,7 +424,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   // For BUY: net profit ≈ toWin − stakeUsd − fee. For SELL: stakeUsd is the
   // proceeds the user receives; toWin doubles as the exposure if their side
   // wins (they'd owe shares × $1).
-  const toWinUsd = shares;
+  const toWinUsd = sharesPreview;
   const profitIfBuyWin = Math.max(0, toWinUsd - stakeUsd - feeUsdDisplay);
 
   const submit = useMutation({
@@ -406,9 +448,10 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         side,
         orderSide,
         orderType,
-        shares,
+        sharesPreview,
         effectivePriceCents,
         stakeUsd,
+        stakeUsdInput,
         userPriceCentsInput: userPriceCentsInput || `(auto:${autoCentsDisplay}¢)`,
         expiryMode,
       });
@@ -708,23 +751,39 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         </div>
       )}
 
-      {/* Phase2-C: Shares input + +N quick-add. Polymarket-parity: user
-          buys a number of shares; each share pays $1 if their side wins. */}
+      {/* PR-18 P1-19: USD stake input + $N quick-add. Polymarket-parity:
+          user enters dollar amount; shares acquired computed from price.
+          Backend wire amount stays atomic-USDT (= our model's "shares"
+          1:1) so the signing path is unchanged — see PR-18 design §5
+          wire-shape note. */}
       <div className="mt-3">
-        <label className="pp-micro" htmlFor="trade-shares">
-          Shares
+        <label className="pp-micro" htmlFor="trade-stake">
+          Stake (USD)
         </label>
         <div className="mt-1 flex items-center gap-2">
+          <span
+            className="pp-tabular"
+            style={{ color: "var(--fg-2)", fontWeight: 600 }}
+            aria-hidden
+          >
+            $
+          </span>
           <input
-            id="trade-shares"
-            type="number"
-            inputMode="numeric"
-            min={1}
-            step={1}
-            value={shares}
+            id="trade-stake"
+            type="text"
+            inputMode="decimal"
+            placeholder="0.00"
+            value={stakeUsdInput}
             onChange={(e) => {
-              const n = Math.floor(Number(e.target.value));
-              if (Number.isFinite(n) && n >= 0) setShares(n);
+              // Allow empty / partial / decimal. Strip anything that
+              // isn't digits-or-dot. Number-coerce at use-sites.
+              const raw = e.target.value.replace(/[^0-9.]/g, "");
+              // Disallow more than one decimal point.
+              const parts = raw.split(".");
+              const cleaned = parts.length > 2
+                ? `${parts[0]}.${parts.slice(1).join("")}`
+                : raw;
+              setStakeUsdInput(cleaned);
             }}
             onFocus={(e) => e.currentTarget.select()}
             className={cn(
@@ -735,41 +794,69 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
           />
         </div>
         <div className="pp-trade__presets mt-2">
-          {SHARE_QUICK_ADDS.map((n) => (
-            <button
-              key={n}
-              type="button"
-              className="pp-trade__preset"
-              onClick={() => setShares((s) => Math.max(0, (Number.isFinite(s) ? s : 0) + n))}
-            >
-              +{n}
-            </button>
-          ))}
+          {STAKE_QUICK_ADDS.map((qa, i) =>
+            qa.kind === "max" ? (
+              <button
+                key="max"
+                type="button"
+                className="pp-trade__preset"
+                onClick={() => {
+                  // PR-18: "Max" = min(availableBalance, MAX_STAKE_USDT).
+                  // Available balance integration arrives in PR-18 part 4
+                  // (P0-11 gate). Until then, Max fills MAX_STAKE_USDT —
+                  // the user-facing cap — and the part-4 commit narrows
+                  // it by the actual on-chain balance.
+                  setStakeUsdInput(maxStakeForBalance(BigInt(MAX_STAKE_USDT) * BigInt(1_000_000)));
+                }}
+                aria-label="Set stake to max"
+              >
+                Max
+              </button>
+            ) : (
+              <button
+                key={`add-${qa.usd}-${i}`}
+                type="button"
+                className="pp-trade__preset"
+                onClick={() => {
+                  const cur = parseFloat(stakeUsdInput);
+                  const base = Number.isFinite(cur) && cur > 0 ? cur : 0;
+                  setStakeUsdInput((base + qa.usd).toFixed(2));
+                }}
+              >
+                +${qa.usd}
+              </button>
+            ),
+          )}
           <button
             type="button"
             className="pp-trade__preset"
-            onClick={() => setShares(0)}
-            aria-label="Clear shares"
+            onClick={() => setStakeUsdInput("")}
+            aria-label="Clear stake"
           >
             Clear
           </button>
         </div>
         {stakeOutOfRange ? (
           <p className="pp-caption mt-1 pp-down">
-            Total must be ${MIN_STAKE_USDT}–${MAX_STAKE_USDT}.
+            Stake must be ${MIN_STAKE_USDT}–${MAX_STAKE_USDT}.
           </p>
         ) : null}
       </div>
 
-      {/* Phase2-C: Total + To win. Total = shares × cents / 100; To win =
-          shares × $1. For BUY the user pays Total now and may receive
-          To win if their side wins. For SELL the user receives Total now;
-          To win is the exposure if their side wins. */}
+      {/* PR-18 P1-19: USD-stake summary. Stake first (the user's input),
+          then derived shares-acquired, then To-win and net profit.
+          Polymarket parity. */}
       <div className="pp-trade__summary">
         <div className="flex items-baseline justify-between">
-          <span className="pp-micro">{orderSide === 0 ? "Total cost" : "You receive"}</span>
+          <span className="pp-micro">{orderSide === 0 ? "You spend" : "You receive"}</span>
           <span className="pp-tabular" style={{ color: "var(--fg-0)", fontWeight: 600 }}>
             ${stakeUsd.toFixed(2)}
+          </span>
+        </div>
+        <div className="flex items-baseline justify-between">
+          <span className="pp-micro">Shares acquired</span>
+          <span className="pp-tabular" style={{ color: "var(--fg-1)" }}>
+            {sharesPreview.toFixed(2)}
           </span>
         </div>
         <div className="flex items-baseline justify-between">
@@ -840,7 +927,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             !isMarketTradeable ||
             priceInputInvalid ||
             !smartAccount ||
-            shares <= 0 ||
+            stakeUsd <= 0 ||
             stakeOutOfRange ||
             geoBlocked
           }
@@ -853,10 +940,10 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
                   ? (userPriceParsed.error ?? "Fix price before submitting")
                   : !smartAccount
                     ? "Finish wallet sign-in to enable trading"
-                    : shares <= 0
-                      ? "Enter a positive number of shares"
+                    : stakeUsd <= 0
+                      ? "Enter a stake amount"
                       : stakeOutOfRange
-                        ? `Total must be $${MIN_STAKE_USDT}–$${MAX_STAKE_USDT}`
+                        ? `Stake must be $${MIN_STAKE_USDT}–$${MAX_STAKE_USDT}`
                         : undefined
           }
           className={cn(
@@ -882,9 +969,9 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         >
           {submit.isPending
             ? "Signing…"
-            : shares <= 0
+            : stakeUsd <= 0
               ? "Trade"
-              : `${orderSide === 0 ? "Buy" : "Sell"} ${shares} ${side === 1 ? "Up" : "Down"} · $${stakeUsd.toFixed(2)}`}
+              : `${orderSide === 0 ? "Buy" : "Sell"} $${stakeUsd.toFixed(2)} of ${side === 1 ? "Up" : "Down"} · ${sharesPreview.toFixed(2)} shares @ ${Math.round(effectivePriceCents)}¢`}
         </button>
       ) : (
         <div
