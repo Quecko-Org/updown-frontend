@@ -59,6 +59,13 @@ function fmtTick(secEpoch: number, windowSec: number): string {
 /**
  * Stable Y-range hook — re-uses prior extrema unless a tick clearly escapes
  * them. Keeps the 5 gridlines steady instead of twitching on every WS push.
+ *
+ * 2026-05-03: also resets when the new target range is dramatically narrower
+ * than the cached one (>10x). Pre-fix the hook only ever EXPANDED — so a
+ * transient first-render state (rangeSeries empty, currentSpot null,
+ * fallback to 0) could pin pMin=0 and freeze a $0–$2600 axis even after
+ * real ticks arrived in the $2322 band, making $4 of price variance
+ * invisible at the resolution of $720 per gridline.
  */
 function useStableYRange(seriesKey: string, rawMin: number, rawMax: number) {
   const stateRef = useRef<{ key: string; min: number; max: number } | null>(null);
@@ -71,7 +78,16 @@ function useStableYRange(seriesKey: string, rawMin: number, rawMax: number) {
     return target;
   }
 
-  const buffer = (prev.max - prev.min) * 0.02;
+  const prevRange = prev.max - prev.min;
+  const targetRange = target.max - target.min;
+  // Snap to the new range if it's >10x tighter — "we were stuck on a
+  // bogus wide range" guard. Otherwise keep stability semantics.
+  if (prevRange > targetRange * 10) {
+    stateRef.current = { key: seriesKey, ...target };
+    return target;
+  }
+
+  const buffer = prevRange * 0.02;
   let { min, max } = prev;
   if (target.min < prev.min - buffer) min = target.min;
   if (target.max > prev.max + buffer) max = target.max;
@@ -184,8 +200,14 @@ export function MarketPriceChart({
   // future-proof against re-introducing synthetic anchors elsewhere.
   const includeStrike = yScaleMode === "strike";
   const rangeSeries = includeStrike ? series : rawSeries;
-  const priceMin = rangeSeries.length ? Math.min(...rangeSeries.map((p) => p.p)) : (currentSpot ?? 0);
-  const priceMax = rangeSeries.length ? Math.max(...rangeSeries.map((p) => p.p)) : (currentSpot ?? 0);
+  // 2026-05-03: fallback chain when rangeSeries is empty (first render before
+  // data lands) — `currentSpot ?? strikeNum ?? 0`. Pre-fix the `?? 0` got
+  // baked into useStableYRange's persistent state, pinning pMin=0 forever.
+  // strikeNum is parsed from market metadata and present for any market the
+  // chart could possibly render, so it's a much safer default.
+  const fallbackPrice = currentSpot ?? strikeNum ?? 0;
+  const priceMin = rangeSeries.length ? Math.min(...rangeSeries.map((p) => p.p)) : fallbackPrice;
+  const priceMax = rangeSeries.length ? Math.max(...rangeSeries.map((p) => p.p)) : fallbackPrice;
   const ymin = Math.min(
     priceMin,
     includeStrike ? (strikeNum ?? priceMin) : priceMin,
