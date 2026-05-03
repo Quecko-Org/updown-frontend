@@ -15,10 +15,12 @@ import {
   getConfig,
   getMarket,
   getDmmStatus,
+  getOrderbook,
   getPositions,
   postOrder,
   ORDER_TYPE_U8,
   type OrderApiType,
+  type OrderBookResponse,
 } from "@/lib/api";
 import { buildOrderTypedData } from "@/lib/eip712";
 import { deriveEffectiveStatus, validateLimitPriceCents } from "@/lib/derivations";
@@ -29,7 +31,11 @@ import {
   formatShareCentsLabel,
   sharePriceBpsFromOrderBookMid,
 } from "@/lib/feeEstimate";
-import { usdToShares } from "@/lib/orderBookFill";
+import {
+  slippageDecision,
+  usdToShares,
+  walkBookForAvgFillPrice,
+} from "@/lib/orderBookFill";
 import {
   MAX_STAKE_USDT,
   MIN_STAKE_USDT,
@@ -229,6 +235,20 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     refetchInterval: 15_000,
   });
 
+  // PR-18 P0-19: full-depth orderbook for VWAP-based MARKET-order pricing.
+  // The trimmed `market.orderBook` shape only carries top-of-book; for
+  // walkBookForAvgFillPrice we need every rung. React Query dedupes this
+  // with OrderBook.tsx's identical query (same key) — free.
+  // 2s refetch is fine for dev; P3 follow-up is to drop polling and use
+  // the WS `orderbook_update` channel exclusively. Logged in PR-18 design.
+  const { data: fullOrderbook } = useQuery<OrderBookResponse>({
+    queryKey: ["orderbook", marketKey.toLowerCase()],
+    queryFn: () => getOrderbook(marketKey),
+    enabled: !!parsedKey,
+    refetchInterval: 2_000,
+    staleTime: 1_000,
+  });
+
   // F2: countdown-aware gate. The 15s `market` refetch interval is too slow
   // to catch the moment a market hits 0:00 — the backend status flip lags
   // a few seconds behind real time. Without a local countdown, a user can
@@ -359,18 +379,63 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     [market],
   );
 
-  // Effective per-share price (cents) used for the Total + To-win + fee calc.
-  // For LIMIT/POST_ONLY/IOC, the user's `limitPrice` (bps→cents) is the
-  // effective price. For MARKET, the buyer pays best-ask / seller hits
-  // best-bid — `bestEffectivePriceCents` falls back to mid when that side
-  // of the book is empty.
+  // PR-18 P0-19: stake-aware VWAP for MARKET orders. Walks the relevant
+  // side of the FULL orderbook (asks for BUY, bids for SELL) accumulating
+  // depth until the user's stake is satisfied — returns the volume-
+  // weighted-average fill price they'll actually pay/receive. NEVER falls
+  // back to midpoint or top-of-book when stake walks multiple levels —
+  // that's the bug we're closing.
+  const stakeAtomicForVwap = useMemo(() => {
+    const usd = parseFloat(parseFloat(stakeUsdInput).toFixed(2));
+    if (!Number.isFinite(usd) || usd <= 0) return BigInt(0);
+    return parseUsdtToAtomic(usd.toFixed(2));
+  }, [stakeUsdInput]);
+
+  const vwapResult = useMemo(() => {
+    if (orderType !== "MARKET") return null;
+    if (!fullOrderbook) return null;
+    if (stakeAtomicForVwap <= BigInt(0)) return null;
+    const sideBook = side === 1 ? fullOrderbook.up : fullOrderbook.down;
+    // BUY (orderSide=0) hits asks (ascending). SELL (orderSide=1) hits
+    // bids (descending). Backend already sorts in those orders.
+    const levels = orderSide === 0 ? sideBook.asks : sideBook.bids;
+    return walkBookForAvgFillPrice(levels, stakeAtomicForVwap);
+  }, [orderType, fullOrderbook, stakeAtomicForVwap, side, orderSide]);
+
+  // Effective per-share price (cents) used for Total / To-win / fee calc
+  // AND the action-button label.
+  //   - LIMIT/POST_ONLY/IOC: user's typed limit price.
+  //   - MARKET with computable VWAP: that VWAP.
+  //   - MARKET without VWAP yet (no stake / book still loading): top-of-
+  //     book best-ask/best-bid via the legacy helper. Used only to render
+  //     a placeholder; submit is gated by depth flags below.
   const effectivePriceCents = useMemo(() => {
     if (orderType !== "MARKET") {
       return limitPrice / 100;
     }
+    if (vwapResult?.avgPriceBps != null) {
+      return Number(vwapResult.avgPriceBps) / 100;
+    }
     if (!market) return 50;
     return bestEffectivePriceCents(side, orderSide, market.orderBook);
-  }, [orderType, limitPrice, market, side, orderSide]);
+  }, [orderType, limitPrice, vwapResult, market, side, orderSide]);
+
+  // Depth-availability flags for the disabled-button gate.
+  const noLiquidity =
+    orderType === "MARKET" &&
+    stakeAtomicForVwap > BigInt(0) &&
+    vwapResult != null &&
+    vwapResult.avgPriceBps == null;
+  const insufficientDepth =
+    orderType === "MARKET" &&
+    stakeAtomicForVwap > BigInt(0) &&
+    vwapResult != null &&
+    vwapResult.requiresMoreDepth &&
+    vwapResult.avgPriceBps != null;
+  const insufficientDepthMaxUsd = useMemo(() => {
+    if (!insufficientDepth || !vwapResult) return 0;
+    return Number(vwapResult.fillableAtomic) / 1_000_000;
+  }, [insufficientDepth, vwapResult]);
 
   // PR-18 P1-19: stake comes directly from the user's USD input. Parse
   // tolerantly — empty string / non-numeric / negative all collapse to 0
@@ -475,6 +540,52 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       if (orderType !== "MARKET" && userPriceCentsInput !== "") {
         const v = validateLimitPriceCents(userPriceCentsInput);
         if (v.value == null) throw new Error(v.error ?? "Invalid price");
+      }
+
+      // PR-18 P0-19: slippage recompute. Capture the price the user saw
+      // when they clicked, then re-walk the freshest order-book snapshot
+      // and decide adverse-vs-favorable. Only MARKET orders need this —
+      // LIMIT/POST_ONLY/IOC sign at the user's typed price by definition.
+      // 1¢ threshold per PR-18 decision log; adverse-only (favorable
+      // moves never prompt — silent acceptance is the right default).
+      if (orderType === "MARKET" && vwapResult?.avgPriceBps != null) {
+        const displayedBps = vwapResult.avgPriceBps;
+        // Force a fresh fetch — bypass React Query's 2s cache so the
+        // submit-time snapshot is as fresh as possible.
+        const fresh = await qc.fetchQuery({
+          queryKey: ["orderbook", marketKey.toLowerCase()],
+          queryFn: () => getOrderbook(marketKey),
+          staleTime: 0,
+        });
+        const freshSideBook = side === 1 ? fresh.up : fresh.down;
+        const freshLevels = orderSide === 0 ? freshSideBook.asks : freshSideBook.bids;
+        const freshVwap = walkBookForAvgFillPrice(freshLevels, amount);
+        if (freshVwap.avgPriceBps == null) {
+          throw new Error("No matching liquidity at submit time. Try again or pick a different side.");
+        }
+        if (freshVwap.requiresMoreDepth) {
+          throw new Error(
+            `Insufficient liquidity at submit time. Max fillable now: $${(Number(freshVwap.fillableAtomic) / 1_000_000).toFixed(2)}.`,
+          );
+        }
+        const decision = slippageDecision(
+          displayedBps,
+          freshVwap.avgPriceBps,
+          orderSide,
+          BigInt(100),
+        );
+        if (decision === "prompt") {
+          const displayedC = (Number(displayedBps) / 100).toFixed(0);
+          const currentC = (Number(freshVwap.avgPriceBps) / 100).toFixed(0);
+          const ok = window.confirm(
+            `Price moved from ${displayedC}¢ to ${currentC}¢. Continue at ${currentC}¢?`,
+          );
+          if (!ok) {
+            // User declined — bail out. The mutation's onError will
+            // surface a friendly toast via formatUserFacingError.
+            throw new Error("Cancelled — price moved beyond your slippage tolerance.");
+          }
+        }
       }
 
       if (orderSide === 1 /* SELL */) {
@@ -929,6 +1040,8 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             !smartAccount ||
             stakeUsd <= 0 ||
             stakeOutOfRange ||
+            noLiquidity ||
+            insufficientDepth ||
             geoBlocked
           }
           title={
@@ -944,7 +1057,11 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
                       ? "Enter a stake amount"
                       : stakeOutOfRange
                         ? `Stake must be $${MIN_STAKE_USDT}–$${MAX_STAKE_USDT}`
-                        : undefined
+                        : noLiquidity
+                          ? `No liquidity on ${side === 1 ? "Up" : "Down"} ${orderSide === 0 ? "asks" : "bids"} — try a Limit order or wait for new orders`
+                          : insufficientDepth
+                            ? `Insufficient liquidity for $${stakeUsd.toFixed(2)} stake (max $${insufficientDepthMaxUsd.toFixed(2)} available now)`
+                            : undefined
           }
           className={cn(
             "pp-btn pp-btn--lg pp-trade__cta",
