@@ -5,9 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { useAccount } from "wagmi";
-import { getMarket, getPositions, getPriceHistory, getDmmStatus } from "@/lib/api";
+import { getMarket, getPositions, getDmmStatus } from "@/lib/api";
 import { formatStrikeUsd, marketDurationLabel, parseStrikeUsdNumber } from "@/lib/format";
-import { normalizePriceHistoryData } from "@/lib/priceChart";
 import { parseCompositeMarketKey } from "@/lib/marketKey";
 import {
   formatMarketWindow,
@@ -63,19 +62,11 @@ export function MarketPageClient({ address }: { address: string }) {
 
   const chartSymbol = market?.chartSymbol === "ETH" ? "ETH" : "BTC";
 
-  const { data: priceRaw } = useQuery({
-    queryKey: ["priceHistory", chartSymbol],
-    queryFn: () => getPriceHistory(chartSymbol),
-    enabled: !!market,
-    refetchInterval: 10_000,
-  });
-
-  const spotUsd = useMemo(() => {
-    const pts = normalizePriceHistoryData(priceRaw);
-    if (!pts.length) return null;
-    const p = pts[pts.length - 1]!.p;
-    return p > 0 ? p : null;
-  }, [priceRaw]);
+  // PR-20 Phase 2: the symbol-wide spot price feed (`getPriceHistory`) is
+  // gone — the market-detail chart now sources its series from the
+  // per-market `getMarketPrices` endpoint inside MarketPriceChart, fed live
+  // by the `market_price_snapshot` WS frame. The page's only price-related
+  // job is to choose the chart symbol label.
 
   const { data: positions } = useQuery({
     queryKey: ["positions", smartAccount?.toLowerCase() ?? ""],
@@ -265,6 +256,7 @@ export function MarketPageClient({ address }: { address: string }) {
         <div className="min-w-0 space-y-3">
           <MarketPriceChart
             symbol={chartSymbol}
+            marketAddress={market.address}
             marketStartSec={market.startTime}
             marketEndSec={market.endTime}
             strikePriceRaw={market.strikePrice}

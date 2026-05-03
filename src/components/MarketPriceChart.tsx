@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getPriceHistory } from "@/lib/api";
+import { getMarketPrices } from "@/lib/api";
 import { formatStrikeUsd, parseStrikeUsdNumber } from "@/lib/format";
 import { clipPointsBetween, normalizePriceHistoryData, type PricePoint } from "@/lib/priceChart";
 import { cn } from "@/lib/cn";
@@ -84,23 +84,38 @@ function useStableYRange(seriesKey: string, rawMin: number, rawMax: number) {
 
 export function MarketPriceChart({
   symbol,
+  marketAddress,
   marketStartSec,
   marketEndSec,
   strikePriceRaw,
   settlementPriceRaw,
   isResolved = false,
 }: {
+  /** Display only — chart series is now keyed by marketAddress. */
   symbol: "BTC" | "ETH";
+  /** PR-20 Phase 2: chart now reads per-market Chainlink history (with one-shot
+   *  Coinbase backfill) instead of the symbol-wide spot feed. */
+  marketAddress: string;
   marketStartSec: number;
   marketEndSec: number;
   strikePriceRaw?: string;
   settlementPriceRaw?: string;
   isResolved?: boolean;
 }) {
+  // PR-20 Phase 2: keyed by marketAddress so the WS handler in
+  // useUpDownWebSocket can append `market_price_snapshot` ticks via
+  // setQueryData(["marketPrices", address], ...) without needing the
+  // chart component mounted. The 10s polling interval is gone — fresh
+  // data arrives on the WS stream.
+  const addrLower = marketAddress.toLowerCase();
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["priceHistory", symbol],
-    queryFn: () => getPriceHistory(symbol),
-    refetchInterval: 10_000,
+    queryKey: ["marketPrices", addrLower],
+    queryFn: () => getMarketPrices(marketAddress, marketStartSec, marketEndSec),
+    // Resolved markets are immutable — never refetch. Active markets
+    // get their tail from WS pushes, so a polling fallback is just a
+    // safety net for missed frames; keep one slow refetch.
+    refetchInterval: isResolved ? false : 30_000,
+    staleTime: isResolved ? Infinity : 0,
   });
 
   const strikeNum = parseStrikeUsdNumber(strikePriceRaw);
@@ -116,27 +131,17 @@ export function MarketPriceChart({
     [allPoints, marketStartSec, marketEndSec],
   );
 
-  // Anchor (strike-fit only): the line literally starts on the strike line at
-  // marketStartSec, because the strike IS the opening price of the market
-  // (Chainlink snapshot at block time). Binance/oracle cross-feed drift is a
-  // visual distraction we don't want in a price-direction chart.
+  // PR-20 Phase 2: the synthetic strike-anchor at marketStartSec is gone.
+  // The chart now consumes per-market Chainlink snapshots (with one-shot
+  // Coinbase backfill) instead of the symbol-wide spot feed, so the very
+  // first real tick lands on (or within Chainlink heartbeat-distance of)
+  // the strike — matching strike via real data, not by synthesizing a
+  // point on top of the strike line.
   //
-  // Spot-fit explicitly omits the strike anchor — when strike falls outside
-  // the zoomed Y range, the synthetic anchor would draw the line shooting in
-  // from below/above the frame. Use the raw ticks only.
-  //
-  // If the market is resolved, also append the settlement at marketEndSec so
-  // the chart spans the full window and clearly shows where we landed.
+  // Resolved markets still pin the last point to settlementPrice at
+  // marketEndSec so the chart visibly closes on where the market landed.
   const series = useMemo((): PricePoint[] => {
     const s: PricePoint[] = [...rawSeries];
-    if (yScaleMode === "strike" && strikeNum != null) {
-      const firstT = s[0]?.t ?? marketEndSec;
-      if (firstT > marketStartSec) {
-        s.unshift({ t: marketStartSec, p: strikeNum });
-      } else if (s.length > 0) {
-        s[0] = { t: marketStartSec, p: strikeNum };
-      }
-    }
     if (isResolved && settlementNum != null) {
       const lastT = s[s.length - 1]?.t ?? marketStartSec;
       if (lastT < marketEndSec) {
@@ -146,7 +151,7 @@ export function MarketPriceChart({
       }
     }
     return s;
-  }, [rawSeries, strikeNum, settlementNum, isResolved, marketStartSec, marketEndSec, yScaleMode]);
+  }, [rawSeries, settlementNum, isResolved, marketStartSec, marketEndSec]);
 
   // Sub-second "tickNow" for smooth endpoint glide between WS ticks.
   const [tickNow, setTickNow] = useState(() => Math.floor(Date.now() / 1000));
@@ -167,12 +172,16 @@ export function MarketPriceChart({
     return null;
   }, [rawSeries, allPoints, isResolved, settlementNum]);
 
-  // Y range. Strike-fit (default) considers strike + current spot + the full
-  // anchored series (which starts on strike) so everything visible stays
-  // inside the frame. Spot-fit explicitly drops the strike anchor: extrema
-  // come from `rawSeries` (real ticks only) + currentSpot. Otherwise the
-  // first-point strike anchor would always force the range to span [strike,
-  // spot] regardless of mode — silently making the toggle a no-op.
+  // Y range. Strike-fit (default) extends the visible band to also cover the
+  // strike level so the strike line + price ticks are both in frame at once.
+  // Spot-fit drops the strike consideration: extrema come from `rawSeries`
+  // (real ticks only) + currentSpot, so the chart hugs the actual price
+  // envelope when strike has drifted far away.
+  //
+  // PR-20 Phase 2: with the synthetic strike-anchor gone, `series === rawSeries`
+  // for live markets — `rangeSeries = series` works for either mode. We keep
+  // the explicit branch to make the strike-vs-spot intent obvious and to
+  // future-proof against re-introducing synthetic anchors elsewhere.
   const includeStrike = yScaleMode === "strike";
   const rangeSeries = includeStrike ? series : rawSeries;
   const priceMin = rangeSeries.length ? Math.min(...rangeSeries.map((p) => p.p)) : (currentSpot ?? 0);
