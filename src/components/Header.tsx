@@ -32,6 +32,9 @@ const NAV = [
   { href: "/", label: "Markets" },
   { href: "/portfolio", label: "Portfolio" },
   { href: "/how-it-works", label: "How it works" },
+  // Public API + SDK reference for external integrators. Lives next to
+  // "How it works" so first-time devs can reach it without spelunking.
+  { href: "/docs", label: "Docs" },
 ];
 
 // Secondary nav opens from the hamburger. Visible on all viewport sizes so
@@ -191,6 +194,9 @@ export function Header() {
 
   function navActive(href: string): boolean {
     if (href === "/") return pathname === "/" || pathname.startsWith("/market/");
+    // /docs has subpages (/docs/api, /docs/sdk) — match the prefix so the
+    // top-nav highlight follows the user across tabs.
+    if (href === "/docs") return pathname === "/docs" || pathname.startsWith("/docs/");
     return pathname === href;
   }
 

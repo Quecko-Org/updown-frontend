@@ -1,0 +1,234 @@
+/* ============================================================================
+   /docs route — local stylesheet
+   ----------------------------------------------------------------------------
+   Imported only from src/app/docs/layout.tsx, so these classes only ship on
+   /docs/* pages. Keeps globals.css / design-tokens.css / pp-utilities.css
+   untouched (per the public-docs spec) while still letting the docs prose
+   pull from the same --bg-*, --fg-*, --border-* token palette.
+
+   Layout: 240px sidebar + 1fr content on >=md, stacked with a horizontal pill
+   nav above the content on <md.
+   ========================================================================== */
+
+.docs-shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 32px;
+  align-items: start;
+}
+
+.docs-sidebar {
+  position: sticky;
+  top: 76px; /* below sticky header (56px) + small gap */
+  align-self: start;
+  border-right: 1px solid var(--border-0);
+  padding-right: 16px;
+  min-height: 80px;
+}
+
+.docs-sidenav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.docs-sidenav__item {
+  display: block;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fg-2);
+  text-decoration: none;
+  transition: background var(--dur-micro) var(--ease),
+              color var(--dur-micro) var(--ease);
+}
+.docs-sidenav__item:hover { background: var(--bg-1); color: var(--fg-0); }
+.docs-sidenav__item--on  { background: var(--bg-1); color: var(--fg-0); font-weight: 600; }
+
+.docs-content {
+  min-width: 0; /* allow content to shrink inside grid; tables get scroll wrapper */
+}
+
+/* ---------- prose ---------- */
+.docs-prose {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--fg-1);
+}
+
+.docs-prose .docs-h1 {
+  margin: 0 0 16px;
+  scroll-margin-top: 80px;
+}
+.docs-prose .docs-h2 {
+  margin: 32px 0 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-0);
+  scroll-margin-top: 80px;
+}
+.docs-prose .docs-h2:first-child,
+.docs-prose > :first-child.docs-h2 { border-top: 0; padding-top: 0; }
+.docs-prose .docs-h3 {
+  margin: 24px 0 8px;
+  scroll-margin-top: 80px;
+}
+.docs-prose .docs-h4 {
+  margin: 20px 0 6px;
+  font-size: 14px;
+  scroll-margin-top: 80px;
+}
+
+.docs-prose .docs-p { margin: 0 0 12px; }
+
+.docs-prose .docs-ul,
+.docs-prose .docs-ol {
+  margin: 0 0 12px;
+  padding-left: 22px;
+}
+.docs-prose .docs-li { margin: 4px 0; }
+.docs-prose .docs-li > .docs-p:last-child { margin-bottom: 0; }
+
+.docs-prose strong { color: var(--fg-0); font-weight: 600; }
+.docs-prose em { color: var(--fg-1); font-style: italic; }
+
+.docs-prose .docs-blockquote {
+  margin: 12px 0;
+  padding: 10px 14px;
+  border-left: 2px solid var(--border-1);
+  background: var(--bg-1);
+  border-radius: 0 4px 4px 0;
+  color: var(--fg-1);
+}
+.docs-prose .docs-blockquote .docs-p:last-child { margin-bottom: 0; }
+
+.docs-prose .docs-hr {
+  border: 0;
+  border-top: 1px solid var(--border-0);
+  margin: 28px 0;
+}
+
+/* ---------- inline code + code blocks ---------- */
+.docs-prose .docs-code-inline {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--bg-1);
+  border: 1px solid var(--border-0);
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: var(--fg-0);
+  font-variant-numeric: tabular-nums;
+}
+
+.docs-prose .docs-pre {
+  font-family: var(--font-mono);
+  background: var(--bg-1);
+  border: 1px solid var(--border-0);
+  border-radius: 6px;
+  padding: 14px 16px;
+  margin: 12px 0;
+  overflow-x: auto;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.docs-prose .docs-pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: inherit;
+  color: var(--fg-0);
+}
+
+/* ---------- tables ---------- */
+.docs-prose .docs-table-wrap {
+  overflow-x: auto;
+  margin: 12px 0;
+  border: 1px solid var(--border-0);
+  border-radius: 6px;
+}
+.docs-prose .docs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.docs-prose .docs-th {
+  text-align: left;
+  padding: 8px 12px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border-0);
+  white-space: nowrap;
+}
+.docs-prose .docs-td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-0);
+  color: var(--fg-1);
+  vertical-align: top;
+}
+.docs-prose .docs-table tr:last-child .docs-td { border-bottom: 0; }
+.docs-prose .docs-td .docs-code-inline { white-space: nowrap; }
+
+/* ---------- heading anchor link (rehype-autolink-headings) ---------- */
+.docs-prose .docs-anchor {
+  margin-left: 8px;
+  color: var(--fg-3);
+  text-decoration: none;
+  font-weight: 400;
+  opacity: 0;
+  transition: opacity var(--dur-micro) var(--ease), color var(--dur-micro) var(--ease);
+}
+.docs-prose h1:hover .docs-anchor,
+.docs-prose h2:hover .docs-anchor,
+.docs-prose h3:hover .docs-anchor,
+.docs-prose h4:hover .docs-anchor,
+.docs-prose .docs-anchor:focus {
+  opacity: 1;
+  color: var(--fg-1);
+}
+
+/* ============================================================================
+   Mobile: stack the sidebar above the content as a horizontal scroll of pills.
+   Breakpoint matches Tailwind md (768px).
+   ========================================================================== */
+@media (max-width: 767px) {
+  .docs-shell {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .docs-sidebar {
+    position: static;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-0);
+    padding-right: 0;
+    padding-bottom: 12px;
+    min-height: 0;
+  }
+  .docs-sidenav {
+    flex-direction: row;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+  .docs-sidenav__item {
+    flex-shrink: 0;
+    padding: 6px 12px;
+    border: 1px solid var(--border-0);
+    border-radius: 999px;
+    background: var(--bg-1);
+    font-size: 12px;
+  }
+  .docs-sidenav__item--on {
+    background: var(--fg-0);
+    color: var(--bg-0);
+    border-color: var(--fg-0);
+  }
+  .docs-prose .docs-h1 { font-size: 26px; }
+  .docs-prose .docs-h2 { font-size: 19px; }
+}
