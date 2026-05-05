@@ -67,19 +67,19 @@ Public chain + EIP-712 + fee config. **Multi-pair shape** — read `pairs[]` to 
   "pairs": [
     {
       "pairId": "BTC-USD",
-      "settlementAddress": "0x0443e161fd2f87354e399169e25256cd7de88fdc",
+      "settlementAddress": "<settlement>",
       "autocyclerAddress": "0x4dee00a7a5372ecbf1f473e580753f1f4a7e98a7",
       "eip712": {
         "domain": {
           "name": "UpDown Exchange",
           "version": "1",
           "chainId": 42161,
-          "verifyingContract": "0x0443e161fd2f87354e399169e25256cd7de88fdc"
+          "verifyingContract": "<settlement>"
         }
       }
     }
   ],
-  "settlementAddress": "0x0443e161fd2f87354e399169e25256cd7de88fdc",
+  "settlementAddress": "<settlement>",
   "eip712": { "domain": { "...": "..." } }
 }
 ```
@@ -95,9 +95,9 @@ Optional query: `timeframe=300|900|3600`, `pair=BTC-USD|ETH-USD`.
 ```json
 [
   {
-    "address": "0x0443e161fd2f87354e399169e25256cd7de88fdc-420",
+    "address": "<settlement>-420",
     "marketId": "420",
-    "settlementAddress": "0x0443e161fd2f87354e399169e25256cd7de88fdc",
+    "settlementAddress": "<settlement>",
     "pairId": "ETH-USD",
     "pairSymbol": "ETH-USD",
     "chartSymbol": "ETH",
@@ -163,7 +163,7 @@ In Path-1 the `cachedBalance` mirrors the **on-chain USDT balance of the EOA its
 ```json
 [
   {
-    "market": "0x0443e161...e88fdc-420",
+    "market": "<settlement>-420",
     "marketStatus": "ACTIVE",
     "option": 1,
     "optionLabel": "UP",
@@ -190,7 +190,7 @@ Open + recent orders for a wallet. Filter via `?status=OPEN&status=PARTIALLY_FIL
     {
       "orderId": "e121947b-...",
       "maker": "0xabc...",
-      "market": "0x0443e161...e88fdc-420",
+      "market": "<settlement>-420",
       "option": 1,
       "side": 0,
       "type": 1,
@@ -218,7 +218,7 @@ Place an order. Body **and** an EIP-712 signature.
 ```json
 {
   "maker": "0xabc...",
-  "market": "0x0443e161...e88fdc-420",
+  "market": "<settlement>-420",
   "option": 1,
   "side": 0,
   "type": 1,
@@ -348,7 +348,7 @@ Connect to `/stream`. Public channels (`markets`, `orderbook:*`, `trades:*`) can
 ### Public-only subscribe (no auth)
 
 ```json
-{ "type": "subscribe", "channels": ["markets", "orderbook:0x0443e161...e88fdc-420"] }
+{ "type": "subscribe", "channels": ["markets", "orderbook:<settlement>-420"] }
 ```
 
 Server responds `{ "type": "subscribed", "channels": [...] }`. Each channel's events arrive as `{ "type": "<event>", "channel": "<channel>", "data": { "...": "..." } }`.
