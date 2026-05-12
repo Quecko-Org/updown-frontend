@@ -9,13 +9,37 @@
    Design tokens (--bg-0, --fg-0, --up, etc.) come from design-tokens.css,
    which globals.css imports first. The original ui_kit/styles.css @import of
    colors_and_type.css is omitted here to avoid a duplicate load.
+   ----------------------------------------------------------------------------
+   CONSUMER-LAYER RULES (effective PR-1)
+   ----------------------------------------------------------------------------
+   1. RADIUS TIERS. Three tokens, every component pulls from one:
+        --r-sm (4px)  hairline: badges, chips, status pills, tags
+        --r-md (8px)  controls: buttons, inputs, segmented controls
+        --r-lg (12px) containers: panels, cards, rows, drawers, modals
+      Hardcoded pixel radii are a code-review reject. Two explicit
+      exceptions live in this file and are annotated inline:
+        - `.pp-book__bar` 2px (orderbook depth-bar visualization indicator,
+          not a tier element — sibling of the circle exceptions)
+        - `.pp-quicknav__chip` 999px (pre-PR-1 quick-nav chip, grandfathered;
+          reconsider when QuickMarketsStrip is rebuilt)
+
+   2. PILLS (border-radius: 999px) are allowed for exactly two roles:
+        - Asset pickers (BTC/ETH switcher)
+        - Funnel CTAs (Deposit, Connect Wallet — via pp-shiny-cta)
+      Anywhere else is a reject.
+
+   3. SHINY CTA (.pp-shiny-cta) is reserved for funnel-critical onboarding
+      gates: Deposit and Connect Wallet. Two instances site-wide, max.
+      Using it on a trade button, nav item, or anywhere else is a reject.
+
+   4. The logo locks --up and --down. They do not change.
    ========================================================================== */
 
 /* ---------- buttons ---------- */
 .pp-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   font-family: var(--font-sans); font-weight: 500; cursor: pointer;
-  border: 1px solid transparent; border-radius: 4px;
+  border: 1px solid transparent; border-radius: var(--r-md);
   white-space: nowrap;
   transition: background var(--dur-micro) var(--ease), border-color var(--dur-micro) var(--ease), color var(--dur-micro) var(--ease);
 }
@@ -34,12 +58,84 @@
 .pp-btn--down { background: var(--down); color: var(--bg-0); font-weight: 600; }
 .pp-btn--down:hover:not(:disabled) { background: var(--down-dim); }
 
+/* ---------- shiny CTA (funnel-critical onboarding gates only) ----------
+   Reserved for Deposit and Connect Wallet. Using this class anywhere else
+   is a code-review reject. Continuous rotating gradient border via Houdini
+   @property --gradient-angle (registered in design-tokens.css).
+
+   Two constraints worth flagging:
+   - Pill radius (999px) is the one exception to the controls-tier rule.
+     Pills are allowed for two roles consumer-wide: asset pickers and
+     funnel CTAs. This is a funnel CTA.
+   - The animation uses neutral luminance only (var(--fg-0) and pure white).
+     No teal, no purple, no decorative hue. The "strictly directional
+     accents only" rule still holds — the shine is colorless. */
+
+@keyframes pp-shiny-rotate { to { --gradient-angle: 360deg; } }
+
+.pp-shiny-cta {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 18px;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fg-0);
+  text-decoration: none;
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  isolation: isolate;
+  overflow: hidden;
+  background:
+    linear-gradient(var(--bg-0), var(--bg-0)) padding-box,
+    conic-gradient(
+      from var(--gradient-angle),
+      transparent 0%,
+      var(--fg-0) 10%,
+      oklch(100% 0 0) 20%,
+      var(--fg-0) 30%,
+      transparent 40%
+    ) border-box;
+  box-shadow: inset 0 0 0 1px var(--border-0);
+  animation: pp-shiny-rotate 3s linear infinite;
+  transition: opacity var(--dur-micro) var(--ease);
+}
+
+.pp-shiny-cta:hover { opacity: 0.92; }
+
+.pp-shiny-cta::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(-50deg, transparent, var(--fg-0), transparent);
+  -webkit-mask-image: radial-gradient(circle at center bottom, transparent 40%, black);
+          mask-image: radial-gradient(circle at center bottom, transparent 40%, black);
+  opacity: 0.18;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.pp-shiny-cta:disabled,
+.pp-shiny-cta[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: not-allowed;
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pp-shiny-cta { animation: none; }
+}
+
 /* ---------- badges ---------- */
 .pp-badge {
   display: inline-flex; align-items: center; gap: 4px;
   font-family: var(--font-sans); font-size: 10px; font-weight: 600;
   letter-spacing: 0.04em; text-transform: uppercase;
-  padding: 3px 7px; border-radius: 3px; border: 1px solid transparent;
+  padding: 3px 7px; border-radius: var(--r-sm); border: 1px solid transparent;
 }
 .pp-badge--active   { background: var(--up-bg);   color: var(--up);   border-color: var(--up-border); }
 .pp-badge--up       { background: var(--up-bg);   color: var(--up); }
@@ -49,10 +145,10 @@
 .pp-badge--neutral  { background: var(--bg-1);    color: var(--fg-1); border-color: var(--border-0); }
 
 /* ---------- panels / inputs ---------- */
-.pp-panel { background: var(--bg-1); border: 1px solid var(--border-0); border-radius: 6px; padding: 14px; }
+.pp-panel { background: var(--bg-1); border: 1px solid var(--border-0); border-radius: var(--r-lg); padding: 14px; }
 .pp-input {
   width: 100%; box-sizing: border-box;
-  background: var(--bg-1); border: 1px solid var(--border-0); border-radius: 4px;
+  background: var(--bg-1); border: 1px solid var(--border-0); border-radius: var(--r-md);
   padding: 7px 10px; color: var(--fg-0); font-family: var(--font-sans); font-size: 13px; outline: none;
 }
 .pp-input--mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -60,11 +156,11 @@
 .pp-input--invalid { border-color: var(--down); }
 
 /* ---------- segmented ---------- */
-.pp-seg { display: flex; border: 1px solid var(--border-0); border-radius: 4px; padding: 2px; background: var(--bg-1); gap: 2px; }
+.pp-seg { display: flex; border: 1px solid var(--border-0); border-radius: var(--r-md); padding: 2px; background: var(--bg-1); gap: 2px; }
 .pp-seg__btn {
   flex: 1; background: transparent; border: 0; color: var(--fg-2);
   font-family: var(--font-sans); font-size: 12px; font-weight: 500;
-  padding: 6px 10px; border-radius: 3px; cursor: pointer;
+  padding: 6px 10px; border-radius: var(--r-sm); cursor: pointer;
   transition: color var(--dur-micro) var(--ease), background var(--dur-micro) var(--ease);
 }
 .pp-seg__btn:hover { color: var(--fg-0); }
@@ -98,7 +194,7 @@
 .pp-hdr__navlink {
   background: transparent; border: 0; cursor: pointer;
   color: var(--fg-2); font-family: var(--font-sans); font-size: 13px; font-weight: 500;
-  padding: 6px 10px; border-radius: 4px;
+  padding: 6px 10px; border-radius: var(--r-md);
   transition: color var(--dur-micro) var(--ease), background var(--dur-micro) var(--ease);
 }
 .pp-hdr__navlink:hover { color: var(--fg-0); background: var(--bg-1); }
@@ -108,7 +204,7 @@
 /* ---------- wallet chip ---------- */
 .pp-walletchip {
   display: inline-flex; align-items: center; gap: 8px;
-  background: var(--bg-1); border: 1px solid var(--border-0); border-radius: 4px;
+  background: var(--bg-1); border: 1px solid var(--border-0); border-radius: var(--r-md);
   padding: 5px 10px;
 }
 .pp-walletchip__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--up); }
@@ -139,7 +235,7 @@
 .pp-statsrail__cell:last-child { border-right: 0; }
 .pp-statsrail__cell .pp-micro { color: var(--fg-2); white-space: nowrap; }
 
-.pp-statchip { display: inline-flex; align-items: stretch; border: 1px solid var(--border-0); border-radius: 6px; background: var(--bg-1); overflow: hidden; }
+.pp-statchip { display: inline-flex; align-items: stretch; border: 1px solid var(--border-0); border-radius: var(--r-lg); background: var(--bg-1); overflow: hidden; }
 .pp-statchip__cell { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; padding: 8px 16px; border-right: 1px solid var(--border-0); white-space: nowrap; }
 .pp-statchip__cell:last-child { border-right: 0; }
 .pp-statchip__cell .pp-micro { color: var(--fg-2); }
@@ -155,12 +251,12 @@
 .pp-mrow__count .pp-caption, .pp-mrow__count .pp-tabular { white-space: nowrap; }
 .pp-mrow__dot { color: var(--fg-3); margin: 0 3px; }
 .pp-mrow__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.pp-tab { display: inline-flex; border: 1px solid var(--border-0); border-radius: 4px; padding: 2px; gap: 2px; background: var(--bg-1); }
+.pp-tab { display: inline-flex; border: 1px solid var(--border-0); border-radius: var(--r-md); padding: 2px; gap: 2px; background: var(--bg-1); }
 .pp-tab__btn {
   display: inline-flex; align-items: center; gap: 5px;
   background: transparent; border: 0; cursor: pointer;
   color: var(--fg-2); font-family: var(--font-sans); font-size: 11px; font-weight: 600;
-  padding: 4px 8px; border-radius: 3px;
+  padding: 4px 8px; border-radius: var(--r-sm);
   transition: color var(--dur-micro) var(--ease), background var(--dur-micro) var(--ease);
 }
 .pp-tab__btn:hover { color: var(--fg-0); }
@@ -169,7 +265,7 @@
 /* ---------- market tile ---------- */
 .pp-tile {
   position: relative;
-  background: var(--bg-1); border: 1px solid var(--border-0); border-radius: 6px;
+  background: var(--bg-1); border: 1px solid var(--border-0); border-radius: var(--r-lg);
   padding: 14px; cursor: pointer;
   display: flex; flex-direction: column; gap: 12px;
   transition: border-color var(--dur-micro) var(--ease), background var(--dur-micro) var(--ease), transform var(--dur-micro) var(--ease);
@@ -198,7 +294,7 @@
   display: inline-flex; align-items: center; gap: 5px;
   font-family: var(--font-sans); font-size: 10px; font-weight: 600;
   letter-spacing: 0.04em; text-transform: uppercase;
-  padding: 3px 7px; border-radius: 3px;
+  padding: 3px 7px; border-radius: var(--r-sm);
   border: 1px solid var(--border-0); background: var(--bg-0);
   color: var(--fg-1); white-space: nowrap;
 }
@@ -231,7 +327,7 @@
   display: flex; justify-content: space-between; align-items: center; gap: 8px;
   white-space: nowrap; min-width: 0;
   font-family: var(--font-sans); font-size: 12px; font-weight: 600;
-  border: 1px solid; border-radius: 4px;
+  border: 1px solid; border-radius: var(--r-md);
   padding: 9px 12px; cursor: pointer;
   transition: background var(--dur-micro) var(--ease), border-color var(--dur-micro) var(--ease);
 }
@@ -275,7 +371,7 @@
 
 .pp-tile__outcome {
   display: flex; align-items: center; gap: 8px;
-  padding: 10px 12px; border-radius: 4px;
+  padding: 10px 12px; border-radius: var(--r-md);
   font-family: var(--font-sans); font-size: 13px; font-weight: 600;
   white-space: nowrap;
 }
@@ -317,7 +413,7 @@
 .pp-chart { width: 100%; height: 320px; display: block; }
 .pp-chart--empty { display: flex; align-items: center; justify-content: center; color: var(--fg-2); font-size: 12px; font-family: var(--font-mono); height: 320px; }
 
-.pp-book-drawer { border: 1px solid var(--border-0); border-radius: 6px; background: var(--bg-1); }
+.pp-book-drawer { border: 1px solid var(--border-0); border-radius: var(--r-lg); background: var(--bg-1); }
 .pp-book-drawer__hd { display: flex; align-items: center; gap: 12px; width: 100%; background: transparent; border: 0; cursor: pointer; padding: 10px 14px; text-align: left; color: var(--fg-0); }
 .pp-book-drawer__hd:hover { background: var(--bg-hover); }
 .pp-book-drawer__hd .pp-caption { margin-left: auto; }
@@ -335,6 +431,9 @@
 .pp-book__hd { border-bottom: 1px solid var(--border-0); }
 .pp-book__row { border-bottom: 1px solid var(--border-0); }
 .pp-book__row > * { position: relative; z-index: 1; }
+/* Orderbook depth-bar visualization indicator. NOT a tier element —
+   preserved at 2px per PR-1 consumer-layer rules exception (sibling of
+   the circle exceptions). Do not migrate to a radius token. */
 .pp-book__bar { position: absolute; top: 2px; bottom: 2px; left: 0; border-radius: 2px; opacity: 0.2; z-index: 0; }
 .pp-book__side { font-family: var(--font-sans); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
 .pp-book__spread {
@@ -346,7 +445,7 @@
 .pp-trade { display: flex; flex-direction: column; gap: 6px; }
 .pp-trade__ud { display: flex; gap: 6px; margin-top: 8px; }
 .pp-trade__udbtn {
-  flex: 1; background: var(--bg-0); border: 1px solid var(--border-0); border-radius: 4px;
+  flex: 1; background: var(--bg-0); border: 1px solid var(--border-0); border-radius: var(--r-md);
   padding: 11px; font-family: var(--font-sans); font-size: 13px; font-weight: 600;
   color: var(--fg-1); cursor: pointer; display: flex; flex-direction: column; gap: 2px; align-items: center;
   transition: background var(--dur-micro) var(--ease), border-color var(--dur-micro) var(--ease), color var(--dur-micro) var(--ease);
@@ -357,7 +456,7 @@
 .pp-trade__size { text-align: center; font-family: var(--font-mono); font-size: 22px; font-weight: 500; color: var(--fg-0); font-variant-numeric: tabular-nums; margin: 4px 0; }
 .pp-trade__presets { display: flex; gap: 4px; }
 .pp-trade__preset {
-  flex: 1; background: var(--bg-0); border: 1px solid var(--border-0); border-radius: 4px;
+  flex: 1; background: var(--bg-0); border: 1px solid var(--border-0); border-radius: var(--r-md);
   font-family: var(--font-mono); font-size: 11px; color: var(--fg-1); padding: 5px; cursor: pointer;
 }
 .pp-trade__preset:hover { border-color: var(--border-1); color: var(--fg-0); }
@@ -384,11 +483,11 @@
 }
 @keyframes pp-fade { from { opacity: 0; } to { opacity: 1; } }
 .pp-modal {
-  background: var(--bg-1); border: 1px solid var(--border-0); border-radius: 8px;
+  background: var(--bg-1); border: 1px solid var(--border-0); border-radius: var(--r-lg);
   box-shadow: var(--shadow-overlay); overflow: hidden;
 }
 .pp-modal__hd { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--border-0); }
-.pp-modal__x { background: transparent; border: 0; color: var(--fg-2); cursor: pointer; padding: 4px; border-radius: 4px; }
+.pp-modal__x { background: transparent; border: 0; color: var(--fg-2); cursor: pointer; padding: 4px; border-radius: var(--r-md); }
 .pp-modal__x:hover { color: var(--fg-0); background: var(--bg-2); }
 .pp-modal__body { padding: 16px; }
 .pp-modal__row { display: flex; gap: 8px; justify-content: flex-end; }
@@ -396,18 +495,18 @@
 .pp-list { display: flex; flex-direction: column; gap: 4px; }
 .pp-listrow {
   display: flex; justify-content: space-between; align-items: center; width: 100%;
-  background: var(--bg-0); border: 1px solid var(--border-0); border-radius: 4px;
+  background: var(--bg-0); border: 1px solid var(--border-0); border-radius: var(--r-md);
   padding: 12px 14px; text-align: left; cursor: pointer; color: var(--fg-0);
 }
 .pp-listrow:hover { border-color: var(--border-1); background: var(--bg-hover); }
 .pp-kv { display: grid; grid-template-columns: 100px 1fr; gap: 8px 12px; align-items: center; font-size: 12px; }
 .pp-qr { display: flex; justify-content: center; padding: 18px 0; }
-.pp-qr svg { width: 140px; height: 140px; background: var(--fg-0); border-radius: 4px; padding: 4px; }
+.pp-qr svg { width: 140px; height: 140px; background: var(--fg-0); border-radius: var(--r-sm); padding: 4px; }
 
 /* ---------- toasts ---------- */
 .pp-toasts { position: fixed; bottom: 16px; right: 16px; display: flex; flex-direction: column; gap: 6px; z-index: 90; }
 .pp-toast {
-  background: var(--bg-1); border: 1px solid var(--border-0); border-radius: 4px;
+  background: var(--bg-1); border: 1px solid var(--border-0); border-radius: var(--r-md);
   padding: 10px 14px; font-family: var(--font-sans); font-size: 12px; color: var(--fg-0);
   box-shadow: var(--shadow-popover); animation: pp-slide 180ms var(--ease);
 }
@@ -423,7 +522,7 @@
   display: inline-flex; align-items: center; gap: 4px;
   font-family: var(--font-sans); font-size: 10px; font-weight: 600;
   letter-spacing: 0.04em; text-transform: uppercase;
-  padding: 3px 7px; border-radius: 3px; border: 1px solid transparent;
+  padding: 3px 7px; border-radius: var(--r-sm); border: 1px solid transparent;
   white-space: nowrap;
 }
 .pp-chip-up   { background: var(--up-bg);   color: var(--up);   border-color: var(--up-border); }
@@ -449,7 +548,7 @@
    Market ↔ Limit; long-press opens a popover with Market/Limit/Post-only/IOC. */
 .pp-otype {
   display: inline-flex; align-items: center; gap: 4px;
-  background: transparent; border: 1px solid var(--border-0); border-radius: 4px;
+  background: transparent; border: 1px solid var(--border-0); border-radius: var(--r-md);
   padding: 4px 8px;
   font-family: var(--font-sans); font-size: 11px; font-weight: 600;
   letter-spacing: 0.04em; text-transform: uppercase;
@@ -462,7 +561,7 @@
 
 .pp-otype-menu {
   position: absolute; z-index: 40;
-  background: var(--bg-1); border: 1px solid var(--border-0); border-radius: 6px;
+  background: var(--bg-1); border: 1px solid var(--border-0); border-radius: var(--r-lg);
   box-shadow: var(--shadow-popover);
   padding: 4px; min-width: 160px;
   display: flex; flex-direction: column; gap: 2px;
@@ -470,7 +569,7 @@
 .pp-otype-menu__item {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   background: transparent; border: 0; cursor: pointer; text-align: left;
-  padding: 8px 10px; border-radius: 4px;
+  padding: 8px 10px; border-radius: var(--r-md);
   font-family: var(--font-sans); font-size: 13px; font-weight: 500;
   color: var(--fg-0);
 }
@@ -533,7 +632,7 @@
   overflow-x: auto;
   background: var(--bg-1);
   border: 1px solid var(--border-0);
-  border-radius: 6px;
+  border-radius: var(--r-lg);
   padding: 8px;
 }
 .pp-tr-strip__inner {
@@ -542,7 +641,7 @@
 }
 .pp-tr-strip__slot {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 10px; border-radius: 4px;
+  padding: 6px 10px; border-radius: var(--r-md);
   font-family: var(--font-mono); font-size: 11px;
   text-decoration: none;
   white-space: nowrap;
@@ -569,14 +668,14 @@
 /* ---------- Phase2-B cross-promo cards ---------- */
 .pp-xpromo {
   display: flex; flex-direction: column; gap: 8px;
-  padding: 12px; border-radius: 6px;
+  padding: 12px; border-radius: var(--r-lg);
   background: var(--bg-1); border: 1px solid var(--border-0);
 }
 .pp-xpromo__title { font-family: var(--font-sans); font-size: 11px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fg-2); }
 .pp-xpromo__list { display: flex; flex-direction: column; gap: 6px; }
 .pp-xpromo__card {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 10px; border-radius: 4px;
+  padding: 10px; border-radius: var(--r-md);
   background: var(--bg-0); border: 1px solid var(--border-0);
   text-decoration: none; color: var(--fg-0);
   transition: border-color var(--dur-micro) var(--ease), background var(--dur-micro) var(--ease);
@@ -610,6 +709,10 @@
   display: flex; gap: 6px;
   flex-shrink: 0;
 }
+/* Quick-nav timeframe chip. Pre-PR-1 pill, GRANDFATHERED at 999px:
+   it's a navigation chip with countdown, not an asset picker and not a
+   funnel CTA, so it doesn't fit the PR-1 two-allowed-pill-role list.
+   Reconsider when QuickMarketsStrip is rebuilt in a future PR. */
 .pp-quicknav__chip {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 4px 10px;
@@ -679,7 +782,7 @@
   display: inline-flex; align-items: center; justify-content: center;
   width: 30px; height: 30px;
   border: 1px solid var(--border-0);
-  border-radius: 6px;
+  border-radius: var(--r-md);
   background: var(--bg-1);
   color: var(--fg-2);
   cursor: pointer;
