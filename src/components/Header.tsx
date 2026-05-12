@@ -310,7 +310,7 @@ export function Header() {
 
                 <button
                   type="button"
-                  className="pp-btn pp-btn--primary pp-btn--sm"
+                  className="pp-shiny-cta"
                   onClick={() => setDepositOpen(true)}
                   disabled={!depositAddress}
                 >
@@ -337,7 +337,7 @@ export function Header() {
               <div className="relative" ref={connectRef}>
                 <button
                   type="button"
-                  className="pp-btn pp-btn--primary pp-btn--md"
+                  className="pp-shiny-cta"
                   disabled={isLoading || geoBlocked}
                   title={geoBlocked ? "Not available in your region" : undefined}
                   onClick={(e) => {
