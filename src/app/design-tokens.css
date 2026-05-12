@@ -60,6 +60,15 @@
        url("/fonts/BebasNeue-Regular.ttf") format("truetype");
 }
 
+/* CSS Houdini property registration. Needed by .pp-shiny-cta so the
+   conic-gradient `from` angle can animate via @keyframes (without
+   @property, the angle would be a string and the animation would jump). */
+@property --gradient-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
 :root {
   /* ---------- Surfaces ---------- */
   --bg-0: oklch(14% 0.01 250);         /* page background */
@@ -104,11 +113,22 @@
   /* ---------- Shadow (modals / popovers ONLY — flat surfaces elsewhere) ---------- */
   --shadow-overlay: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.04);
   --shadow-popover: 0 2px 8px rgba(0, 0, 0, 0.32), 0 0 0 1px rgba(255, 255, 255, 0.03);
+  /* Single-use glow for the in-progress market row (consumed in PR 2; defined
+     here so the token exists at the canonical source from PR 1 onward). */
+  --shadow-live: 0 0 32px oklch(74% 0.18 155 / 0.10),
+                 0 0 0 1px oklch(74% 0.18 155 / 0.18);
 
-  /* ---------- Radii (max 8px — no pills except avatars) ---------- */
+  /* ---------- Radii (three-tier scale, every component pulls from one) ----------
+     --r-sm  hairline: badges, chips, status pills, tags
+     --r-md  controls: buttons, inputs, segmented controls
+     --r-lg  containers: panels, cards, rows, drawers, modals
+     Hardcoded pixel radii are a code-review reject from PR-1 forward.
+     Pills (border-radius: 999px) are allowed for exactly two roles:
+     asset pickers and funnel CTAs (Deposit, Connect Wallet — pp-shiny-cta).
+     Anywhere else is a reject. */
   --r-sm: 4px;
-  --r-md: 6px;
-  --r-lg: 8px;
+  --r-md: 8px;
+  --r-lg: 12px;
 
   /* ---------- Spacing (4px base) ---------- */
   --s-1: 4px;
