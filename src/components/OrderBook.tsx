@@ -156,7 +156,7 @@ export function OrderBookPanel({
 function StaleHint({ text }: { text: string }) {
   return (
     <p
-      className="pp-caption rounded-[4px] border px-2 py-1"
+      className="pp-caption rounded-[var(--r-sm)] border px-2 py-1"
       style={{
         background: "var(--warn-bg)",
         borderColor: "oklch(80% 0.15 85 / 0.4)",

@@ -13,7 +13,7 @@ export default function ContactPage() {
         </p>
       </header>
       <div
-        className="rounded-[6px] border p-5"
+        className="rounded-[var(--r-lg)] border p-5"
         style={{ background: "var(--bg-1)", borderColor: "var(--border-0)" }}
       >
         <p className="pp-body-strong">Email</p>

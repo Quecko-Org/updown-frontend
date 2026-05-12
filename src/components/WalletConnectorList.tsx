@@ -34,7 +34,7 @@ export function WalletConnectorList({
           type="button"
           disabled={!isAvailable || !connector || isLoading}
           className={cn(
-            "w-full rounded-[12px] px-4 py-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-brand-subtle disabled:cursor-not-allowed disabled:opacity-50",
+            "w-full rounded-[var(--r-md)] px-4 py-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-brand-subtle disabled:cursor-not-allowed disabled:opacity-50",
             buttonClassName,
           )}
           onClick={() => void pick(connector)}

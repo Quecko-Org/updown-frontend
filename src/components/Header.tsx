@@ -274,7 +274,7 @@ export function Header() {
                     className="pointer-events-none absolute right-0 top-full z-50 mt-2 hidden min-w-[220px] group-hover:block"
                   >
                     <div
-                      className="rounded-[6px] border p-3"
+                      className="rounded-[var(--r-lg)] border p-3"
                       style={{
                         background: "var(--bg-1)",
                         borderColor: "var(--border-0)",
@@ -351,7 +351,7 @@ export function Header() {
                 </button>
                 {connectOpen && !geoBlocked && (
                   <div
-                    className="absolute right-0 top-full z-50 mt-2 min-w-[220px] rounded-[6px] border py-1"
+                    className="absolute right-0 top-full z-50 mt-2 min-w-[220px] rounded-[var(--r-lg)] border py-1"
                     style={{
                       background: "var(--bg-1)",
                       borderColor: "var(--border-0)",
@@ -385,7 +385,7 @@ export function Header() {
               {menuOpen && (
                 <div
                   role="menu"
-                  className="absolute right-0 top-full z-50 mt-2 min-w-[220px] rounded-[6px] border py-1"
+                  className="absolute right-0 top-full z-50 mt-2 min-w-[220px] rounded-[var(--r-lg)] border py-1"
                   style={{
                     background: "var(--bg-1)",
                     borderColor: "var(--border-0)",

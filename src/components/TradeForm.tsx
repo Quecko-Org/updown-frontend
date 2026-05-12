@@ -1152,7 +1152,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       ) : (
         <div
           ref={connectSectionRef}
-          className="mt-3 rounded-[6px] border p-3"
+          className="mt-3 rounded-[var(--r-md)] border p-3"
           style={{ background: "var(--bg-0)", borderColor: "var(--border-0)" }}
         >
           <p className="pp-body-strong text-center">Connect wallet to trade</p>

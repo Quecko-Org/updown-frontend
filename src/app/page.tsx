@@ -121,7 +121,7 @@ function TimeframeRowWithToggle({
       </div>
       {loading ? (
         <div
-          className="h-[180px] rounded-[6px] border"
+          className="h-[180px] rounded-[var(--r-lg)] border"
           style={{ background: "var(--bg-1)", borderColor: "var(--border-0)" }}
         />
       ) : active.length === 0 && resolved.length === 0 ? (

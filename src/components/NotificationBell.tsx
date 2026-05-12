@@ -110,7 +110,7 @@ export function NotificationBell() {
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-full z-50 mt-2 w-[320px] rounded-[6px] border"
+          className="absolute right-0 top-full z-50 mt-2 w-[320px] rounded-[var(--r-lg)] border"
           style={{
             background: "var(--bg-1)",
             borderColor: "var(--border-0)",

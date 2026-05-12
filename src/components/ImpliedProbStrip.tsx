@@ -44,7 +44,7 @@ export function ImpliedProbStrip({ market }: { market: MarketDetail }) {
 
   return (
     <div
-      className="rounded-[6px] border px-3 py-2"
+      className="rounded-[var(--r-lg)] border px-3 py-2"
       style={{ background: "var(--bg-1)", borderColor: "var(--border-0)" }}
       role="group"
       aria-label="Implied probability"

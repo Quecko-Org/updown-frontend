@@ -31,7 +31,7 @@ export function GeoBlockOverlay() {
       }}
     >
       <div
-        className="w-full max-w-md rounded-[8px] border p-8 text-center"
+        className="w-full max-w-md rounded-[var(--r-lg)] border p-8 text-center"
         style={{
           background: "var(--bg-1)",
           borderColor: "var(--border-0)",

@@ -94,7 +94,7 @@ export function TermsAcceptanceModal({
         </ul>
 
         <label
-          className="flex items-start gap-3 rounded-[6px] border p-3 cursor-pointer"
+          className="flex items-start gap-3 rounded-[var(--r-md)] border p-3 cursor-pointer"
           style={{ background: "var(--bg-0)", borderColor: "var(--border-0)" }}
         >
           <input

@@ -307,7 +307,7 @@ export function MarketPriceChart({
 
   return (
     <div
-      className="flex flex-col overflow-hidden rounded-[6px] border"
+      className="flex flex-col overflow-hidden rounded-[var(--r-lg)] border"
       style={{ background: "var(--bg-1)", borderColor: "var(--border-0)" }}
     >
       <div

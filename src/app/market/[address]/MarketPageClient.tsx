@@ -106,7 +106,7 @@ export function MarketPageClient({ address }: { address: string }) {
   if (isLoading || !market) {
     return (
       <div
-        className="flex min-h-[30vh] items-center justify-center rounded-[6px] border border-dashed pp-caption"
+        className="flex min-h-[30vh] items-center justify-center rounded-[var(--r-lg)] border border-dashed pp-caption"
         style={{ borderColor: "var(--border-0)" }}
       >
         Loading…

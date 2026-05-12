@@ -27,14 +27,14 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        "flex min-h-[200px] flex-col items-center justify-center rounded-[6px] border border-dashed px-6 py-12 text-center",
+        "flex min-h-[200px] flex-col items-center justify-center rounded-[var(--r-lg)] border border-dashed px-6 py-12 text-center",
         className,
       )}
       style={{ borderColor: "var(--border-0)", background: "var(--bg-1)" }}
     >
       {Icon && (
         <div
-          className="mb-4 flex h-14 w-14 items-center justify-center rounded-[6px]"
+          className="mb-4 flex h-14 w-14 items-center justify-center rounded-[var(--r-md)]"
           style={{ background: "var(--bg-2)", color: "var(--fg-2)" }}
         >
           <Icon size={24} strokeWidth={1.5} />

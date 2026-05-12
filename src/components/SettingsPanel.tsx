@@ -227,7 +227,7 @@ function Section({
 }) {
   return (
     <section
-      className="rounded-[6px] border p-5"
+      className="rounded-[var(--r-lg)] border p-5"
       style={{ background: "var(--bg-1)", borderColor: "var(--border-0)" }}
     >
       <h2
@@ -309,7 +309,7 @@ function ConsentToggle({
   onChange: (v: "accepted" | "rejected") => void;
 }) {
   return (
-    <div className="inline-flex rounded-[6px] border" style={{ borderColor: "var(--border-0)" }}>
+    <div className="inline-flex rounded-[var(--r-md)] border" style={{ borderColor: "var(--border-0)" }}>
       <button
         type="button"
         className="pp-caption px-3 py-1"

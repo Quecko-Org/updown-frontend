@@ -418,7 +418,7 @@ function ResolvedTab({
 
   return (
     <div
-      className="overflow-hidden overflow-x-auto rounded-[6px] border"
+      className="overflow-hidden overflow-x-auto rounded-[var(--r-lg)] border"
       style={{ borderColor: "var(--border-0)", background: "var(--bg-1)" }}
     >
       <table className="pp-table min-w-full">
@@ -526,7 +526,7 @@ function PositionTable({
 }) {
   return (
     <div
-      className="overflow-hidden overflow-x-auto rounded-[6px] border"
+      className="overflow-hidden overflow-x-auto rounded-[var(--r-lg)] border"
       style={{ borderColor: "var(--border-0)", background: "var(--bg-1)" }}
     >
       <table className="pp-table min-w-full">
@@ -584,7 +584,7 @@ function OrderTable({
 }) {
   return (
     <div
-      className="overflow-hidden overflow-x-auto rounded-[6px] border"
+      className="overflow-hidden overflow-x-auto rounded-[var(--r-lg)] border"
       style={{ borderColor: "var(--border-0)", background: "var(--bg-1)" }}
     >
       <table className="pp-table min-w-full">

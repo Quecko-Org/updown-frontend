@@ -158,7 +158,7 @@ export default function FaqPage() {
         {FAQ.map((item, i) => (
           <li
             key={i}
-            className="rounded-[6px] border p-5"
+            className="rounded-[var(--r-lg)] border p-5"
             style={{ background: "var(--bg-1)", borderColor: "var(--border-0)" }}
           >
             <h2 className="pp-h3" style={{ marginBottom: 8 }}>
