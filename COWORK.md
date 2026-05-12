@@ -1,5 +1,7 @@
 # UpDown Markets — Cowork Context
 
+> **Internal dev doc.** Live wiring values (contract addresses, RPC URLs, dev-relayer EOA) reflect the dev environment as of the last edit and are not guaranteed to match prod. For audit-facing and integrator-facing wiring, use `src/content/docs/api.md` + the live `GET /config` endpoint as the single source of truth. Stale-ref audit 2026-05-12 §6.4 logged this scope boundary explicitly so future readers don't cargo-cult dev addresses into integrations.
+
 Read this entire file before doing anything. Every decision in here is locked. If you see code that contradicts it, that's a bug.
 
 ---

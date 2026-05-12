@@ -8,7 +8,7 @@
 
 ## Quick start
 
-1. Hold USDT on Arbitrum One (`0xCa4f77A38d8552Dd1D5E44e890173921B67725F4`) in your **own wallet**. UpDown is non-custodial — there is **no platform deposit**. Funds stay where they are.
+1. Hold USDT on Arbitrum One (address: see `usdtAddress` in `GET /config`, your single source of truth for chain wiring) in your **own wallet**. UpDown is non-custodial — there is **no platform deposit**. Funds stay where they are.
 2. Once per wallet: call `USDT.approve(settlement, MaxUint256)` from your wallet (or use the SDK helper `ensureSettlementAllowance()` from `sdk/typescript/src/approve.ts`, which is idempotent and only re-approves below a 10k-USDT floor). The settlement contract pulls USDT directly at fill time via `transferFrom`. ETH gas for this single tx is on you (~50k gas, sub-cent on Arbitrum).
 3. To trade: sign an EIP-712 typed-data `Order` and `POST /orders`. The matching engine pairs you with a counterparty and the relayer broadcasts the on-chain `enterPosition` call. Subsequent trades are gasless from the maker's perspective.
 4. Subscribe to `/stream` for real-time fills, order updates, and orderbook snapshots.
@@ -56,8 +56,8 @@ Public chain + EIP-712 + fee config. **Multi-pair shape** — read `pairs[]` to 
 ```json
 {
   "chainId": 42161,
-  "usdtAddress": "0xCa4f77A38d8552Dd1D5E44e890173921B67725F4",
-  "relayerAddress": "0x5afab22742699839a9d46b98bd9068f1924383e4",
+  "usdtAddress": "<USDT_ADDRESS>",
+  "relayerAddress": "<RELAYER_ADDRESS>",
   "platformFeeBps": 70,
   "makerFeeBps": 80,
   "feeModel": "probability-weighted",
