@@ -64,9 +64,10 @@
   --shadow-card: 0 0 0 rgba(0, 0, 0, 0);
   --shadow-card-hover: 0 0 0 rgba(0, 0, 0, 0);
 
-  /* Radii — legacy 12px button radius preserved so `rounded-[12px]` utilities
-     don't suddenly shift. Phase 2 migrates these to --r-lg (8px max per spec). */
-  --radius-button: 12px;
+  /* Radii are now defined exclusively in design-tokens.css as the
+     three-tier --r-sm / --r-md / --r-lg scale (PR-1). The legacy
+     --radius-button: 12px token was removed; --r-md (8px controls tier)
+     replaces it where buttons need a radius. */
 }
 
 @layer base {
@@ -97,15 +98,19 @@
 
 @layer components {
   .btn-primary {
-    @apply rounded-[12px] bg-foreground px-4 py-[13px] text-center text-base font-semibold text-background transition-opacity hover:opacity-90 disabled:opacity-40;
+    @apply bg-foreground px-4 py-[13px] text-center text-base font-semibold text-background transition-opacity hover:opacity-90 disabled:opacity-40;
+    border-radius: var(--r-md);
   }
   .btn-secondary {
-    @apply rounded-[12px] border border-border bg-surface-muted px-4 py-[13px] text-center text-base font-semibold text-foreground transition-colors hover:border-neutral disabled:opacity-40;
+    @apply border border-border bg-surface-muted px-4 py-[13px] text-center text-base font-semibold text-foreground transition-colors hover:border-neutral disabled:opacity-40;
+    border-radius: var(--r-md);
   }
   .card-kraken {
-    @apply rounded-lg border border-border bg-surface-muted;
+    @apply border border-border bg-surface-muted;
+    border-radius: var(--r-lg);
   }
   .panel-dense {
-    @apply rounded-lg border border-border bg-surface-muted px-3 py-2.5;
+    @apply border border-border bg-surface-muted px-3 py-2.5;
+    border-radius: var(--r-md);
   }
 }
