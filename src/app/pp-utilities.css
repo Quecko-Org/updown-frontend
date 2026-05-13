@@ -112,13 +112,20 @@
 .pp-shiny-cta:hover { opacity: 0.92; }
 
 .pp-shiny-cta::after {
+  /* PR-4 Myriad-parity (commit 4/10): the under-button glow. PR-1
+     shipped this at opacity 0.18 — too subtle to register as depth.
+     Myriad's recipe is 0.6 with the same mask-image bottom-center
+     radial fade. The mask confines the linear-gradient to a glow
+     spilling out under the button rather than a flat overlay,
+     producing the "shine reflects off something" effect Meir flagged
+     as the missing premium feel. */
   content: '';
   position: absolute;
   inset: 0;
   background: linear-gradient(-50deg, transparent, var(--fg-0), transparent);
   -webkit-mask-image: radial-gradient(circle at center bottom, transparent 40%, black);
           mask-image: radial-gradient(circle at center bottom, transparent 40%, black);
-  opacity: 0.18;
+  opacity: 0.6;
   z-index: -1;
   pointer-events: none;
 }
