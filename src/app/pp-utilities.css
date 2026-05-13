@@ -1008,3 +1008,330 @@
   .pp-market-row__counters { gap: 10px; flex-wrap: wrap; }
   .pp-market-row__timer { top: -10px; }
 }
+
+/* ============================================================================
+   PR-3: /markets composition — page layout, asset picker pill, trade drawer,
+   empty/loading state copy. Consumed by:
+     - src/app/page.tsx (the new homepage composition)
+     - src/components/markets/{AssetPicker,TradeDrawer,EmptyState}.tsx
+   Trade drawer slides in from the right at >=640, flips to a bottom sheet
+   at <640 per the consumer-trading convention (Polymarket / Kalshi / Robinhood
+   parity). Empty-state copy lands in this layer so the page component stays
+   free of one-off Tailwind blocks.
+   ========================================================================== */
+
+.pp-markets-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 20px 28px 40px;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.pp-markets-page__controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.pp-markets-page__rows-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 8px;
+}
+
+.pp-section-label {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+  margin: 0;
+}
+
+/* Spacing between Live and Open rows breaks the rhythm slightly so the
+   live window reads as the headline. */
+.pp-markets-page .pp-market-row + .pp-market-row { margin-top: 8px; }
+.pp-markets-page .pp-market-row--live + .pp-market-row { margin-top: 16px; }
+
+@media (max-width: 640px) {
+  .pp-markets-page { padding: 16px 16px 32px; gap: 14px; }
+}
+
+/* ---------- Asset pill ---------- */
+.pp-asset-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-0);
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fg-1);
+  cursor: pointer;
+  transition: border-color var(--dur-micro) var(--ease), color var(--dur-micro) var(--ease);
+}
+.pp-asset-pill:hover { color: var(--fg-0); border-color: var(--border-1); }
+.pp-asset-pill--active {
+  background: var(--fg-0);
+  color: var(--bg-0);
+  border-color: var(--fg-0);
+}
+.pp-asset-pill__icon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.pp-asset-pill__price {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 12px;
+  color: inherit;
+  opacity: 0.7;
+}
+
+.pp-asset-pickers {
+  display: inline-flex;
+  gap: 8px;
+}
+
+/* ---------- Empty / loading / error states ----------
+   One shared shell for all three non-happy-path branches. The state-ladder
+   in src/app/page.tsx swaps the title + copy + action. */
+.pp-state-card {
+  background: var(--bg-1);
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-lg);
+  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+}
+
+.pp-state-card__title {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--fg-0);
+  margin: 0;
+}
+
+.pp-state-card__body {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--fg-2);
+  line-height: 1.5;
+  max-width: 480px;
+  margin: 0;
+}
+
+.pp-state-card__countdown {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 12px;
+  color: var(--fg-1);
+}
+
+.pp-state-card__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* ---------- Row-slot skeleton (used in loading state) ----------
+   Same height + radius as a real .pp-market-row so the page doesn't jump
+   when the data lands. Background is bg-1 with a slow 1.4s pulse. */
+.pp-row-skeleton {
+  background: var(--bg-1);
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-lg);
+  height: 86px;
+  animation: pp-skeleton-pulse 1400ms var(--ease) infinite;
+}
+@keyframes pp-skeleton-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pp-row-skeleton { animation: none; opacity: 0.7; }
+}
+
+/* ---------- Trade drawer ---------- */
+.pp-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 80;
+  animation: pp-fade-in 180ms var(--ease);
+}
+@keyframes pp-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.pp-trade-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 380px;
+  max-width: 92vw;
+  background: var(--bg-1);
+  border-left: 1px solid var(--border-0);
+  padding: 24px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  z-index: 90;
+  overflow-y: auto;
+  animation: pp-drawer-in 240ms var(--ease);
+}
+@keyframes pp-drawer-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.pp-trade-drawer__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-0);
+  gap: 12px;
+}
+
+.pp-trade-drawer__title {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fg-0);
+}
+
+.pp-trade-drawer__subtitle {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums slashed-zero;
+  color: var(--fg-2);
+  margin-top: 2px;
+}
+
+.pp-trade-drawer__close {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: var(--fg-2);
+  padding: 4px;
+  border-radius: var(--r-sm);
+  transition: color var(--dur-micro) var(--ease);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.pp-trade-drawer__close:hover { color: var(--fg-0); }
+
+.pp-trade-drawer__side-picker {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.pp-trade-drawer__stake-input {
+  width: 100%;
+  background: var(--bg-2);
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-md);
+  padding: 14px 16px;
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums slashed-zero;
+  color: var(--fg-0);
+  outline: none;
+  transition: border-color var(--dur-micro) var(--ease);
+}
+.pp-trade-drawer__stake-input:focus { border-color: var(--border-1); }
+.pp-trade-drawer__stake-input--error { border-color: var(--down); }
+
+.pp-trade-drawer__stake-error {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--down);
+  margin-top: -8px;
+}
+
+.pp-trade-drawer__quick-picks {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.pp-trade-drawer__summary {
+  background: var(--bg-2);
+  border-radius: var(--r-md);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pp-trade-drawer__summary-row {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+.pp-trade-drawer__summary-row > .label {
+  color: var(--fg-2);
+  font-family: var(--font-sans);
+}
+.pp-trade-drawer__summary-row > .value { color: var(--fg-0); }
+.pp-trade-drawer__summary-divider {
+  height: 1px;
+  background: var(--border-0);
+  margin: 4px 0;
+}
+.pp-trade-drawer__footer-caption {
+  font-size: 11px;
+  color: var(--fg-3);
+  text-align: center;
+  line-height: 1.45;
+  margin-top: 4px;
+}
+
+/* ---------- Mobile bottom-sheet (<640) ----------
+   Polymarket / Kalshi / Robinhood-style. Same content, flipped to slide up
+   from the bottom edge, full-width with a top radius. Matches PR-1/PR-2's
+   explicit-breakpoint mobile discipline. */
+@media (max-width: 640px) {
+  .pp-trade-drawer {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-width: 100%;
+    max-height: 88vh;
+    border-left: 0;
+    border-top: 1px solid var(--border-0);
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    animation: pp-drawer-up 240ms var(--ease);
+  }
+  @keyframes pp-drawer-up {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+  }
+}
