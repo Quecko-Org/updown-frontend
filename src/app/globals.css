@@ -75,7 +75,20 @@
     @apply bg-background text-foreground antialiased;
   }
   body {
-    @apply min-h-screen bg-background font-sans text-foreground;
+    @apply min-h-screen font-sans text-foreground;
+    /* PR-4: soft radial gradient on body so the page bg isn't a uniform
+       fill. Lifts the top-center where the header sits, falls off to
+       the deeper --bg-0 tone at the page edges. background-attachment:
+       fixed so the gradient doesn't slide on scroll — the page feels
+       anchored, not loose. */
+    background-color: var(--bg-0);
+    background-image: radial-gradient(
+      ellipse at 50% -10%,
+      oklch(15% 0.014 268) 0%,
+      var(--bg-0) 60%
+    );
+    background-attachment: fixed;
+    background-repeat: no-repeat;
   }
 }
 
