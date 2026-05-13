@@ -806,3 +806,178 @@
 .pp-mhdr-actions__btn:hover { border-color: var(--border-1); color: var(--fg-0); }
 .pp-mhdr-actions__btn--on { color: var(--up); border-color: var(--up); }
 .pp-mhdr-actions__btn--on:hover { color: var(--up); border-color: var(--up); }
+
+/* ============================================================================
+   PR-2: pp-market-row family — Live / Open / Next consumer row components
+   ----------------------------------------------------------------------------
+   Three lifecycle states share the same base grid. Each variant layers
+   extra classes for state-specific treatments (glow, dim, button row).
+   Consumed by <LiveMarketRow> / <OpenMarketRow> / <NextMarketRow> in
+   src/components/markets/. Not wired into /markets in this PR — the row
+   components are rendered only on the dev preview surface at /dev/market-rows.
+   ========================================================================== */
+
+.pp-market-row {
+  display: grid;
+  grid-template-columns: 180px 1fr 140px;
+  gap: 24px;
+  align-items: center;
+  padding: 20px 24px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-lg);
+  font-family: var(--font-sans);
+  position: relative;
+  transition: border-color var(--dur-micro) var(--ease);
+}
+
+.pp-market-row__time {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums slashed-zero;
+  color: var(--fg-0);
+  line-height: 1.2;
+}
+
+.pp-market-row__strike {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums slashed-zero;
+  color: var(--fg-2);
+  margin-top: 4px;
+}
+
+.pp-market-row__pool {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums slashed-zero;
+  color: var(--fg-0);
+}
+
+.pp-market-row__traders {
+  text-align: right;
+  font-size: 11px;
+  color: var(--fg-2);
+  margin-top: 2px;
+}
+
+/* ---------- Live state ---------- */
+.pp-market-row--live {
+  box-shadow: var(--shadow-live);
+}
+
+.pp-market-row__timer {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-0);
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-0);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums slashed-zero;
+  color: var(--fg-0);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.pp-market-row__counters {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+
+.pp-market-row__count-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  border-radius: var(--r-md);
+  font-size: 14px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+
+.pp-market-row__count-chip--up {
+  background: var(--up-bg);
+  border: 1px solid var(--up-border);
+  color: var(--up);
+}
+
+.pp-market-row__count-chip--down {
+  background: var(--down-bg);
+  border: 1px solid var(--down-border);
+  color: var(--down);
+}
+
+.pp-market-row__pct-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 200px;
+}
+
+.pp-market-row__pct-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+
+.pp-market-row__pct-bar-track {
+  width: 110px;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  display: flex;
+  background: var(--bg-2);
+}
+.pp-market-row__pct-bar-track > .pp-up-fill { background: var(--up); }
+.pp-market-row__pct-bar-track > .pp-down-fill { background: var(--down); }
+
+.pp-market-row__pct-label {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+
+/* ---------- Open state ----------
+   Center zone holds two pp-btn pp-btn--up/--down buttons at --lg size with
+   the share price tucked inside via pp-market-row__buy-btn-price. */
+.pp-market-row__buy-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.pp-market-row__buy-btn-price {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 400;
+  opacity: 0.8;
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+
+/* ---------- Next state ---------- */
+.pp-market-row--next {
+  opacity: 0.62;
+}
+.pp-market-row--next .pp-market-row__time {
+  color: var(--fg-1);
+}
