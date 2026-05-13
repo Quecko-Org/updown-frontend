@@ -1,6 +1,6 @@
 "use client";
 
-import { Menu, X } from "lucide-react";
+import { ArrowLeft, Menu, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -20,6 +20,7 @@ import { useWalletContext } from "@/context/WalletContext";
 import { WalletConnectorList } from "@/components/WalletConnectorList";
 import { getFormattedAddress } from "@/utils/walletHelpers";
 import { cn } from "@/lib/cn";
+import { getRestoredMarketsHref } from "@/hooks/useLastMarketView";
 
 // Phase2-A: collapsed Positions + History into a single "Portfolio" surface
 // with tabs (Active / Resolved). Old /positions and /history routes redirect
@@ -232,8 +233,30 @@ export function Header() {
 
       <header className="pp-hdr">
         <div className="pp-hdr__inner">
-          {/* Brand — SVG wordmark (mark + "PulsePairs" text baked into the SVG) */}
-          <Link href="/" className="pp-hdr__brand" aria-label="PulsePairs — markets">
+          {/* PR-4 nav-friction fix: when the user is on any non-/ route,
+              surface an explicit ← Markets back-button next to the logo.
+              The button's href reads sessionStorage for the last-viewed
+              {asset, timeframe} (written by useTrackLastMarketView on
+              the homepage) so the user lands on the same market they
+              left, not the default 5m view. */}
+          {pathname !== "/" && (
+            <Link
+              href={getRestoredMarketsHref()}
+              className="pp-hdr__back"
+              aria-label="Back to markets"
+            >
+              <ArrowLeft size={16} />
+              <span className="hidden sm:inline">Markets</span>
+            </Link>
+          )}
+          {/* Brand — SVG wordmark (mark + "PulsePairs" text baked into the SVG).
+              On non-/ routes the logo also restores the last market view; on /
+              it points home for accessibility. */}
+          <Link
+            href={pathname === "/" ? "/" : getRestoredMarketsHref()}
+            className="pp-hdr__brand"
+            aria-label="PulsePairs — markets"
+          >
             {/* Wordmark: 34px desktop, 28px mobile. Native SVG aspect ratio
                 (220×40 viewBox ≈ 5.5:1) preserved via w-auto. */}
             <Image

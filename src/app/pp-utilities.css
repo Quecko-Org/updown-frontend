@@ -192,6 +192,27 @@
   padding: 10px 24px; height: 56px;
 }
 .pp-hdr__brand { display: flex; align-items: center; gap: 8px; text-decoration: none; color: var(--fg-0); }
+
+/* PR-4: back-to-markets affordance, only rendered on non-/ routes.
+   Sits to the left of the brand on desktop; collapses to icon-only at
+   <640 to keep the header tight. */
+.pp-hdr__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  margin-right: 4px;
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--fg-1);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: border-color var(--dur-micro) var(--ease), color var(--dur-micro) var(--ease);
+}
+.pp-hdr__back:hover { border-color: var(--border-1); color: var(--fg-0); }
 .pp-hdr__mark { width: 22px; height: 18px; }
 .pp-hdr__word { font-family: var(--font-sans); font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
 .pp-hdr__nav { display: flex; gap: 2px; justify-content: center; }

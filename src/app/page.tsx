@@ -35,6 +35,7 @@ import { AssetPicker, type Asset } from "@/components/markets/AssetPicker";
 import { TimeframeSegmented, type Timeframe } from "@/components/markets/TimeframeSegmented";
 import { LiveResolvedToggle, type RowsMode } from "@/components/markets/LiveResolvedToggle";
 import { TradeDrawer, type TradeSide } from "@/components/markets/TradeDrawer";
+import { useTrackLastMarketView } from "@/hooks/useLastMarketView";
 
 const TF_TO_SEC: Record<Timeframe, 300 | 900 | 3600> = {
   "5m": 300,
@@ -84,6 +85,9 @@ function MarketsPageInner() {
   const timeframe = clampTimeframe(searchParams.get("timeframe"));
   const [rowsMode, setRowsMode] = useState<RowsMode>("live");
   const [drawer, setDrawer] = useState<{ side: TradeSide; market: MarketListItem } | null>(null);
+
+  // Stash {asset, timeframe} for the header logo / back-button restoration.
+  useTrackLastMarketView();
 
   // 1s ticker for the countdown computations below; cheap and keeps the
   // Live row's timer + Next rows' "opens in" labels accurate without
