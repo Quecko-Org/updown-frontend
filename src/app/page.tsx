@@ -1,337 +1,336 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useAtomValue } from "jotai";
-import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getMarkets, getPriceHistory, getStats, type ApiConfig, type MarketListItem } from "@/lib/api";
-import { MarketCard } from "@/components/MarketCard";
-import { normalizePriceHistoryData, type PricePoint } from "@/lib/priceChart";
-import { apiConfigAtom } from "@/store/atoms";
-import { cn } from "@/lib/cn";
-import { formatUsdt } from "@/lib/format";
+/**
+ * /  (homepage) — PR-3 single-page chart-anchored markets composition.
+ *
+ * Replaces the old MarketCard grid. Layout (top to bottom):
+ *   1. Asset picker + Timeframe segmented control
+ *   2. Chart (per-market Chainlink history with one-shot Coinbase backfill,
+ *      sourced from the LIVE market for the selected pair+timeframe)
+ *   3. Live / Resolved toggle + section label
+ *   4. LiveMarketRow → OpenMarketRow → three NextMarketRows
+ *
+ * State ladder (handled in this file, not in child components):
+ *   - loading + no data    → row-slot skeletons keep the layout stable
+ *   - error                → state card with retry, rows stay hidden
+ *   - empty market list    → "no live markets for X right now" card with
+ *                            a switch-timeframe nudge
+ *   - live missing, open present → headline note above the open row
+ *   - happy path           → live + open + nextThree rendered in sequence
+ *
+ * Old composition is preserved at /legacy during the PR-3 → PR-4 soak.
+ */
 
-const PAIRS = ["BTC-USD", "ETH-USD"] as const;
-const TFS = [300, 900, 3600] as const;
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
+import { getMarkets, getPriceHistory, type MarketListItem } from "@/lib/api";
+import { normalizePriceHistoryData } from "@/lib/priceChart";
+import { LiveMarketRow } from "@/components/markets/LiveMarketRow";
+import { OpenMarketRow } from "@/components/markets/OpenMarketRow";
+import { NextMarketRow } from "@/components/markets/NextMarketRow";
+import { MarketsPageChart } from "@/components/markets/MarketsPageChart";
+import { AssetPicker, type Asset } from "@/components/markets/AssetPicker";
+import { TimeframeSegmented, type Timeframe } from "@/components/markets/TimeframeSegmented";
+import { LiveResolvedToggle, type RowsMode } from "@/components/markets/LiveResolvedToggle";
+import { TradeDrawer, type TradeSide } from "@/components/markets/TradeDrawer";
 
-const MAX_CARDS_PER_ROW = 20;
+const TF_TO_SEC: Record<Timeframe, 300 | 900 | 3600> = {
+  "5m": 300,
+  "15m": 900,
+  "60m": 3600,
+};
 
-function tfLabel(tf: number) {
-  if (tf === 300) return "5 min";
-  if (tf === 900) return "15 min";
-  return "1 hour";
+const ASSET_TO_PAIR: Record<Asset, "BTC-USD" | "ETH-USD"> = {
+  btc: "BTC-USD",
+  eth: "ETH-USD",
+};
+
+function clampAsset(raw: string | null): Asset {
+  return raw === "eth" ? "eth" : "btc";
 }
 
-function splitMarkets(list: MarketListItem[] | undefined) {
-  if (!list?.length) return { active: null as MarketListItem | null, history: [] as MarketListItem[] };
-  const sorted = [...list].sort((a, b) => b.endTime - a.endTime);
-  const active = sorted.find((m) => m.status === "ACTIVE") ?? null;
-  const history = sorted.filter((m) => m.status !== "ACTIVE");
-  return { active, history };
+function clampTimeframe(raw: string | null): Timeframe {
+  if (raw === "15m" || raw === "60m") return raw;
+  return "5m";
 }
 
-type FeeConfig = Pick<ApiConfig, "platformFeeBps" | "makerFeeBps" | "feeModel" | "peakFeeBps"> | null;
+type Buckets = {
+  live: MarketListItem | null;
+  open: MarketListItem | null;
+  next: MarketListItem[];
+  resolved: MarketListItem[];
+};
 
-type ResolvedSortKey = "newest" | "volume";
+function bucketMarkets(list: MarketListItem[] | undefined, nowSec: number): Buckets {
+  if (!list?.length) return { live: null, open: null, next: [], resolved: [] };
+  const sorted = [...list].sort((a, b) => a.startTime - b.startTime);
+  const live = sorted.find((m) => m.status === "ACTIVE") ?? null;
+  const upcoming = sorted.filter((m) => m.startTime > nowSec && m.status !== "ACTIVE");
+  const open = upcoming[0] ?? null;
+  const next = upcoming.slice(1, 4);
+  const resolved = sorted
+    .filter((m) => m.status !== "ACTIVE" && m.endTime <= nowSec)
+    .sort((a, b) => b.endTime - a.endTime)
+    .slice(0, 12);
+  return { live, open, next, resolved };
+}
 
-function TimeframeRowWithToggle({
-  tf,
-  btcData,
-  ethData,
-  btcPoints,
-  ethPoints,
-  btcSpot,
-  ethSpot,
-  feeConfig,
-  btcLoading,
-  ethLoading,
-  resolvedSort,
-}: {
-  tf: number;
-  btcData: { active: MarketListItem | null; history: MarketListItem[] };
-  ethData: { active: MarketListItem | null; history: MarketListItem[] };
-  btcPoints: PricePoint[];
-  ethPoints: PricePoint[];
-  btcSpot: number | null;
-  ethSpot: number | null;
-  feeConfig: FeeConfig;
-  btcLoading: boolean;
-  ethLoading: boolean;
-  resolvedSort: ResolvedSortKey;
-}) {
-  const [selectedPair, setSelectedPair] = useState<"BTC-USD" | "ETH-USD">("BTC-USD");
+function MarketsPageInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const asset = clampAsset(searchParams.get("asset"));
+  const timeframe = clampTimeframe(searchParams.get("timeframe"));
+  const [rowsMode, setRowsMode] = useState<RowsMode>("live");
+  const [drawer, setDrawer] = useState<{ side: TradeSide; market: MarketListItem } | null>(null);
 
-  const data = selectedPair === "BTC-USD" ? btcData : ethData;
-  const pricePoints = selectedPair === "BTC-USD" ? btcPoints : ethPoints;
-  const spot = selectedPair === "BTC-USD" ? btcSpot : ethSpot;
-  const loading = selectedPair === "BTC-USD" ? btcLoading : ethLoading;
-  const pairShort = selectedPair === "BTC-USD" ? "BTC" : "ETH";
+  // 1s ticker for the countdown computations below; cheap and keeps the
+  // Live row's timer + Next rows' "opens in" labels accurate without
+  // each row mounting its own interval.
+  const [nowSec, setNowSec] = useState<number>(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 1000);
+    return () => clearInterval(id);
+  }, []);
 
-  // Separate active (live trading) from resolved so they render in two
-  // visually distinct rows. A single mixed row made it hard to see at a
-  // glance which markets were live.
-  const active = data.active ? [data.active] : [];
-  // Phase2-D: resolved tail sort. `history` arrives endTime-desc from
-  // splitMarkets; volume sort is opt-in. BigInt compare avoids the Number
-  // overflow when atomic USDT volumes climb past 2**53.
-  const resolved = useMemo(() => {
-    const list = data.history.slice(0, MAX_CARDS_PER_ROW);
-    if (resolvedSort !== "volume") return list;
-    return [...list].sort((a, b) => {
-      try {
-        const av = BigInt(a.volume || "0");
-        const bv = BigInt(b.volume || "0");
-        return av < bv ? 1 : av > bv ? -1 : 0;
-      } catch {
-        return 0;
-      }
-    });
-  }, [data.history, resolvedSort]);
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: ["markets", ASSET_TO_PAIR[asset], TF_TO_SEC[timeframe]],
+    queryFn: () => getMarkets(TF_TO_SEC[timeframe], ASSET_TO_PAIR[asset]),
+    refetchInterval: 15_000,
+  });
+
+  // Spot price for the active asset, threaded into the asset pill.
+  const { data: btcSpot } = useQuery({
+    queryKey: ["spot", "BTC"],
+    queryFn: async () => {
+      const ph = await getPriceHistory("BTC");
+      const points = normalizePriceHistoryData(ph);
+      return points.length ? points[points.length - 1].p : null;
+    },
+    refetchInterval: 30_000,
+  });
+  const { data: ethSpot } = useQuery({
+    queryKey: ["spot", "ETH"],
+    queryFn: async () => {
+      const ph = await getPriceHistory("ETH");
+      const points = normalizePriceHistoryData(ph);
+      return points.length ? points[points.length - 1].p : null;
+    },
+    refetchInterval: 30_000,
+  });
+
+  const buckets = useMemo(() => bucketMarkets(data, nowSec), [data, nowSec]);
+
+  const setQueryParam = useCallback(
+    (key: string, value: string) => {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set(key, value);
+      router.replace(`/?${params.toString()}`, { scroll: false });
+    },
+    [router, searchParams],
+  );
+
+  const handleAssetChange = (next: Asset) => setQueryParam("asset", next);
+  const handleTimeframeChange = (next: Timeframe) => setQueryParam("timeframe", next);
+
+  const handleSelectSide = (side: "up" | "down") => {
+    if (!buckets.open) return;
+    setDrawer({ side, market: buckets.open });
+  };
+
+  const handleDrawerSubmit = ({ side, stakeUsd }: { side: TradeSide; stakeUsd: number }) => {
+    // PR-3 leaves trade submission as a follow-up. Log the intent so the
+    // UI flow is exercised end-to-end during the visual sweep + so the
+    // path is obvious for PR-4's wiring.
+    // eslint-disable-next-line no-console
+    console.info("[trade-drawer] submit", { side, stakeUsd, market: drawer?.market?.address });
+    setDrawer(null);
+  };
 
   return (
-    <div>
-      <div className="pp-mrow__hd">
-        <div className="pp-mrow__tflabel">
-          <span className="pp-mrow__tf">{tfLabel(tf)}</span>
-        </div>
-        <div className="pp-mrow__hd-right">
-          <span className="pp-mrow__count">
-            <span className="pp-tabular">{active.length}</span>{" "}
-            <span className="pp-caption">open</span>
-            <span className="pp-mrow__dot">·</span>
-            <span className="pp-tabular">{resolved.length}</span>{" "}
-            <span className="pp-caption">resolved</span>
-          </span>
-          <div className="pp-tab">
-            <button
-              type="button"
-              className={cn("pp-tab__btn", selectedPair === "BTC-USD" && "pp-tab__btn--on")}
-              onClick={() => setSelectedPair("BTC-USD")}
-            >
-              BTC
-            </button>
-            <button
-              type="button"
-              className={cn("pp-tab__btn", selectedPair === "ETH-USD" && "pp-tab__btn--on")}
-              onClick={() => setSelectedPair("ETH-USD")}
-            >
-              ETH
+    <main className="pp-markets-page">
+      <div className="pp-markets-page__controls">
+        <AssetPicker
+          selected={asset}
+          btcSpotUsd={btcSpot ?? null}
+          ethSpotUsd={ethSpot ?? null}
+          onChange={handleAssetChange}
+        />
+        <TimeframeSegmented selected={timeframe} onChange={handleTimeframeChange} />
+      </div>
+
+      <MarketsPageChart asset={asset} timeframe={timeframe} liveMarket={buckets.live} />
+
+      <div className="pp-markets-page__rows-header">
+        <h2 className="pp-section-label">
+          {asset.toUpperCase()} · {timeframe.toUpperCase()}
+        </h2>
+        <LiveResolvedToggle value={rowsMode} onChange={setRowsMode} />
+      </div>
+
+      {isError ? (
+        <div className="pp-state-card" data-testid="state-error">
+          <h3 className="pp-state-card__title">Couldn&apos;t load markets</h3>
+          <p className="pp-state-card__body">
+            The backend didn&apos;t answer in time. Try again — if it keeps failing,
+            the dev API may be paused.
+          </p>
+          <div className="pp-state-card__actions">
+            <button type="button" className="pp-btn pp-btn--secondary" onClick={() => refetch()}>
+              Retry
             </button>
           </div>
         </div>
-      </div>
-      {loading ? (
-        <div
-          className="h-[180px] rounded-[var(--r-lg)] border"
-          style={{ background: "var(--bg-1)", borderColor: "var(--border-0)" }}
-        />
-      ) : active.length === 0 && resolved.length === 0 ? (
-        <p className="pp-caption">
-          No {pairShort} markets for {tfLabel(tf)}
-        </p>
-      ) : (
-        /* Single horizontal row per timeframe: live markets lead full-size
-           on the left, resolved markets trail smaller and dimmed to the
-           right in the same flow. Overflow scrolls — no second row below,
-           no hairline divider breaking the line up. */
-        <div className="flex gap-3 overflow-x-auto pb-2">
-          {active.map((m) => (
-            <div key={m.address} className="w-[360px] shrink-0">
-              <MarketCard market={m} btcPoints={pricePoints} spotUsd={spot} feeConfig={feeConfig} />
-            </div>
-          ))}
-          {resolved.map((m) => (
-            <div key={m.address} className="w-[280px] shrink-0" style={{ opacity: 0.72 }}>
-              <MarketCard market={m} btcPoints={pricePoints} spotUsd={spot} feeConfig={feeConfig} />
-            </div>
-          ))}
+      ) : isLoading && !data ? (
+        <div data-testid="state-loading">
+          <div className="pp-row-skeleton" />
+          <div className="pp-row-skeleton" style={{ marginTop: 16 }} />
+          <div className="pp-row-skeleton" style={{ marginTop: 8 }} />
+          <div className="pp-row-skeleton" style={{ marginTop: 8 }} />
+          <div className="pp-row-skeleton" style={{ marginTop: 8 }} />
         </div>
+      ) : rowsMode === "live" ? (
+        renderLiveBranch(buckets, nowSec, handleSelectSide, asset, timeframe, handleTimeframeChange)
+      ) : (
+        renderResolvedBranch(buckets)
       )}
-    </div>
+
+      {drawer && (
+        <TradeDrawer
+          market={drawer.market}
+          initialSide={drawer.side}
+          asset={asset}
+          onClose={() => setDrawer(null)}
+          onSubmit={handleDrawerSubmit}
+        />
+      )}
+    </main>
   );
 }
 
-export default function HomePage() {
-  const cfg = useAtomValue(apiConfigAtom);
-  const qc = useQueryClient();
-  // Phase2-D: home-level sort for the resolved-cards tail. Active markets
-  // aren't sorted (one per pair × timeframe). Default "newest" preserves
-  // the prior endTime-desc behavior so the layout doesn't change for users
-  // who don't touch the toggle.
-  const [resolvedSort, setResolvedSort] = useState<ResolvedSortKey>("newest");
+function renderLiveBranch(
+  buckets: Buckets,
+  nowSec: number,
+  onSelectSide: (side: "up" | "down") => void,
+  asset: Asset,
+  timeframe: Timeframe,
+  onTimeframeChange: (t: Timeframe) => void,
+) {
+  const { live, open, next } = buckets;
+  const hasAnything = live || open || next.length > 0;
 
-  const marketQueries = useQueries({
-    queries: PAIRS.flatMap((pair) =>
-      TFS.map((tf) => ({
-        queryKey: ["markets", tf, pair],
-        queryFn: () => getMarkets(tf, pair),
-        staleTime: 30_000,
-        refetchInterval: 60_000,
-      })),
-    ),
-  });
-
-  const { data: btcPriceRaw } = useQuery({
-    queryKey: ["priceHistory", "BTC"],
-    queryFn: () => getPriceHistory("BTC"),
-    refetchInterval: 30_000,
-    retry: 2,
-    retryDelay: (attempt: number) => Math.min(5000, 1000 * 2 ** attempt),
-  });
-
-  const { data: ethPriceRaw } = useQuery({
-    queryKey: ["priceHistory", "ETH"],
-    queryFn: () => getPriceHistory("ETH"),
-    refetchInterval: 30_000,
-    retry: 2,
-    retryDelay: (attempt: number) => Math.min(5000, 1000 * 2 ** attempt),
-  });
-
-  const feeConfig: FeeConfig = cfg
-    ? {
-        platformFeeBps: cfg.platformFeeBps,
-        makerFeeBps: cfg.makerFeeBps,
-        feeModel: cfg.feeModel,
-        peakFeeBps: cfg.peakFeeBps,
-      }
-    : null;
-
-  const btcPoints = useMemo(() => normalizePriceHistoryData(btcPriceRaw), [btcPriceRaw]);
-  const ethPoints = useMemo(() => normalizePriceHistoryData(ethPriceRaw), [ethPriceRaw]);
-
-  const btcSpot = useMemo(() => {
-    if (btcPoints.length === 0) return null;
-    const p = btcPoints[btcPoints.length - 1]!.p;
-    return p > 0 ? p : null;
-  }, [btcPoints]);
-
-  const ethSpot = useMemo(() => {
-    if (ethPoints.length === 0) return null;
-    const p = ethPoints[ethPoints.length - 1]!.p;
-    return p > 0 ? p : null;
-  }, [ethPoints]);
-
-  const activeEndTimes = useMemo(() => {
-    const times: number[] = [];
-    for (let i = 0; i < marketQueries.length; i++) {
-      const { active } = splitMarkets(marketQueries[i]?.data);
-      if (active) times.push(active.endTime);
-    }
-    return times;
-  }, [marketQueries]);
-
-  useEffect(() => {
-    if (activeEndTimes.length === 0) return;
-    const now = Math.floor(Date.now() / 1000);
-    const timers = activeEndTimes
-      .map((end) => end - now)
-      .filter((left) => left > 0 && left < 7200)
-      .map((left) =>
-        setTimeout(() => {
-          void qc.invalidateQueries({ queryKey: ["markets"] });
-        }, (left + 2) * 1000),
-      );
-
-    return () => timers.forEach(clearTimeout);
-  }, [activeEndTimes, qc]);
-
-  const { data: stats } = useQuery({
-    queryKey: ["stats"],
-    queryFn: getStats,
-    staleTime: 60_000,
-    refetchInterval: 60_000,
-    retry: 1,
-  });
-
-  // Settled-24h: markets RESOLVED/CLAIMED with endTime within the trailing 24h
-  // window. Backend /stats doesn't expose a 24h-scoped settled count yet, so
-  // we derive it client-side. Bug F: prior version omitted the time filter and
-  // showed all-time settled count under a "24h" label — misleading.
-  const settledCount = useMemo(() => {
-    const cutoffSec = Math.floor(Date.now() / 1000) - 86_400;
-    let n = 0;
-    for (const q of marketQueries) {
-      for (const m of q.data ?? []) {
-        if (
-          (m.status === "RESOLVED" || m.status === "CLAIMED") &&
-          m.endTime >= cutoffSec
-        )
-          n++;
-      }
-    }
-    return n;
-  }, [marketQueries]);
-
-  const volumeLabel = stats ? `$${formatUsdt(stats.totalVolume)}` : "—";
-  const openMarkets = stats?.activeMarketsCount ?? null;
-  const traders = stats?.totalTraders ?? null;
+  if (!hasAnything) {
+    const otherTf: Timeframe = timeframe === "5m" ? "15m" : "5m";
+    return (
+      <div className="pp-state-card" data-testid="state-empty">
+        <h3 className="pp-state-card__title">
+          No live markets for {asset.toUpperCase()} {timeframe.toUpperCase()}
+        </h3>
+        <p className="pp-state-card__body">
+          The cycler hasn&apos;t opened a window for this pair + timeframe right now.
+          Try a different timeframe or check back in a minute.
+        </p>
+        <div className="pp-state-card__actions">
+          <button type="button" className="pp-btn pp-btn--secondary" onClick={() => onTimeframeChange(otherTf)}>
+            Try {otherTf}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-8">
-      <div className="pp-statsrail">
-        <div className="pp-statsrail__cell">
-          <span className="pp-micro">24h volume</span>
-          <span className="pp-price-xl">{volumeLabel}</span>
+    <>
+      {live ? (
+        <LiveMarketRow
+          market={live}
+          countdownSeconds={Math.max(0, live.endTime - nowSec)}
+          upTraderCount={0}
+          downTraderCount={0}
+          upPct={Math.round(Number(live.upPrice || "5000") / 100)}
+          downPct={Math.round(Number(live.downPrice || "5000") / 100)}
+        />
+      ) : (
+        <div className="pp-state-card" data-testid="state-no-live">
+          <p className="pp-state-card__body">
+            No live market right now. The next window opens at{" "}
+            <span className="pp-state-card__countdown">
+              {open
+                ? new Date(open.startTime * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                : "—"}
+            </span>
+            .
+          </p>
         </div>
-        <div className="pp-statsrail__cell">
-          <span className="pp-micro">Open markets</span>
-          <span className="pp-price-xl">{openMarkets != null ? openMarkets : "—"}</span>
-        </div>
-        <div className="pp-statsrail__cell">
-          <span className="pp-micro">Settled 24h</span>
-          <span className="pp-price-xl">{settledCount}</span>
-        </div>
-        <div className="pp-statsrail__cell">
-          <span className="pp-micro">Traders 24h</span>
-          <span className="pp-price-xl">{traders != null ? traders : "—"}</span>
-        </div>
-      </div>
-      <div className="flex items-center justify-between gap-2">
-        <span className="pp-micro" style={{ color: "var(--fg-2)" }}>
-          Resolved tail
-        </span>
-        <div className="pp-tab" role="tablist" aria-label="Sort resolved markets">
-          <button
-            type="button"
-            className={cn("pp-tab__btn", resolvedSort === "newest" && "pp-tab__btn--on")}
-            onClick={() => setResolvedSort("newest")}
-            aria-selected={resolvedSort === "newest"}
-            role="tab"
-          >
-            Newest
-          </button>
-          <button
-            type="button"
-            className={cn("pp-tab__btn", resolvedSort === "volume" && "pp-tab__btn--on")}
-            onClick={() => setResolvedSort("volume")}
-            aria-selected={resolvedSort === "volume"}
-            role="tab"
-          >
-            Volume
-          </button>
-        </div>
-      </div>
-      {TFS.map((tf, ti) => (
-        <TimeframeRowWithToggle
-          key={tf}
-          tf={tf}
-          btcData={splitMarkets(marketQueries[0 * TFS.length + ti]?.data)}
-          ethData={splitMarkets(marketQueries[1 * TFS.length + ti]?.data)}
-          btcPoints={btcPoints}
-          ethPoints={ethPoints}
-          btcSpot={btcSpot}
-          ethSpot={ethSpot}
-          feeConfig={feeConfig}
-          btcLoading={
-            marketQueries[0 * TFS.length + ti]?.isPending === true &&
-            marketQueries[0 * TFS.length + ti]?.data === undefined
-          }
-          ethLoading={
-            marketQueries[1 * TFS.length + ti]?.isPending === true &&
-            marketQueries[1 * TFS.length + ti]?.data === undefined
-          }
-          resolvedSort={resolvedSort}
+      )}
+
+      {open && (
+        <OpenMarketRow
+          market={open}
+          upSharePriceCents={Math.round(Number(open.upPrice || "5000") / 100)}
+          downSharePriceCents={Math.round(Number(open.downPrice || "5000") / 100)}
+          upPct={Math.round(Number(open.upPrice || "5000") / 100)}
+          downPct={Math.round(Number(open.downPrice || "5000") / 100)}
+          poolUsdt={Number(open.volume || "0")}
+          traderCount={0}
+          countdownSecondsUntilClose={Math.max(0, open.endTime - nowSec)}
+          onSelectSide={onSelectSide}
+        />
+      )}
+
+      {next.slice(0, 3).map((m, i) => (
+        <NextMarketRow
+          key={m.address}
+          market={m}
+          upSharePriceCents={50}
+          downSharePriceCents={50}
+          secondsUntilOpen={Math.max(0, m.startTime - nowSec)}
+          depth={i as 0 | 1 | 2}
         />
       ))}
-    </div>
+    </>
+  );
+}
+
+function renderResolvedBranch(buckets: Buckets) {
+  if (buckets.resolved.length === 0) {
+    return (
+      <div className="pp-state-card" data-testid="state-empty-resolved">
+        <h3 className="pp-state-card__title">No recently resolved markets</h3>
+        <p className="pp-state-card__body">
+          Resolutions land here as soon as the cycler closes a window. Check back after
+          the current live market settles.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <>
+      {buckets.resolved.map((m) => (
+        <LiveMarketRow
+          key={m.address}
+          market={m}
+          countdownSeconds={0}
+          upTraderCount={0}
+          downTraderCount={0}
+          upPct={Math.round(Number(m.upPrice || "5000") / 100)}
+          downPct={Math.round(Number(m.downPrice || "5000") / 100)}
+        />
+      ))}
+    </>
+  );
+}
+
+export default function MarketsHomePage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="pp-markets-page">
+          <div className="pp-row-skeleton" style={{ height: 280 }} />
+        </main>
+      }
+    >
+      <MarketsPageInner />
+    </Suspense>
   );
 }
