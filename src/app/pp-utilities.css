@@ -975,16 +975,23 @@
   font-variant-numeric: tabular-nums slashed-zero;
 }
 
+/* PR-4 commit 9/10: chips use luminous-text-derivative tokens.
+   Fill stays at 10% alpha (--up-bg / --down-bg) per the Myriad ratio
+   from commit 1/10; text color shifts from the locked --up / --down
+   fill hue to --up-text / --down-text — brighter (+8 lightness) and
+   more saturated (+0.02 chroma) so labels read clearly against the
+   tinted background. Directional identity preserved (same hue
+   families per the PR-1 logo lock). */
 .pp-market-row__count-chip--up {
   background: var(--up-bg);
   border: 1px solid var(--up-border);
-  color: var(--up);
+  color: var(--up-text);
 }
 
 .pp-market-row__count-chip--down {
   background: var(--down-bg);
   border: 1px solid var(--down-border);
-  color: var(--down);
+  color: var(--down-text);
 }
 
 .pp-market-row__pct-bar {

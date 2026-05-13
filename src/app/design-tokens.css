@@ -328,8 +328,14 @@
 }
 
 /* ---------- Directional helpers ---------- */
-.pp-up   { color: var(--up); }
-.pp-down { color: var(--down); }
+/* PR-4 commit 9/10: helper classes use luminous text derivatives.
+   Pre-PR-4 these reached for the fill hue (--up / --down) which works
+   on neutral backgrounds but reads muddy on tinted backgrounds (e.g.
+   inside a 10% --up-bg chip). The derivatives are brighter + more
+   saturated in the same hue, so the directional label pops regardless
+   of substrate. */
+.pp-up   { color: var(--up-text); }
+.pp-down { color: var(--down-text); }
 .pp-warn { color: var(--warn); }
 
 /* ---------- Chrome for price tick flash ---------- */
