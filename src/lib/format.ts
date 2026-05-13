@@ -121,3 +121,52 @@ export function parseStrikeUsdNumber(raw: string | undefined | null): number | n
     return null;
   }
 }
+
+/**
+ * Implied probability from pool totals.
+ *
+ * PR-4 PLACEHOLDER — pool-based prob is correct ONLY at resolution time
+ * (when the pool ratio reflects the realized outcome odds). For ACTIVE
+ * markets the source-of-truth is the orderbook mid-price (best bid/ask
+ * from the DMM) — pool ratios lag and skew with one-sided trading. The
+ * orderbook subscription per-market lands in PR-5; until then this
+ * helper feeds both ACTIVE and RESOLVED rows, with the known caveat
+ * that ACTIVE rows under-react to fresh quoting until the next fill
+ * shifts the pool ratio.
+ *
+ * Inputs `upPoolRaw` / `downPoolRaw` are USDTM atomic-unit decimal
+ * strings (6-decimal). For historical reasons the API surfaces these
+ * as `upPrice` / `downPrice` on MarketListItem — the naming is wrong
+ * and will be cleaned up in the same backend coordination as the
+ * orderbook source-of-truth move.
+ *
+ * Returns null when both pools are zero (no trades have happened, no
+ * meaningful probability to render). Callers MUST render `—` or hide
+ * the % display on null — rendering 0% would lie to users.
+ */
+export type ImpliedProb = { upPct: number; downPct: number };
+
+export function computeImpliedProb(
+  upPoolRaw: string | undefined | null,
+  downPoolRaw: string | undefined | null,
+): ImpliedProb | null {
+  const ZERO = BigInt(0);
+  const parsePool = (raw: string | undefined | null): bigint => {
+    if (raw == null || raw === "") return ZERO;
+    try {
+      return BigInt(raw);
+    } catch {
+      return ZERO;
+    }
+  };
+  const up = parsePool(upPoolRaw);
+  const down = parsePool(downPoolRaw);
+  const total = up + down;
+  if (total === ZERO) return null;
+  // Convert to number for the ratio — pool magnitudes are well within
+  // Number precision (USDTM atomic for any realistic prediction-market
+  // notional is <2^53). 100ths of a percent is plenty of resolution.
+  const upPct = Math.round((Number(up) / Number(total)) * 100);
+  const downPct = 100 - upPct;
+  return { upPct, downPct };
+}

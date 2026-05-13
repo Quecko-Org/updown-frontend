@@ -25,6 +25,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { getMarkets, getPriceHistory, type MarketListItem } from "@/lib/api";
+import { computeImpliedProb } from "@/lib/format";
 import { normalizePriceHistoryData } from "@/lib/priceChart";
 import { LiveMarketRow } from "@/components/markets/LiveMarketRow";
 import { OpenMarketRow } from "@/components/markets/OpenMarketRow";
@@ -159,7 +160,16 @@ function MarketsPageInner() {
         <TimeframeSegmented selected={timeframe} onChange={handleTimeframeChange} />
       </div>
 
-      <MarketsPageChart asset={asset} timeframe={timeframe} liveMarket={buckets.live} />
+      {/* Chart anchor: live market when present, otherwise fall back to the
+          most-recently-resolved market for this pair+timeframe so the chart
+          stays populated through cycler pauses. PR-3 left this as a blank
+          fallback ("chart will populate when next market opens"); PR-4
+          rewires it to read the resolved history. */}
+      <MarketsPageChart
+        asset={asset}
+        timeframe={timeframe}
+        liveMarket={buckets.live ?? buckets.resolved[0] ?? null}
+      />
 
       <div className="pp-markets-page__rows-header">
         <h2 className="pp-section-label">
@@ -221,15 +231,34 @@ function renderLiveBranch(
 
   if (!hasAnything) {
     const otherTf: Timeframe = timeframe === "5m" ? "15m" : "5m";
+    const fallback = buckets.resolved[0];
     return (
       <div className="pp-state-card" data-testid="state-empty">
         <h3 className="pp-state-card__title">
           No live markets for {asset.toUpperCase()} {timeframe.toUpperCase()}
         </h3>
-        <p className="pp-state-card__body">
-          The cycler hasn&apos;t opened a window for this pair + timeframe right now.
-          Try a different timeframe or check back in a minute.
-        </p>
+        {fallback ? (
+          <p className="pp-state-card__body">
+            Showing the most recent resolved market above —{" "}
+            <span className="pp-state-card__countdown">
+              {new Date(fallback.endTime * 1000).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </span>
+            {fallback.winner != null && (
+              <>
+                , {fallback.winner === 1 ? "UP" : fallback.winner === 2 ? "DOWN" : "no winner"} won
+              </>
+            )}
+            . The cycler hasn&apos;t opened a window for this pair + timeframe right now.
+          </p>
+        ) : (
+          <p className="pp-state-card__body">
+            The cycler hasn&apos;t opened a window for this pair + timeframe right now.
+            Try a different timeframe or check back in a minute.
+          </p>
+        )}
         <div className="pp-state-card__actions">
           <button type="button" className="pp-btn pp-btn--secondary" onClick={() => onTimeframeChange(otherTf)}>
             Try {otherTf}
@@ -242,14 +271,19 @@ function renderLiveBranch(
   return (
     <>
       {live ? (
-        <LiveMarketRow
-          market={live}
-          countdownSeconds={Math.max(0, live.endTime - nowSec)}
-          upTraderCount={0}
-          downTraderCount={0}
-          upPct={Math.round(Number(live.upPrice || "5000") / 100)}
-          downPct={Math.round(Number(live.downPrice || "5000") / 100)}
-        />
+        (() => {
+          const prob = computeImpliedProb(live.upPrice, live.downPrice);
+          return (
+            <LiveMarketRow
+              market={live}
+              countdownSeconds={Math.max(0, live.endTime - nowSec)}
+              upTraderCount={0}
+              downTraderCount={0}
+              upPct={prob?.upPct ?? null}
+              downPct={prob?.downPct ?? null}
+            />
+          );
+        })()
       ) : (
         <div className="pp-state-card" data-testid="state-no-live">
           <p className="pp-state-card__body">
@@ -264,19 +298,27 @@ function renderLiveBranch(
         </div>
       )}
 
-      {open && (
-        <OpenMarketRow
-          market={open}
-          upSharePriceCents={Math.round(Number(open.upPrice || "5000") / 100)}
-          downSharePriceCents={Math.round(Number(open.downPrice || "5000") / 100)}
-          upPct={Math.round(Number(open.upPrice || "5000") / 100)}
-          downPct={Math.round(Number(open.downPrice || "5000") / 100)}
-          poolUsdt={Number(open.volume || "0")}
-          traderCount={0}
-          countdownSecondsUntilClose={Math.max(0, open.endTime - nowSec)}
-          onSelectSide={onSelectSide}
-        />
-      )}
+      {open &&
+        (() => {
+          const prob = computeImpliedProb(open.upPrice, open.downPrice);
+          // share prices fall back to 50/50 until the orderbook
+          // subscription lands (PR-5) and gives us real mid quotes.
+          const upCents = prob?.upPct ?? 50;
+          const downCents = prob?.downPct ?? 50;
+          return (
+            <OpenMarketRow
+              market={open}
+              upSharePriceCents={upCents}
+              downSharePriceCents={downCents}
+              upPct={prob?.upPct ?? null}
+              downPct={prob?.downPct ?? null}
+              poolUsdt={Number(open.volume || "0")}
+              traderCount={0}
+              countdownSecondsUntilClose={Math.max(0, open.endTime - nowSec)}
+              onSelectSide={onSelectSide}
+            />
+          );
+        })()}
 
       {next.slice(0, 3).map((m, i) => (
         <NextMarketRow
@@ -306,17 +348,20 @@ function renderResolvedBranch(buckets: Buckets) {
   }
   return (
     <>
-      {buckets.resolved.map((m) => (
-        <LiveMarketRow
-          key={m.address}
-          market={m}
-          countdownSeconds={0}
-          upTraderCount={0}
-          downTraderCount={0}
-          upPct={Math.round(Number(m.upPrice || "5000") / 100)}
-          downPct={Math.round(Number(m.downPrice || "5000") / 100)}
-        />
-      ))}
+      {buckets.resolved.map((m) => {
+        const prob = computeImpliedProb(m.upPrice, m.downPrice);
+        return (
+          <LiveMarketRow
+            key={m.address}
+            market={m}
+            countdownSeconds={0}
+            upTraderCount={0}
+            downTraderCount={0}
+            upPct={prob?.upPct ?? null}
+            downPct={prob?.downPct ?? null}
+          />
+        );
+      })}
     </>
   );
 }

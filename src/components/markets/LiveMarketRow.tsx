@@ -6,8 +6,14 @@ export type LiveMarketRowProps = {
   countdownSeconds: number;
   upTraderCount: number;
   downTraderCount: number;
-  upPct: number;
-  downPct: number;
+  /**
+   * Implied probabilities computed by the page from pool totals. Null
+   * when no trades have happened yet (both pools 0) — the row renders
+   * "—" in that case rather than the lying "0%". Source-of-truth for
+   * ACTIVE markets moves to orderbook mid in PR-5.
+   */
+  upPct: number | null;
+  downPct: number | null;
 };
 
 function formatTimeRange(startSec: number, endSec: number): string {
@@ -72,15 +78,27 @@ export function LiveMarketRow({
         </span>
 
         <div className="pp-market-row__pct-bar">
-          <div className="pp-market-row__pct-bar-row">
-            <span className="pp-up">{Math.round(upPct)}%</span>
-            <div className="pp-market-row__pct-bar-track">
-              <div className="pp-up-fill" style={{ width: `${upPct}%` }} />
-              <div className="pp-down-fill" style={{ width: `${downPct}%` }} />
+          {upPct == null || downPct == null ? (
+            <div className="pp-market-row__pct-bar-row">
+              <span className="pp-up">—</span>
+              <span className="pp-market-row__pct-label" style={{ marginTop: 0 }}>
+                no trades yet
+              </span>
+              <span className="pp-down">—</span>
             </div>
-            <span className="pp-down">{Math.round(downPct)}%</span>
-          </div>
-          <div className="pp-market-row__pct-label">Counting</div>
+          ) : (
+            <>
+              <div className="pp-market-row__pct-bar-row">
+                <span className="pp-up">{upPct}%</span>
+                <div className="pp-market-row__pct-bar-track">
+                  <div className="pp-up-fill" style={{ width: `${upPct}%` }} />
+                  <div className="pp-down-fill" style={{ width: `${downPct}%` }} />
+                </div>
+                <span className="pp-down">{downPct}%</span>
+              </div>
+              <div className="pp-market-row__pct-label">Counting</div>
+            </>
+          )}
         </div>
 
         <span className="pp-market-row__count-chip pp-market-row__count-chip--down">

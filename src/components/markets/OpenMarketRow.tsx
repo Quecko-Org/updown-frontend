@@ -7,8 +7,9 @@ export type OpenMarketRowProps = {
   market: MarketListItem;
   upSharePriceCents: number;
   downSharePriceCents: number;
-  upPct: number;
-  downPct: number;
+  /** See LiveMarketRow — null when no trades yet, source-of-truth moves to orderbook mid in PR-5. */
+  upPct: number | null;
+  downPct: number | null;
   poolUsdt: number;
   traderCount: number;
   countdownSecondsUntilClose: number;
@@ -80,12 +81,14 @@ export function OpenMarketRow({
           </button>
         </div>
 
-        <div className="pp-market-row__pct-bar" style={{ minWidth: 0, marginTop: 8 }}>
-          <div className="pp-market-row__pct-bar-track" style={{ width: 220, height: 4 }}>
-            <div className="pp-up-fill" style={{ width: `${upPct}%` }} />
-            <div className="pp-down-fill" style={{ width: `${downPct}%` }} />
+        {upPct != null && downPct != null && (
+          <div className="pp-market-row__pct-bar" style={{ minWidth: 0, marginTop: 8 }}>
+            <div className="pp-market-row__pct-bar-track" style={{ width: 220, height: 4 }}>
+              <div className="pp-up-fill" style={{ width: `${upPct}%` }} />
+              <div className="pp-down-fill" style={{ width: `${downPct}%` }} />
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       <div>
