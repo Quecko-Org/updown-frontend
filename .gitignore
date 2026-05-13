@@ -41,3 +41,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .claude/
+
+# playwright — checked-in screenshots live in e2e/screenshots/, runtime junk in test-results/
+test-results/
+playwright-report/
