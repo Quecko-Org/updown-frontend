@@ -1,3 +1,5 @@
+"use client";
+
 import { notFound } from "next/navigation";
 import type { MarketListItem } from "@/lib/api";
 import { LiveMarketRow } from "@/components/markets/LiveMarketRow";

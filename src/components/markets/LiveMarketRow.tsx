@@ -11,13 +11,15 @@ export type LiveMarketRowProps = {
 };
 
 function formatTimeRange(startSec: number, endSec: number): string {
-  const fmt = (s: number) =>
-    new Date(s * 1000).toLocaleTimeString([], {
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    });
-  return `${fmt(startSec)} – ${fmt(endSec)}`;
+  // Format as "3:59 – 4:04 PM" — single AM/PM suffix at the end so the
+  // string fits the 180px column without wrapping at narrow widths.
+  const start = new Date(startSec * 1000);
+  const end = new Date(endSec * 1000);
+  const full = end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true });
+  const startTime = start.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: false });
+  const [h, m] = startTime.split(":");
+  const hourNum = ((Number(h) + 11) % 12) + 1;
+  return `${hourNum}:${m} – ${full}`;
 }
 
 function formatMmSs(totalSeconds: number): string {
@@ -37,7 +39,7 @@ function formatStrike(strikePrice: string | undefined): string {
 function formatPool(volume: string): string {
   const n = Number(volume);
   if (!Number.isFinite(n)) return "$—";
-  return `$${n.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function LiveMarketRow({

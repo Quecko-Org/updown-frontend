@@ -1,3 +1,5 @@
+"use client";
+
 import { ArrowDown, ArrowUp } from "lucide-react";
 import type { MarketListItem } from "@/lib/api";
 
@@ -14,13 +16,13 @@ export type OpenMarketRowProps = {
 };
 
 function formatTimeRange(startSec: number, endSec: number): string {
-  const fmt = (s: number) =>
-    new Date(s * 1000).toLocaleTimeString([], {
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    });
-  return `${fmt(startSec)} – ${fmt(endSec)}`;
+  // See LiveMarketRow — single AM/PM suffix at the end fits the 180px col.
+  const start = new Date(startSec * 1000);
+  const end = new Date(endSec * 1000);
+  const full = end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true });
+  const [h, m] = start.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: false }).split(":");
+  const hourNum = ((Number(h) + 11) % 12) + 1;
+  return `${hourNum}:${m} – ${full}`;
 }
 
 function formatOpensAt(strikePrice: string | undefined): string {
@@ -32,7 +34,7 @@ function formatOpensAt(strikePrice: string | undefined): string {
 
 function formatPool(usdt: number): string {
   if (!Number.isFinite(usdt)) return "$—";
-  return `$${usdt.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+  return `$${usdt.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function OpenMarketRow({

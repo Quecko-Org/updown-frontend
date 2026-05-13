@@ -12,13 +12,13 @@ export type NextMarketRowProps = {
 const OPACITY_BY_DEPTH: readonly number[] = [0.72, 0.55, 0.4, 0.28];
 
 function formatTimeRange(startSec: number, endSec: number): string {
-  const fmt = (s: number) =>
-    new Date(s * 1000).toLocaleTimeString([], {
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    });
-  return `${fmt(startSec)} – ${fmt(endSec)}`;
+  // See LiveMarketRow — single AM/PM suffix at the end fits the 180px col.
+  const start = new Date(startSec * 1000);
+  const end = new Date(endSec * 1000);
+  const full = end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true });
+  const [h, m] = start.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: false }).split(":");
+  const hourNum = ((Number(h) + 11) % 12) + 1;
+  return `${hourNum}:${m} – ${full}`;
 }
 
 function formatMmSs(totalSeconds: number): string {

@@ -981,3 +981,30 @@
 .pp-market-row--next .pp-market-row__time {
   color: var(--fg-1);
 }
+
+/* ---------- Mobile compression (<640) ----------
+   At narrow widths the 180px/1fr/140px grid forces the center column to
+   collapse, and its children (chips, % bar, buy buttons) overflow the row
+   container. Mirrors PR-1's mobile-discipline doctrine: explicit @media
+   override at the same breakpoint, vertical-stack reflow so every column
+   reads in a stack with consistent rhythm.
+
+   The container-width Playwright invariant doesn't catch grid-child
+   overflow, so this rule was added based on visual sweep at 375. */
+@media (max-width: 640px) {
+  .pp-market-row {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 16px 16px 14px;
+  }
+  .pp-market-row__pool,
+  .pp-market-row__traders {
+    text-align: left;
+  }
+  .pp-market-row__pct-bar { min-width: 0; }
+  .pp-market-row__pct-bar-track { width: 100%; max-width: 100%; }
+  .pp-market-row__buy-buttons { gap: 8px; }
+  .pp-market-row__buy-buttons > .pp-btn { flex: 1 1 0; min-width: 0; }
+  .pp-market-row__counters { gap: 10px; flex-wrap: wrap; }
+  .pp-market-row__timer { top: -10px; }
+}
