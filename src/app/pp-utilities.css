@@ -175,7 +175,22 @@
   transition: color var(--dur-micro) var(--ease), background var(--dur-micro) var(--ease);
 }
 .pp-seg__btn:hover { color: var(--fg-0); }
-.pp-seg__btn--on { background: var(--bg-2); color: var(--fg-0); }
+/* PR-4 Myriad-parity (commit 5/10): filter button three-tier states.
+   Active = FULL INVERSION (white on near-black, not tint), the recipe's
+   "fill = state" rule. The previous --bg-2 fill was too subtle to
+   clearly read as "this one is selected" — bumping to white-on-black
+   matches the AssetPicker's active pill treatment so the visual
+   language is consistent across all segmented controls. */
+.pp-seg__btn--on {
+  background: var(--fg-0);
+  color: var(--bg-0);
+  font-weight: 600;
+}
+.pp-seg__btn:disabled,
+.pp-seg__btn[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 
 /* ---------- range slider ---------- */
 .pp-range { width: 100%; accent-color: var(--fg-0); margin: 8px 0 4px; }
