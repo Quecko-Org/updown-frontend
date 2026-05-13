@@ -1,6 +1,8 @@
 <!-- AUTO-COPIED — do not edit, regenerate from updown-backend -->
 # UpDown HTTP + WebSocket API Reference
 
+> ⚠️ **API reference under revision.** This page is last verified for commit `c1eb901a` (pre-Phase-3) and predates the HMAC L2 auth + ThinWallet/ERC-1271 + Chainlink Data Streams migrations that landed in the audit-prep sprint. Several sections below describe a system state that no longer exists on dev — including stale contract addresses, removed `addDMM` whitelist mechanics, and pre-Streams resolution flow. The full rewrite is tracked as PR-5 and lands separately. Integrators building against the current dev backend should call `GET /config` for authoritative contract addresses and treat `/sdk-readme` as the source of truth for SDK usage until this rewrite lands.
+
 > **Audience:** integrators (DMM bots, custody, analytics, frontends).
 > **Status:** reflects the Path-1 EOA-direct architecture deployed on dev (commit `c1eb901a`+). The legacy MA v2 / pooled-deposit model is removed — anything older than 2026-04-27 in archived docs does not apply.
 
