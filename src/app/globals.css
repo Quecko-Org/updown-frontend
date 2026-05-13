@@ -92,12 +92,14 @@
   }
 }
 
-/* Legacy `font-display` utility — unchanged classname, now resolves to
-   Bebas Neue via the remapped --font-display token. Letter-spacing preserved
-   so existing hero headings hold their rhythm. */
+/* PR-4: --font-display now resolves to Plus Jakarta Sans per the
+   Myriad recipe ("display font for 'the product' numerals"). Tighten
+   the legacy -0.02em tracking to -0.015em which is Plus Jakarta Sans's
+   visually-balanced point for display sizes. Hero headlines that
+   still target Bebas Neue via the fallback chain are unaffected. */
 .font-display {
   font-family: var(--font-display);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.015em;
 }
 
 /* ============================================================================

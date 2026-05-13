@@ -875,9 +875,15 @@
 }
 
 .pp-market-row__time {
-  font-family: var(--font-mono);
+  /* PR-4: time-range uses --font-display (Plus Jakarta Sans) per the
+     Myriad recipe — display font is reserved for "the product" numerals.
+     Tight -0.015em tracking matches Plus Jakarta's default display vibe.
+     18px size is intentionally outside the --fs-h3 (16px) scale because
+     it's tuned to the 180px column width — documented outlier. */
+  font-family: var(--font-display);
   font-size: 18px;
-  font-weight: 500;
+  font-weight: 600;
+  letter-spacing: -0.015em;
   font-variant-numeric: tabular-nums slashed-zero;
   color: var(--fg-0);
   line-height: 1.2;
@@ -885,7 +891,7 @@
 
 .pp-market-row__strike {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-caption);
   font-variant-numeric: tabular-nums slashed-zero;
   color: var(--fg-2);
   margin-top: 4px;
@@ -893,16 +899,20 @@
 
 .pp-market-row__pool {
   text-align: right;
-  font-family: var(--font-mono);
+  font-family: var(--font-display);
+  /* PR-4: 15px is an intentional outlier — bigger than --fs-body (14px)
+     so the pool number reads as a headline value, smaller than the
+     row time-range (18px) so it sits second in the visual hierarchy. */
   font-size: 15px;
-  font-weight: 500;
+  font-weight: 600;
+  letter-spacing: -0.015em;
   font-variant-numeric: tabular-nums slashed-zero;
   color: var(--fg-0);
 }
 
 .pp-market-row__traders {
   text-align: right;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   color: var(--fg-2);
   margin-top: 2px;
 }
@@ -931,7 +941,7 @@
   border-radius: 999px;
   border: 1px solid var(--border-0);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-caption);
   font-weight: 500;
   font-variant-numeric: tabular-nums slashed-zero;
   color: var(--fg-0);
@@ -953,7 +963,7 @@
   gap: 10px;
   padding: 7px 14px;
   border-radius: var(--r-md);
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 500;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums slashed-zero;
@@ -984,6 +994,9 @@
   align-items: center;
   gap: 8px;
   font-family: var(--font-mono);
+  /* 13px is an intentional outlier — sits between --fs-caption (12px)
+     and --fs-body (14px) to keep the bar's flanking percentage labels
+     readable without crowding the 110px bar track. */
   font-size: 13px;
   font-variant-numeric: tabular-nums slashed-zero;
 }
@@ -1001,6 +1014,9 @@
 
 .pp-market-row__pct-label {
   font-family: var(--font-sans);
+  /* 10px is an intentional outlier — smaller than --fs-micro (11px) so
+     the uppercase "COUNTING" label reads as a sub-caption beneath the
+     percentage bar without crowding it. */
   font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1019,7 +1035,7 @@
 
 .pp-market-row__buy-btn-price {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-caption);
   font-weight: 400;
   opacity: 0.8;
   margin-left: 6px;
@@ -1098,7 +1114,7 @@
 
 .pp-section-label {
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: var(--fs-caption);
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1120,11 +1136,17 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 14px;
+  /* PR-4: padding bumped from 7px 14px → 10px 18px per Myriad recipe
+     ("pill padding: 10px 28px. Generous compared to typical fintech.").
+     Kept horizontal slightly tighter (18px) to fit two pills on 375. */
+  padding: 10px 18px;
   border-radius: 999px;
   border: 1px solid var(--border-0);
   background: transparent;
   font-family: var(--font-sans);
+  /* 13px is an intentional outlier — sits between --fs-caption (12px)
+     and --fs-body (14px). Pills carry brand-asset labels and need to
+     feel substantial without dominating the page-controls row. */
   font-size: 13px;
   font-weight: 500;
   color: var(--fg-1);
@@ -1147,7 +1169,7 @@
 .pp-asset-pill__price {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums slashed-zero;
-  font-size: 12px;
+  font-size: var(--fs-caption);
   color: inherit;
   opacity: 0.7;
 }
@@ -1174,7 +1196,7 @@
 
 .pp-state-card__title {
   font-family: var(--font-sans);
-  font-size: 16px;
+  font-size: var(--fs-h3);
   font-weight: 600;
   color: var(--fg-0);
   margin: 0;
@@ -1182,6 +1204,9 @@
 
 .pp-state-card__body {
   font-family: var(--font-sans);
+  /* 13px is an intentional outlier — sits between --fs-caption (12px)
+     and --fs-body (14px). State-card body copy needs to read like
+     human-readable prose, not metadata. */
   font-size: 13px;
   color: var(--fg-2);
   line-height: 1.5;
@@ -1192,7 +1217,7 @@
 .pp-state-card__countdown {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums slashed-zero;
-  font-size: 12px;
+  font-size: var(--fs-caption);
   color: var(--fg-1);
 }
 
