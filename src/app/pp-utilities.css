@@ -909,7 +909,16 @@
 
 /* ---------- Live state ---------- */
 .pp-market-row--live {
-  box-shadow: var(--shadow-live);
+  /* PR-4 Myriad-parity (commit 6/10): in addition to the ambient --up
+     glow, draw a 1.5px UP-tinted ring around the live row so the eye
+     can spot which row is alive at a glance. The pre-PR-4 treatment
+     was only the soft --shadow-live drop — too easy to miss against
+     the new wider 8% page→panel contrast step from commit 1/10.
+     Inset box-shadow stacks with the existing glow without changing
+     the row's outer dimensions (no layout shift). */
+  box-shadow:
+    inset 0 0 0 1.5px var(--up-border),
+    var(--shadow-live);
 }
 
 .pp-market-row__timer {
