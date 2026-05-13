@@ -4,8 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
+    "prebuild": "node scripts/check-stake-bounds-parity.mjs",
     "build": "next build --turbopack",
     "start": "next start",
+    "check:stake-bounds": "node scripts/check-stake-bounds-parity.mjs",
     "lint": "eslint",
     "test": "vitest run",
     "test:e2e": "playwright test"
