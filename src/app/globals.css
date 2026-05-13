@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap");
 @import "tailwindcss";
 @import "./design-tokens.css";
 @import "./pp-utilities.css";
@@ -55,7 +55,7 @@
   /* Fonts — Geist for UI, Bebas Neue only for --font-display (hero marketing) */
   --font-sans: "Geist", ui-sans-serif, -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
-  --font-display: "Bebas Neue", "Lemon Milk", "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Plus Jakarta Sans", "Bebas Neue", "Lemon Milk", "Geist", ui-sans-serif, system-ui, sans-serif;
 
   /* Shadows — spec says flat surfaces; legacy shadow tokens become no-ops.
      shadow-card / shadow-card-hover stay defined so existing utilities don't

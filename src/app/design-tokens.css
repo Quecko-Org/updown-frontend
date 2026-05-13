@@ -70,12 +70,19 @@
 }
 
 :root {
-  /* ---------- Surfaces ---------- */
-  --bg-0: oklch(14% 0.01 250);         /* page background */
-  --bg-1: oklch(17% 0.01 250);         /* elevated panels */
-  --bg-2: oklch(21% 0.01 250);         /* raised (rare — avoid stacking) */
-  --bg-hover: oklch(20% 0.01 250);
-  --bg-press: oklch(23% 0.01 250);
+  /* ---------- Surfaces ----------
+     PR-4 (Myriad-parity audit): three discrete elevation tiers with clear
+     depth steps between them. Old values had a 3% lightness step between
+     page (14%) and panel (17%), which read as a single flat surface. New
+     ladder is +8 page→panel, +12 panel→control — matches Myriad's
+     #0a0b0e / #181b25 / #2b303a recipe in spirit. Slight blue lean
+     (chroma 0.012 at hue ~268) gives the page surface presence without
+     drifting into "blue UI." */
+  --bg-0: oklch(11% 0.012 268);        /* page background — near-black, cool */
+  --bg-1: oklch(19% 0.012 268);        /* elevated panels (+8 lightness) */
+  --bg-2: oklch(31% 0.014 264);        /* raised / control surface (+12) */
+  --bg-hover: oklch(22% 0.012 268);
+  --bg-press: oklch(25% 0.012 268);
 
   /* ---------- Text ---------- */
   --fg-0: oklch(97% 0.005 250);        /* primary */
@@ -89,15 +96,21 @@
   --border-strong: oklch(42% 0.01 250);
 
   /* ---------- Directional accents (strict meaning — never decorative) ---------- */
-  --up:         oklch(74% 0.18 155);   /* UP green, cyan-shifted */
+  --up:         oklch(74% 0.18 155);   /* UP green — LOCKED (logo-derived) */
   --up-dim:     oklch(60% 0.14 155);
-  --up-bg:      oklch(74% 0.18 155 / 0.14);
-  --up-border:  oklch(74% 0.18 155 / 0.35);
+  --up-bg:      oklch(74% 0.18 155 / 0.10);   /* PR-4 Myriad ratio: 14% → 10% */
+  --up-border:  oklch(74% 0.18 155 / 0.36);   /* PR-4 Myriad ratio: 35% → 36% */
+  /* PR-4: luminous text derivative for chip/button label color. Brighter
+     + more saturated than the fill hue so the label reads cleanly against
+     the 10% tinted background. Same hue (155 = cyan-shifted green) so the
+     directional identity is preserved per the PR-1 logo lock. */
+  --up-text:    oklch(82% 0.20 155);
 
-  --down:        oklch(68% 0.22 25);   /* DOWN red, orange-shifted */
+  --down:        oklch(68% 0.22 25);   /* DOWN red — LOCKED (logo-derived) */
   --down-dim:    oklch(55% 0.18 25);
-  --down-bg:     oklch(68% 0.22 25 / 0.14);
-  --down-border: oklch(68% 0.22 25 / 0.35);
+  --down-bg:     oklch(68% 0.22 25 / 0.10);   /* PR-4 Myriad ratio */
+  --down-border: oklch(68% 0.22 25 / 0.36);   /* PR-4 Myriad ratio */
+  --down-text:   oklch(76% 0.24 25);   /* PR-4: luminous derivative (same hue) */
 
   --warn:    oklch(80% 0.15 85);       /* amber, stale-data warnings only */
   --warn-bg: oklch(80% 0.15 85 / 0.12);
@@ -129,6 +142,13 @@
   --r-sm: 4px;
   --r-md: 8px;
   --r-lg: 12px;
+  /* PR-4 (Myriad-parity): consumer-card tier sits ABOVE the existing
+     hairline/control/container ladder. Reserved for `pp-market-row`,
+     `pp-state-card`, and other "big surface" cards on the consumer
+     funnel. Drawer, panel-dense, and audit-prep panels stay on --r-lg
+     so the existing visual contract is unchanged for them. Binary
+     system per the recipe: rectangles 24px, pills 999px, no middle. */
+  --r-xl: 24px;
 
   /* ---------- Spacing (4px base) ---------- */
   --s-1: 4px;
@@ -145,7 +165,13 @@
   /* ---------- Type ---------- */
   --font-sans: "Geist", ui-sans-serif, -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
-  --font-display: "Bebas Neue", "Lemon Milk", "Geist", ui-sans-serif, system-ui, sans-serif;
+  /* PR-4: --font-display pivots to Plus Jakarta Sans (Myriad parity) for
+     "the product" numerals — time ranges, key prices, hero headlines.
+     Tight negative tracking (-0.015em) is applied at the `.font-display`
+     utility class in globals.css, not here. Bebas Neue + Lemon Milk
+     remain fallback for surfaces that pinned them explicitly before
+     PR-4 — listed last so existing usages don't shift. */
+  --font-display: "Plus Jakarta Sans", "Bebas Neue", "Lemon Milk", "Geist", ui-sans-serif, system-ui, sans-serif;
 
   /* Sizes */
   --fs-display: 48px;
