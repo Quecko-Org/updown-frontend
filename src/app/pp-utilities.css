@@ -865,10 +865,16 @@
   grid-template-columns: 180px 1fr 140px;
   gap: 24px;
   align-items: center;
-  padding: 20px 24px;
+  /* PR-4 commit 8/10: row padding bumps from 20px/24px to 24px (Myriad's
+     p-6) so cards feel like surfaces, not stacked metadata rows. */
+  padding: 24px;
   background: var(--bg-1);
   border: 1px solid var(--border-0);
-  border-radius: var(--r-lg);
+  /* PR-4 commit 8/10: consumer-card tier — migrate from --r-lg (12px)
+     to the new --r-xl (24px) per Myriad's "rounded-3xl on cards/rows"
+     recipe. Drawer / panel-dense / audit-prep panels stay on --r-lg —
+     this radius shift is scoped to the consumer-funnel rows only. */
+  border-radius: var(--r-xl);
   font-family: var(--font-sans);
   position: relative;
   transition: border-color var(--dur-micro) var(--ease);
@@ -1185,7 +1191,10 @@
 .pp-state-card {
   background: var(--bg-1);
   border: 1px solid var(--border-0);
-  border-radius: var(--r-lg);
+  /* PR-4 commit 8/10: state cards are consumer-funnel surfaces (empty,
+     error, no-live) — same --r-xl tier as the market rows so the
+     fallback states feel like part of the same visual family. */
+  border-radius: var(--r-xl);
   padding: 28px 24px;
   display: flex;
   flex-direction: column;
@@ -1235,7 +1244,10 @@
 .pp-row-skeleton {
   background: var(--bg-1);
   border: 1px solid var(--border-0);
-  border-radius: var(--r-lg);
+  /* PR-4: matches the new --r-xl row radius so the loading-state
+     placeholders share the same corner geometry as the rows they
+     stand in for. */
+  border-radius: var(--r-xl);
   height: 86px;
   animation: pp-skeleton-pulse 1400ms var(--ease) infinite;
 }
