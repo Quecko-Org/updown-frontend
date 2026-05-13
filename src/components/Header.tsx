@@ -25,16 +25,29 @@ import { cn } from "@/lib/cn";
 // with tabs (Active / Resolved). Old /positions and /history routes redirect
 // into the right tab so any external link / bookmark continues working.
 //
-// WS2 PR A2: top-nav promotes "How it works" out of secondary into primary
-// so first-time users land on the explainer. /fees still lives — moves to
-// the secondary dropdown + an inline link inside /how-it-works.
-const NAV = [
-  { href: "/", label: "Markets" },
-  { href: "/portfolio", label: "Portfolio" },
+// PR-4 nav refactor (Meir 2026-05-13):
+//   - /markets entry removed — the homepage IS the markets surface, the
+//     duplicate link is noise.
+//   - /portfolio is gated on `isWalletConnected` (disconnected users have
+//     no positions; the link is a dead end pre-connect).
+//   - /how-it-works is always visible — first-run entry point.
+//   - /docs stays in the top bar but is `requireDesktop: true`, so the
+//     mobile hamburger surfaces it via SECONDARY_NAV's inclusion. Same
+//     priority-hide ladder as PR-1's mobile hamburger discipline.
+//
+// `requireConnected` + `requireDesktop` are filtered at render-time. Items
+// without either flag are unconditional.
+type NavItem = {
+  href: string;
+  label: string;
+  requireConnected?: boolean;
+  requireDesktop?: boolean;
+};
+
+const NAV: NavItem[] = [
+  { href: "/portfolio", label: "Portfolio", requireConnected: true },
   { href: "/how-it-works", label: "How it works" },
-  // Public API + SDK reference for external integrators. Lives next to
-  // "How it works" so first-time devs can reach it without spelunking.
-  { href: "/docs", label: "Docs" },
+  { href: "/docs", label: "Docs", requireDesktop: true },
 ];
 
 // Secondary nav opens from the hamburger. Visible on all viewport sizes so
@@ -235,11 +248,18 @@ export function Header() {
 
           {/* Desktop nav */}
           <nav className="pp-hdr__nav hidden sm:flex">
-            {NAV.map((n) => (
+            {NAV.filter((n) => !n.requireConnected || isWalletConnected).map((n) => (
               <Link
                 key={n.href}
                 href={n.href}
-                className={cn("pp-hdr__navlink", navActive(n.href) && "pp-hdr__navlink--on")}
+                className={cn(
+                  "pp-hdr__navlink",
+                  navActive(n.href) && "pp-hdr__navlink--on",
+                  // requireDesktop items hide at <md so primary nav stays
+                  // tight on tablets. The mobile hamburger surfaces them
+                  // through SECONDARY_NAV (Docs is already in there).
+                  n.requireDesktop && "hidden md:inline-flex",
+                )}
               >
                 {n.label}
               </Link>
@@ -397,7 +417,7 @@ export function Header() {
                       Markets / Portfolio / How it works already render up
                       top there. */}
                   <div className="sm:hidden">
-                    {NAV.map((n) => (
+                    {NAV.filter((n) => !n.requireConnected || isWalletConnected).map((n) => (
                       <Link
                         key={n.href}
                         href={n.href}
