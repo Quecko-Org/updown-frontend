@@ -200,11 +200,15 @@ export function Header() {
     }
   }, [bal?.cachedBalance, bal?.available, inOrdersDerived]);
 
-  // Path-1 architecture: USDT lives on the EOA. Deposit/withdraw target the
-  // connected wallet address directly. The SA address is kept in state for
-  // legacy reasons (some atoms reference it) but is no longer the trading
-  // custodian.
-  const depositAddress = walletAddress;
+  // Phase 4: USDTM lives on the user's ThinWallet (the `smartAccount` atom
+  // value carries the TW address once `useThinWallet` provisioning finishes).
+  // Deposit/withdraw UI targets the TW so the user funds the contract that
+  // will actually be `transferFrom`'d by Settlement at fill time.
+  //
+  // Path-1 fallback (chains with no factory deployed): `smartAccount` atom
+  // is set to the EOA in that case, so this still resolves correctly with
+  // no branching.
+  const depositAddress = smartAccount || walletAddress;
 
   function navActive(href: string): boolean {
     if (href === "/") return pathname === "/" || pathname.startsWith("/market/");

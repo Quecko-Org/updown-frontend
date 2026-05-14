@@ -3,6 +3,14 @@
 import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
 import { Modal } from "./Modal";
+import { activeChain } from "@/config/environment";
+
+/** USDT on Arbitrum One is "USDT" (real tether); on Arbitrum Sepolia it's
+ *  the MockUSDT contract with symbol "USDTM". Chain-aware label so the
+ *  copy is honest about which token the user is depositing. */
+function tokenSymbolForActiveChain(): string {
+  return activeChain.id === 421614 ? "USDTM" : "USDT";
+}
 
 type Props = {
   open: boolean;
@@ -13,6 +21,8 @@ type Props = {
 export function DepositModal({ open, onClose, depositAddress }: Props) {
   const address = depositAddress || "";
   const canCopy = address.length > 0;
+  const tokenSymbol = tokenSymbolForActiveChain();
+  const chainName = activeChain.name;
 
   function copy() {
     if (!canCopy) return;
@@ -21,17 +31,17 @@ export function DepositModal({ open, onClose, depositAddress }: Props) {
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Deposit USDT" width={420}>
+    <Modal open={open} onClose={onClose} title={`Deposit ${tokenSymbol}`} width={420}>
       <p className="pp-body" style={{ color: "var(--fg-1)" }}>
-        Send USDT on Arbitrum to the smart-account address below. Funds stay under your control — the backend
+        Send {tokenSymbol} on {chainName} to the smart-account address below. Funds stay under your control — the backend
         only uses them for trades you authorize.
       </p>
 
       <div className="pp-kv" style={{ marginTop: 14 }}>
         <span className="pp-micro">Network</span>
-        <span className="pp-body-strong">Arbitrum One</span>
+        <span className="pp-body-strong">{chainName}</span>
         <span className="pp-micro">Asset</span>
-        <span className="pp-body-strong">USDT</span>
+        <span className="pp-body-strong">{tokenSymbol}</span>
       </div>
 
       <div className="pp-qr" style={{ padding: "18px 0" }}>

@@ -5,8 +5,8 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
-import { useAccount, useSignTypedData, useWriteContract, useWalletClient } from "wagmi";
-import { erc20Abi, maxUint256 } from "viem";
+import { useAccount, useSignTypedData, useWalletClient } from "wagmi";
+import { erc20Abi, encodeFunctionData, maxUint256 } from "viem";
 import { createPublicClient, http } from "viem";
 import { ALCHEMY_RPC_URL, activeChain } from "@/config/environment";
 import { toast } from "sonner";
@@ -18,11 +18,13 @@ import {
   getOrderbook,
   getPositions,
   postOrder,
+  postThinWalletExecuteWithSig,
   ORDER_TYPE_U8,
   type OrderApiType,
   type OrderBookResponse,
 } from "@/lib/api";
 import { buildOrderTypedData } from "@/lib/eip712";
+import { signOrderViaThinWallet } from "@/lib/signOrderViaThinWallet";
 import { deriveEffectiveStatus, validateLimitPriceCents } from "@/lib/derivations";
 import { parseUsdtToAtomic } from "@/lib/format";
 import {
@@ -306,60 +308,104 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   }, [balanceData]);
 
   const { signTypedDataAsync } = useSignTypedData();
-  const { writeContractAsync } = useWriteContract();
   const { data: wc } = useWalletClient();
 
   /**
-   * One-time-per-wallet `USDT.approve(settlement, MaxUint256)` from the EOA.
+   * One-time-per-wallet `USDT.approve(settlement, MaxUint256)` from the user's
+   * ThinWallet, executed by the relayer via `/thin-wallet/execute-with-sig`.
    *
-   * Path-1 architecture: USDT lives on the EOA; the settlement contract pulls
-   * via `transferFrom(eoa, settlement, fillAmount)` inside `enterPosition`.
-   * Without this allowance the first BUY would revert. Idempotent: reads
-   * current allowance and only triggers the wallet popup when below threshold.
+   * Phase 4 flow:
+   *   1. Read current allowance against the TW (not the EOA).
+   *   2. If below threshold, build an `executeWithSig` envelope authorizing
+   *      `TW.executeWithSig(USDTM, approve(Settlement, MAX), nonce, deadline, sig)`.
+   *   3. EOA signs the envelope (free, gasless typed-data popup against the
+   *      TW's EIP-712 domain).
+   *   4. POST `/thin-wallet/execute-with-sig`. Backend's relayer broadcasts.
    *
-   * Cost: ~50k gas, paid in ETH on Arbitrum (a few cents at typical prices).
+   * Cost to user: zero gas. Cost to relayer: ~80k gas on Arbitrum.
    * Once approved, every future trade is gasless from the user's POV — only
-   * a typed-data signature.
+   * a typed-data signature (the order's WalletAuth wrap).
    */
   const ensureSettlementAllowance = useCallback(async () => {
     if (!address || !cfg || !wc) return;
+    if (!smartAccount) return; // wait for TW provisioning to complete
     const settlement = cfg.eip712.domain.verifyingContract as `0x${string}`;
     const usdt = cfg.usdtAddress as `0x${string}`;
+    const twAddress = smartAccount as `0x${string}`;
     const pub = createPublicClient({ chain: activeChain, transport: http(ALCHEMY_RPC_URL) });
     const THRESHOLD = BigInt(10_000) * BigInt(10) ** BigInt(6);
     const current = (await pub.readContract({
       address: usdt,
       abi: erc20Abi,
       functionName: "allowance",
-      args: [address as `0x${string}`, settlement],
+      args: [twAddress, settlement],
     })) as bigint;
     if (current >= THRESHOLD) return;
     track("approve_attempted");
-    toast.info("One-time approval needed — confirm in your wallet (small ETH gas).");
-    // Auto-retry-once on transient RPC layer failures ("JSON is not a valid
-    // request object" etc). User-rejections are NOT retried — if they declined,
-    // we honor that. The retry is silent so the wallet popup re-opens once on
-    // RPC hiccups without surfacing scary tech errors.
-    let hash: `0x${string}`;
+    toast.info("Authorizing trading… confirm the signature in your wallet (no gas).");
+
+    // Build executeWithSig envelope for USDTM.approve(Settlement, MAX).
+    const approveCalldata = encodeFunctionData({
+      abi: erc20Abi,
+      functionName: "approve",
+      args: [settlement, maxUint256],
+    });
+    // Random 256-bit nonce. crypto.getRandomValues is cryptographically
+    // fresh — collision probability is 2^-256 per call. Stateless on
+    // backend per locked spec; the contract's `usedNonces` mapping is the
+    // single source of truth.
+    const rand = crypto.getRandomValues(new Uint8Array(32));
+    let nonceHex = "0x";
+    for (const b of rand) nonceHex += b.toString(16).padStart(2, "0");
+    const nonceStr = BigInt(nonceHex).toString();
+    const deadline = Math.floor(Date.now() / 1000) + 60 * 60; // +1 hour
+
+    // EOA signs the envelope against the TW's domain.
+    const twDomain = {
+      name: "PulsePairsThinWallet",
+      version: "1",
+      chainId: cfg.chainId,
+      verifyingContract: twAddress,
+    } as const;
+    const execTypes = {
+      ExecuteWithSig: [
+        { name: "target", type: "address" },
+        { name: "data", type: "bytes" },
+        { name: "nonce", type: "uint256" },
+        { name: "deadline", type: "uint256" },
+      ],
+    } as const;
+    let signature: `0x${string}`;
     try {
-      hash = await writeContractAsync({
-        address: usdt,
-        abi: erc20Abi,
-        functionName: "approve",
-        args: [settlement, maxUint256],
+      signature = await signTypedDataAsync({
+        domain: twDomain,
+        types: execTypes,
+        primaryType: "ExecuteWithSig",
+        message: {
+          target: usdt,
+          data: approveCalldata,
+          nonce: BigInt(nonceStr),
+          deadline: BigInt(deadline),
+        },
       });
     } catch (e) {
       if (isUserRejection(e)) throw e;
-      hash = await writeContractAsync({
-        address: usdt,
-        abi: erc20Abi,
-        functionName: "approve",
-        args: [settlement, maxUint256],
-      });
+      throw e;
     }
-    await pub.waitForTransactionReceipt({ hash });
-    track("approve_succeeded", { txHash: hash });
-  }, [address, cfg, wc, writeContractAsync]);
+
+    // Relayer broadcasts.
+    const exec = await postThinWalletExecuteWithSig({
+      eoa: address as `0x${string}`,
+      signedAuth: {
+        target: usdt,
+        data: approveCalldata,
+        nonce: nonceStr,
+        deadline,
+        signature,
+      },
+    });
+    track("approve_succeeded", { txHash: exec.txHash });
+  }, [address, cfg, wc, smartAccount, signTypedDataAsync]);
 
   const totalBps = (cfg?.platformFeeBps ?? 70) + (cfg?.makerFeeBps ?? 80);
 
@@ -670,12 +716,17 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       const typeNum = ORDER_TYPE_U8[orderType];
       const priceNum = orderType === "MARKET" ? 0 : limitPrice;
 
-      // Order maker is the EOA — that's where USDT lives in the Path-1
-      // architecture (no smart account in the trading path). Settlement's
-      // `SignatureChecker.isValidSignatureNow` falls through to ECDSA when
-      // maker has no contract code, accepting plain EOA signatures.
+      // Phase 4: order maker is the user's ThinWallet (a contract). Settlement's
+      // `SignatureChecker.isValidSignatureNow` routes to
+      // `ThinWallet.isValidSignature(orderDigest, sig)`, which wraps the
+      // digest in `WalletAuth(bytes32 hash)` against the TW's own EIP-712
+      // domain and recovers — must match the wallet's owner EOA.
+      // We construct the signature in two steps via `signOrderViaThinWallet`:
+      //   1. Compute Settlement-domain order digest off-chain.
+      //   2. Sign a WalletAuth envelope against the TW's domain.
+      const twAddress = smartAccount as `0x${string}`;
       const msg = {
-        maker: address as `0x${string}`,
+        maker: twAddress,
         market: parsedKey.marketId,
         option: BigInt(side),
         side: orderSide,
@@ -687,10 +738,16 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       };
 
       const typed = buildOrderTypedData(cfg, msg);
-      const signature = await signTypedDataAsync(typed);
+      const signature = await signOrderViaThinWallet({
+        order: msg,
+        settlementDomain: typed.domain,
+        twAddress,
+        chainId: cfg.chainId,
+        signTypedDataAsync,
+      });
 
       await postOrder({
-        maker: address,
+        maker: twAddress,
         market: parsedKey.composite,
         option: side,
         side: orderSide,

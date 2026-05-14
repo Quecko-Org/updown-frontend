@@ -11,11 +11,22 @@ import {
 } from "@/lib/notifications";
 
 /**
- * Smart-account address derived from the connected EOA via Alchemy. Kept
- * for back-compat with read paths that still reference it as a stable
- * cache key, but is no longer the trading custodian — under Path 1 the
- * EOA holds USDT and signs orders directly. The atom is set during
- * connect; consumers should generally prefer `walletAddress` (EOA).
+ * Smart-account address — the user's per-EOA ThinWallet under Phase 4. Set
+ * during connect by `useThinWallet` after the relayer has provisioned the
+ * TW via `factory.deployWallet`. Consumers (TradeForm, DepositModal,
+ * Header, portfolio) MUST read from this atom for any "user trading
+ * identity" lookup:
+ *   - allowance / balance reads target the TW, not the EOA
+ *   - order.maker = TW address (so SignatureChecker dispatches to
+ *     ThinWallet.isValidSignature via ERC-1271 at fill time)
+ *   - deposit UI shows the TW address as the receive-USDT destination
+ *
+ * Path-1 fallback: on chains where the factory is NOT deployed
+ * (`config.thinWalletFactoryAddress` is empty/missing), `useThinWallet`
+ * skips provisioning and WalletContext writes the EOA into this atom
+ * directly — restoring the pre-Phase-4 Path-1 behavior. Frontend code
+ * doesn't branch; the atom just carries whichever identity is correct
+ * for the active chain.
  */
 export const userSmartAccount = atom<string>("");
 export const userSmartAccountClient = atom<unknown>(null);
