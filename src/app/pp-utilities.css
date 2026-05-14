@@ -862,6 +862,22 @@
    components are rendered only on the dev preview surface at /dev/market-rows.
    ========================================================================== */
 
+/* F4-B (2026-05-14): wrapper anchor that makes the whole row clickable.
+   Resets default <a> appearance so the inner .pp-market-row visuals are
+   preserved — color/text-decoration inherit from the row's own styles,
+   block layout so the anchor fills its row slot, no focus outline mismatch. */
+.pp-market-row-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+.pp-market-row-link:hover { text-decoration: none; }
+.pp-market-row-link:focus-visible {
+  outline: 2px solid var(--accent-0, currentColor);
+  outline-offset: 2px;
+  border-radius: var(--r-lg, 12px);
+}
+
 .pp-market-row {
   display: grid;
   grid-template-columns: 180px 1fr 140px;

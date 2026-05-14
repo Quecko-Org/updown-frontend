@@ -23,6 +23,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { getMarkets, getPriceHistory, type MarketListItem } from "@/lib/api";
 import { computeImpliedProb } from "@/lib/format";
@@ -278,14 +279,24 @@ function renderLiveBranch(
         (() => {
           const prob = computeImpliedProb(live.upPrice, live.downPrice);
           return (
-            <LiveMarketRow
-              market={live}
-              countdownSeconds={Math.max(0, live.endTime - nowSec)}
-              upTraderCount={0}
-              downTraderCount={0}
-              upPct={prob?.upPct ?? null}
-              downPct={prob?.downPct ?? null}
-            />
+            // F4-B (2026-05-14): wrap the row in a Link so clicking the
+            // entire row navigates to the market detail page. LiveMarketRow
+            // has no internal interactive buttons, so the whole-row click
+            // affordance is safe here.
+            <Link
+              href={`/market/${live.address}`}
+              className="pp-market-row-link"
+              aria-label={`Open market detail for ${live.address}`}
+            >
+              <LiveMarketRow
+                market={live}
+                countdownSeconds={Math.max(0, live.endTime - nowSec)}
+                upTraderCount={0}
+                downTraderCount={0}
+                upPct={prob?.upPct ?? null}
+                downPct={prob?.downPct ?? null}
+              />
+            </Link>
           );
         })()
       ) : (
@@ -325,14 +336,23 @@ function renderLiveBranch(
         })()}
 
       {next.slice(0, 3).map((m, i) => (
-        <NextMarketRow
+        // F4-B (2026-05-14): NextMarketRow's UP/DOWN buttons are `disabled`
+        // (per NextMarketRow.tsx:53,63), so wrapping in Link doesn't conflict
+        // with internal click handlers — they're not triggerable.
+        <Link
           key={m.address}
-          market={m}
-          upSharePriceCents={50}
-          downSharePriceCents={50}
-          secondsUntilOpen={Math.max(0, m.startTime - nowSec)}
-          depth={i as 0 | 1 | 2}
-        />
+          href={`/market/${m.address}`}
+          className="pp-market-row-link"
+          aria-label={`Open market detail for ${m.address}`}
+        >
+          <NextMarketRow
+            market={m}
+            upSharePriceCents={50}
+            downSharePriceCents={50}
+            secondsUntilOpen={Math.max(0, m.startTime - nowSec)}
+            depth={i as 0 | 1 | 2}
+          />
+        </Link>
       ))}
     </>
   );
@@ -355,15 +375,24 @@ function renderResolvedBranch(buckets: Buckets) {
       {buckets.resolved.map((m) => {
         const prob = computeImpliedProb(m.upPrice, m.downPrice);
         return (
-          <LiveMarketRow
+          // F4-B (2026-05-14): resolved-tab rows in the main list were
+          // not navigable pre-fix — clicking did nothing. Wrap each row
+          // in a Link so the user can drill into the resolution detail.
+          <Link
             key={m.address}
-            market={m}
-            countdownSeconds={0}
-            upTraderCount={0}
-            downTraderCount={0}
-            upPct={prob?.upPct ?? null}
-            downPct={prob?.downPct ?? null}
-          />
+            href={`/market/${m.address}`}
+            className="pp-market-row-link"
+            aria-label={`Open market detail for ${m.address}`}
+          >
+            <LiveMarketRow
+              market={m}
+              countdownSeconds={0}
+              upTraderCount={0}
+              downTraderCount={0}
+              upPct={prob?.upPct ?? null}
+              downPct={prob?.downPct ?? null}
+            />
+          </Link>
         );
       })}
     </>

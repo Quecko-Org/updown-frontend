@@ -228,14 +228,17 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     const signData = await performSign(address);
     if (!signData) return;
 
-    // Phase 4: don't set the atom to the EOA. The `useThinWallet` hook
-    // below reads the freshly-stored `localStorage.getItem("sign")` value
-    // and POSTs /thin-wallet/provision, which sets the atom to the TW
-    // address. Until that completes, the atom stays empty — consumers
-    // that gate trading on a non-empty smart-account address render the
-    // "Setting up your account…" spinner. Path-1 fallback (no factory on
-    // chain) is handled by the hook returning early; an effect below
-    // writes the EOA in that case.
+    // F1 fix (2026-05-14): propagate the freshly-stored verify-wallet sig
+    // into local component state IMMEDIATELY. The localStorage write inside
+    // performSign() doesn't trigger Effect 1's useEffect (whose dep is
+    // `[address]` only — address hasn't changed across this sign flow). Without
+    // this set call, `storedVerifySig` stays at its previous value (null for
+    // a fresh user), `useThinWallet` never fires, and `userSmartAccount`
+    // atom never gets set to the TW address. Consumers (Header,
+    // DepositModal, TradeForm) then fall back to the EOA, breaking every
+    // user-facing Phase 4 invariant. Setting state directly here re-triggers
+    // the atom-setting Effect 2 via its `storedVerifySig` dependency.
+    setStoredVerifySig(signData);
 
     toast.success(LOGIN_SUCCESS);
     setLoadingStep("");
