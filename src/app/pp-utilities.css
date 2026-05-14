@@ -67,9 +67,11 @@
    - Pill radius (999px) is the one exception to the controls-tier rule.
      Pills are allowed for two roles consumer-wide: asset pickers and
      funnel CTAs. This is a funnel CTA.
-   - The animation uses neutral luminance only (var(--fg-0) and pure white).
-     No teal, no purple, no decorative hue. The "strictly directional
-     accents only" rule still holds — the shine is colorless. */
+   - The animation flanks a pure-white peak with `--shine-flank` (desaturated
+     cool blue at the page's own hue). Not a brand accent — the flank shares
+     the page's hue at low chroma, so it reads as the page's own light. The
+     "strictly directional accents only" rule still holds — `--up` and
+     `--down` are reserved for semantic meaning and never appear in the shine. */
 
 @keyframes pp-shiny-rotate { to { --gradient-angle: 360deg; } }
 
@@ -99,9 +101,9 @@
     conic-gradient(
       from var(--gradient-angle),
       transparent 0%,
-      var(--fg-0) 10%,
+      var(--shine-flank) 10%,
       oklch(100% 0 0) 20%,
-      var(--fg-0) 30%,
+      var(--shine-flank) 30%,
       transparent 40%
     ) border-box;
   box-shadow: inset 0 0 0 1px var(--border-0);
