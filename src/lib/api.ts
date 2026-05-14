@@ -49,11 +49,72 @@ export type ApiConfig = {
       verifyingContract: `0x${string}`;
     };
   };
+  /**
+   * Phase 4: ThinWalletFactory address for the active chain. Empty / missing
+   * means factory not deployed on this network → frontend falls back to
+   * Path-1 EOA-direct trading. Non-empty → frontend provisions a TW per
+   * user via POST /thin-wallet/provision and routes order signing via the
+   * ERC-1271 WalletAuth wrap.
+   */
+  thinWalletFactoryAddress?: string;
 };
 
 export async function getConfig(): Promise<ApiConfig> {
   const res = await fetch(url("/config"));
   return parseJson<ApiConfig>(res);
+}
+
+// ── Phase 4: ThinWallet endpoints ───────────────────────────────────────
+
+export type ProvisionRequest = {
+  eoa: `0x${string}`;
+  signature: string;
+};
+
+export type ProvisionResponse = {
+  twAddress: `0x${string}`;
+  deployed: boolean;
+  txHash?: string;
+  deployedAtBlock?: number;
+};
+
+export async function postThinWalletProvision(req: ProvisionRequest): Promise<ProvisionResponse> {
+  const res = await fetch(url("/thin-wallet/provision"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  return parseJson<ProvisionResponse>(res);
+}
+
+export type SignedExecuteAuth = {
+  target: `0x${string}`;
+  data: `0x${string}`;
+  nonce: string; // stringified uint256
+  deadline: number; // unix seconds
+  signature: string;
+};
+
+export type ExecuteWithSigRequest = {
+  eoa: `0x${string}`;
+  signedAuth: SignedExecuteAuth;
+};
+
+export type ExecuteWithSigResponse = {
+  txHash: string;
+  blockNumber: number;
+  twAddress: `0x${string}`;
+};
+
+export async function postThinWalletExecuteWithSig(
+  req: ExecuteWithSigRequest,
+): Promise<ExecuteWithSigResponse> {
+  const res = await fetch(url("/thin-wallet/execute-with-sig"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  return parseJson<ExecuteWithSigResponse>(res);
 }
 
 export type PairSymbol = "BTC-USD" | "ETH-USD";
