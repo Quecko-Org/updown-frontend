@@ -8,8 +8,7 @@ import { useAtomValue } from "jotai";
 import { useAccount, useSignTypedData, useWriteContract, useWalletClient } from "wagmi";
 import { erc20Abi, maxUint256 } from "viem";
 import { createPublicClient, http } from "viem";
-import { arbitrum } from "viem/chains";
-import { ALCHEMY_RPC_URL } from "@/config/environment";
+import { ALCHEMY_RPC_URL, activeChain } from "@/config/environment";
 import { toast } from "sonner";
 import {
   getBalance,
@@ -326,7 +325,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     if (!address || !cfg || !wc) return;
     const settlement = cfg.eip712.domain.verifyingContract as `0x${string}`;
     const usdt = cfg.usdtAddress as `0x${string}`;
-    const pub = createPublicClient({ chain: arbitrum, transport: http(ALCHEMY_RPC_URL) });
+    const pub = createPublicClient({ chain: activeChain, transport: http(ALCHEMY_RPC_URL) });
     const THRESHOLD = BigInt(10_000) * BigInt(10) ** BigInt(6);
     const current = (await pub.readContract({
       address: usdt,

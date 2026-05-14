@@ -20,11 +20,10 @@ import {
 } from "wagmi";
 import { signMessage, getConnections } from "@wagmi/core";
 import { createPublicClient, http, type PublicClient } from "viem";
-import { arbitrum } from "viem/chains";
 import { useAtom } from "jotai";
 import { toast } from "sonner";
 import { wagmiConfig } from "@/config/wagmi";
-import { platform_chainId, ALCHEMY_RPC_URL } from "@/config/environment";
+import { platform_chainId, ALCHEMY_RPC_URL, activeChain } from "@/config/environment";
 import { LOGIN_SUCCESS, SIGNATURE_REJECTED } from "@/config/walletConstants";
 import {
   userSmartAccount,
@@ -247,7 +246,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     if (address) {
       setPubClient(
         createPublicClient({
-          chain: arbitrum,
+          chain: activeChain,
           transport: http(ALCHEMY_RPC_URL),
         }) as PublicClient,
       );

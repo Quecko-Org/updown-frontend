@@ -1,7 +1,7 @@
 import { createConfig, http } from "wagmi";
-import { mainnet, arbitrum } from "wagmi/chains";
+import { mainnet } from "wagmi/chains";
 import { injected, walletConnect, coinbaseWallet } from "wagmi/connectors";
-import { ALCHEMY_RPC_URL } from "./environment";
+import { ALCHEMY_RPC_URL, activeChain } from "./environment";
 
 /**
  * Same structure as speed-market `app/config/wagmi.ts`:
@@ -17,7 +17,7 @@ const appUrl =
   typeof window !== "undefined" ? window.location.origin : "https://dev-api.pulsepairs.com";
 
 export const wagmiConfig = createConfig({
-  chains: [mainnet, arbitrum],
+  chains: [mainnet, activeChain],
   connectors: [
     injected(),
     walletConnect({
@@ -35,6 +35,6 @@ export const wagmiConfig = createConfig({
   ],
   transports: {
     [mainnet.id]: http(),
-    [arbitrum.id]: http(ALCHEMY_RPC_URL),
+    [activeChain.id]: http(ALCHEMY_RPC_URL),
   },
 });
