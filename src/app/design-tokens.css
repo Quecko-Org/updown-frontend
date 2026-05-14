@@ -131,6 +131,13 @@
   --shadow-live: 0 0 32px oklch(74% 0.18 155 / 0.10),
                  0 0 0 1px oklch(74% 0.18 155 / 0.18);
 
+  /* PR-fix: shine flank color for pp-shiny-cta. Cool-blue desaturated, same
+     hue as the page (268) so it reads as "the page's own light" rather than
+     a new brand color. Not directional — only used by pp-shiny-cta to give
+     the rotating shine visual contour. The shine without this flank reads
+     as a fuzzy white smear; with it, it reads as a defined highlight band. */
+  --shine-flank: oklch(62% 0.08 268);
+
   /* ---------- Radii (three-tier scale, every component pulls from one) ----------
      --r-sm  hairline: badges, chips, status pills, tags
      --r-md  controls: buttons, inputs, segmented controls
