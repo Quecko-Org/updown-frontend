@@ -313,7 +313,11 @@ export function Header() {
               <>
                 {/* Balance + address chip — hover for in-orders / total breakdown. */}
                 <div className="group relative hidden sm:block">
-                  <span className="pp-walletchip" aria-describedby="balance-breakdown">
+                  <span
+                    className="pp-walletchip"
+                    aria-describedby="balance-breakdown"
+                    data-pp-tw-address={tradingIdentity ?? ""}
+                  >
                     <span className="pp-walletchip__dot" />
                     <span className="pp-walletchip__bal">${formatUsdt(availableDerived)}</span>
                     <span className="pp-walletchip__sep" />
