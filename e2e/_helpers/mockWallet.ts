@@ -137,11 +137,19 @@ export async function installMockWallet(
   // Pre-consent to cookies so the cookie banner doesn't overlay the header
   // and interfere with click flows. Key matches src/lib/cookieConsent.ts
   // STORAGE_KEY. Runs before any page script.
+  //
+  // ALSO: bypass geo-restriction. GitHub Actions runners are US-based; US
+  // is in DEFAULT_RESTRICTED_COUNTRIES; without an override the entire UI
+  // is replaced with a "Not available in your region" block. Set
+  // `pp-country` cookie to a non-restricted country (DE) so useGeoCheck
+  // reads it from cookies (per readCountryCookie in src/hooks/useGeoCheck.ts)
+  // and resolves the atom to "allowed".
   await page.addInitScript(() => {
     try {
       window.localStorage.setItem("pp.cookie.consent.v1", "rejected");
+      document.cookie = "pp-country=DE; path=/; SameSite=Lax";
     } catch {
-      /* swallow — some envs disallow localStorage in init scripts */
+      /* swallow — some envs disallow localStorage/cookies in init scripts */
     }
   });
 
