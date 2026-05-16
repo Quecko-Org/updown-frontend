@@ -45,3 +45,8 @@ next-env.d.ts
 # playwright — checked-in screenshots live in e2e/screenshots/, runtime junk in test-results/
 test-results/
 playwright-report/
+---
+# Playwright test artifacts
+e2e/screenshots/
+test-results/
+playwright-report/

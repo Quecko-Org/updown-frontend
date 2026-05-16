@@ -56,6 +56,9 @@ export default defineConfig({
       use: {
         ...devices["Desktop Chrome"],
         baseURL: process.env.PHASE4D_BASE ?? "http://localhost:3000",
+        trace: "on-first-retry",
+        screenshot: "only-on-failure",
+        video: "retain-on-failure",
       },
     },
   ],

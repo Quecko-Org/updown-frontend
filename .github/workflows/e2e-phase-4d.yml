@@ -55,6 +55,11 @@ jobs:
         run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: '1'
+          # Align to Sepolia so the mock wallet's chainId matches the
+          # app's wagmi config — otherwise wagmi requests a chain switch
+          # to mainnet and hangs waiting for chainChanged.
+          NEXT_PUBLIC_CHAIN_ID: '421614'
+          NEXT_PUBLIC_API_BASE: 'https://dev-api.pulsepairs.com'
 
       - name: Run Phase 4d ladder
         run: npm run test:e2e:phase-4d
@@ -62,7 +67,7 @@ jobs:
           PHASE4D_BASE: http://localhost:3000
 
       - name: Upload screenshots on failure
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: phase-4d-screenshots-${{ github.run_id }}
@@ -71,7 +76,7 @@ jobs:
           retention-days: 14
 
       - name: Upload Playwright report on failure
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: phase-4d-playwright-report-${{ github.run_id }}

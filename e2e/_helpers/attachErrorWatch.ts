@@ -40,6 +40,10 @@ export function attachErrorWatch(page: Page) {
     /relay\.walletconnect\.(com|org)/i,
     // posthog blocked by adblocker in some CI envs
     /posthog\.com/i,
+    // /dmm/list 404s on fresh test EOAs that aren't enrolled in DMM —
+    // expected behavior, not a defect. Real users on the DMM program see
+    // 200s here.
+    /\/dmm\/list/i,
   ];
   const filterText = (t: string) => !benign.some((re) => re.test(t));
 
@@ -57,7 +61,12 @@ export function attachErrorWatch(page: Page) {
     if (url.includes("/_next/")) return;
     const status = r.status();
     if (status >= 400 && status < 600) {
-      errors.push(`[http ${status}] ${url}`);
+      const line = `[http ${status}] ${url}`;
+      // Apply the same benign allowlist that filters console messages.
+      // Known-benign 404s (e.g. /dmm/list for non-DMM-enrolled test EOAs)
+      // should not fail the spec.
+      if (!filterText(line)) return;
+      errors.push(line);
     }
   });
 

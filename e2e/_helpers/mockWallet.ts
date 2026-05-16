@@ -143,6 +143,15 @@ export async function installMockWallet(
       type Listener = (...args: unknown[]) => void;
       const listeners: Record<string, Listener[]> = {};
 
+      // Mimic MetaMask's lock state: an installed-but-unauthorized wallet
+      // returns [] on eth_accounts. Only after eth_requestAccounts (the
+      // explicit user-approve gesture) does eth_accounts return the address.
+      // Without this, wagmi's injected() connector auto-detects window.ethereum
+      // + eth_accounts, sets isConnected=true on first paint, and the React
+      // app skips the entire Connect-Wallet flow — meaning the spec's
+      // "click Connect → sign" path is bypassed and TW never provisions.
+      let unlocked = false;
+
       const emit = (event: string, ...args: unknown[]) => {
         (listeners[event] ?? []).slice().forEach((h) => {
           try {
@@ -156,7 +165,7 @@ export async function installMockWallet(
       const provider = {
         isMetaMask: true,
         _isMockWallet: true,
-        selectedAddress: address,
+        selectedAddress: null as string | null,
         chainId: chainIdHex,
         networkVersion: String(decChainId),
 
@@ -173,7 +182,13 @@ export async function installMockWallet(
         }): Promise<unknown> {
           if (method === "eth_chainId") return chainIdHex;
           if (method === "net_version") return String(decChainId);
-          if (method === "eth_accounts" || method === "eth_requestAccounts") {
+          if (method === "eth_accounts") {
+            return unlocked ? [address] : [];
+          }
+          if (method === "eth_requestAccounts") {
+            unlocked = true;
+            provider.selectedAddress = address;
+            setTimeout(() => emit("accountsChanged", [address]), 0);
             return [address];
           }
           if (
@@ -219,22 +234,30 @@ export async function installMockWallet(
         configurable: true,
       });
 
-      // EIP-6963: announce the provider so modern wagmi discovery picks it up.
-      window.addEventListener("eip6963:requestProvider", () => {
+      // EIP-6963: announce as MetaMask so wagmi's discovery layer creates a
+      // connector named "MetaMask" — which is what `useWalletList` filters
+      // for to enable the MetaMask button in WalletConnectorList. Without
+      // the MetaMask-shaped rdns, the wagmi connector is named "Injected"
+      // and the MetaMask button stays disabled, hanging any click on it.
+      const announce = () => {
         window.dispatchEvent(
           new CustomEvent("eip6963:announceProvider", {
             detail: {
               info: {
                 uuid: "00000000-0000-4000-8000-000000000001",
-                name: "MockWallet",
+                name: "MetaMask",
                 icon: "data:image/svg+xml;base64,",
-                rdns: "io.pulsepairs.mockwallet",
+                rdns: "io.metamask",
               },
               provider,
             },
           }),
         );
-      });
+      };
+      window.addEventListener("eip6963:requestProvider", announce);
+      // Also announce eagerly — wagmi may dispatch requestProvider before
+      // our listener attaches if it runs synchronously during boot.
+      announce();
 
       // Best-effort ready emit so any listener attached during boot fires.
       setTimeout(() => emit("connect", { chainId: chainIdHex }), 0);
