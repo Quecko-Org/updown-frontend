@@ -24,8 +24,9 @@ export function GeoBlockOverlay() {
       role="dialog"
       aria-modal="true"
       aria-labelledby="geo-block-title"
-      className="fixed inset-0 z-[200] flex items-center justify-center px-4"
+      className="fixed inset-0 flex items-center justify-center px-4"
       style={{
+        zIndex: "var(--z-geoblock)",
         background: "oklch(8% 0.01 250 / 0.92)",
         backdropFilter: "blur(8px)",
       }}

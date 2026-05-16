@@ -10,6 +10,17 @@ export const platform_chainId = CHAIN_ID;
 
 export const activeChain: Chain = CHAIN_ID === 421614 ? arbitrumSepolia : arbitrum;
 
+/**
+ * USDT symbol for the active chain. Mainnet: "USDT" (the production token
+ * at 0xCa4f…25F4). Sepolia: "USDTM" (our throwaway MockUSDT — public mint,
+ * 6 decimals, deployed once per dev bring-up). Used everywhere the user
+ * sees a token label: DepositModal, WithdrawModal, faq/how-it-works copy,
+ * etc. Single source of truth so chain-aware copy never drifts.
+ */
+export function tokenSymbolForActiveChain(): string {
+  return activeChain.id === 421614 ? "USDTM" : "USDT";
+}
+
 function buildAlchemyRpc(chainId: number, apiKey: string): string {
   if (!apiKey) {
     return chainId === 421614

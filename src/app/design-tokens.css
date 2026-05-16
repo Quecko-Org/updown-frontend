@@ -123,6 +123,24 @@
   --color-border: var(--border-0);
   --color-link: var(--fg-0);
 
+  /* ---------- Z-index ledger (PR-5 F-1/F-2) ----------
+     Single source of truth for layered chrome. Earlier per-component
+     z-index numbers conflicted: the cookie banner overlaid the modal,
+     the mobile drawer overlaid the modal, etc. Tiers ascend by purpose;
+     within a tier, the earlier-mounted element wins by DOM order.
+
+       chrome    50  — header dropdowns, walletchip hover, notification bell
+       drawer    60  — hamburger / mobile menu overlay
+       dialog   100  — Modal default, SignModal, DepositModal, WithdrawModal
+       overlay  150  — persistent banners (cookie consent), sonner toasts
+       geoblock 200  — full-page geo restriction (always on top)
+  */
+  --z-chrome: 50;
+  --z-drawer: 60;
+  --z-dialog: 100;
+  --z-overlay: 150;
+  --z-geoblock: 200;
+
   /* ---------- Shadow (modals / popovers ONLY — flat surfaces elsewhere) ---------- */
   --shadow-overlay: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.04);
   --shadow-popover: 0 2px 8px rgba(0, 0, 0, 0.32), 0 0 0 1px rgba(255, 255, 255, 0.03);

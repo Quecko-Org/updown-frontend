@@ -40,8 +40,9 @@ export function CookieConsentBanner() {
       role="dialog"
       aria-modal="false"
       aria-labelledby="cookie-consent-title"
-      className="fixed bottom-0 left-0 right-0 z-[150] border-t"
+      className="fixed bottom-0 left-0 right-0 border-t"
       style={{
+        zIndex: "var(--z-overlay)",
         background: "var(--bg-1)",
         borderColor: "var(--border-0)",
         boxShadow: "var(--shadow-overlay)",

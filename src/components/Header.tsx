@@ -227,8 +227,12 @@ export function Header() {
       {/* Full-screen loading overlay */}
       {isLoading && (
         <div
-          className="fixed inset-0 z-[90] flex flex-col items-center justify-center gap-3"
-          style={{ background: "oklch(14% 0.01 250 / 0.82)", backdropFilter: "blur(4px)" }}
+          className="fixed inset-0 flex flex-col items-center justify-center gap-3"
+          style={{
+            zIndex: "var(--z-drawer)",
+            background: "oklch(14% 0.01 250 / 0.82)",
+            backdropFilter: "blur(4px)",
+          }}
         >
           <span className="pp-spin h-8 w-8" />
           {loadingStep && (
@@ -326,7 +330,8 @@ export function Header() {
                   <div
                     id="balance-breakdown"
                     role="tooltip"
-                    className="pointer-events-none absolute right-0 top-full z-50 mt-2 hidden min-w-[220px] group-hover:block"
+                    className="pointer-events-none absolute right-0 top-full mt-2 hidden min-w-[220px] group-hover:block"
+                    style={{ zIndex: "var(--z-chrome)" }}
                   >
                     <div
                       className="rounded-[var(--r-lg)] border p-3"
@@ -406,8 +411,9 @@ export function Header() {
                 </button>
                 {connectOpen && !geoBlocked && (
                   <div
-                    className="absolute right-0 top-full z-50 mt-2 min-w-[220px] rounded-[var(--r-lg)] border py-1"
+                    className="absolute right-0 top-full mt-2 min-w-[220px] rounded-[var(--r-lg)] border py-1"
                     style={{
+                      zIndex: "var(--z-chrome)",
                       background: "var(--bg-1)",
                       borderColor: "var(--border-0)",
                       boxShadow: "var(--shadow-overlay)",
@@ -440,8 +446,9 @@ export function Header() {
               {menuOpen && (
                 <div
                   role="menu"
-                  className="absolute right-0 top-full z-50 mt-2 min-w-[220px] rounded-[var(--r-lg)] border py-1"
+                  className="absolute right-0 top-full mt-2 min-w-[220px] rounded-[var(--r-lg)] border py-1"
                   style={{
+                    zIndex: "var(--z-chrome)",
                     background: "var(--bg-1)",
                     borderColor: "var(--border-0)",
                     boxShadow: "var(--shadow-overlay)",

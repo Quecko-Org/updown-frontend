@@ -3,14 +3,7 @@
 import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
 import { Modal } from "./Modal";
-import { activeChain } from "@/config/environment";
-
-/** USDT on Arbitrum One is "USDT" (real tether); on Arbitrum Sepolia it's
- *  the MockUSDT contract with symbol "USDTM". Chain-aware label so the
- *  copy is honest about which token the user is depositing. */
-function tokenSymbolForActiveChain(): string {
-  return activeChain.id === 421614 ? "USDTM" : "USDT";
-}
+import { activeChain, tokenSymbolForActiveChain } from "@/config/environment";
 
 type Props = {
   open: boolean;
