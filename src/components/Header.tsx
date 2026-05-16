@@ -485,11 +485,17 @@ export function Header() {
                     </Link>
                   ))}
 
-                  {/* Wallet actions — only when top bar hides them
-                      (<sm). Desktop already has Withdraw / Disconnect
-                      buttons in the right cluster. */}
+                  {/* Wallet actions — at every viewport. pr-fix-3
+                      (2026-05-16) deleted Withdraw + Disconnect from the
+                      top-bar right cluster (the redesign keeps the top
+                      bar as `[Deposit] [☰]` only); these menu items are
+                      now the SOLE path to those actions at every
+                      viewport, not just mobile. The prior `sm:hidden`
+                      wrapper was gated to mobile because desktop had
+                      the buttons in the top bar — that's no longer
+                      true. */}
                   {isWalletConnected && walletAddress && (
-                    <div className="sm:hidden">
+                    <div>
                       <div className="pp-menu__divider" />
                       <button
                         type="button"
