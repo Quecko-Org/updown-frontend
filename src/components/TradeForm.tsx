@@ -1,6 +1,7 @@
 "use client";
 
 import { Info } from "lucide-react";
+import Link from "next/link";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -61,9 +62,13 @@ import { apiConfigAtom, geoStateAtom, userSmartAccount } from "@/store/atoms";
 // add to whatever value is currently in the stake input; "Max" fills with
 // `min(availableBalance, MAX_STAKE_USDT)` per the lib/stakeBounds clamp.
 type StakeQuickAdd = { kind: "add"; usd: number } | { kind: "max" };
+// 2026-05-16 BUG A redesign: chip set tuned to Myriad's increment ladder
+// (smaller granular adds + a punch-in $100). +$1 caters to the share-by-share
+// experimenters; +$100 stays as the "real bet" quick-set.
 const STAKE_QUICK_ADDS: StakeQuickAdd[] = [
+  { kind: "add", usd: 1 },
   { kind: "add", usd: 5 },
-  { kind: "add", usd: 25 },
+  { kind: "add", usd: 10 },
   { kind: "add", usd: 100 },
   { kind: "max" },
 ];
@@ -126,6 +131,12 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     "close",
   );
   const [otypeMenuOpen, setOtypeMenuOpen] = useState(false);
+  // 2026-05-16 BUG A redesign: full payoff breakdown collapses behind a
+  // Details ▾ accordion so the primary panel surfaces only the two
+  // numbers Polymarket / Myriad lead with — "To Win" + "Avg Price".
+  // The detailed numbers (You spend / Shares / Fee / Net profit / Rebate)
+  // are retained and reachable, just one click deeper.
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const otypeRef = useRef<HTMLDivElement>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFired = useRef(false);
@@ -179,9 +190,13 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     if (initializedRef.current) return;
     initializedRef.current = true;
 
+    // Side pre-selection. Accepts both the legacy numeric form (?side=1|2)
+    // and the human-readable form (?side=up|down) emitted by home-page
+    // OpenMarketRow links (2026-05-16 BUG A redesign — see
+    // `markets/OpenMarketRow.tsx`).
     const sideParam = searchParams.get("side");
-    if (sideParam === "1") setSide(1);
-    else if (sideParam === "2") setSide(2);
+    if (sideParam === "1" || sideParam === "up") setSide(1);
+    else if (sideParam === "2" || sideParam === "down") setSide(2);
 
     // PR-18 P1-19: deep-link `?stake=N` (USD dollars, 1..500).
     const stakeParam = searchParams.get("stake");
@@ -809,16 +824,159 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
 
   const activeOtype = ORDER_TYPES.find((t) => t.id === orderType) ?? ORDER_TYPES[0]!;
 
+  // 2026-05-16 BUG A redesign — derived render values.
+  //
+  // Probability split bar: percent labels at the ends, fills proportional
+  // to the orderbook-mid implied probability. Uses `upMidCents` /
+  // `downMidCents` so the bar tracks the same source of truth as the
+  // direction buttons. Falls back to 50/50 when the orderbook is empty
+  // (matches existing button behavior).
+  const upPct = Math.max(0, Math.min(100, Math.round(upMidCents)));
+  const downPct = Math.max(0, Math.min(100, 100 - upPct));
+
+  // Average price (in dollars) for the "To Win / Avg Price" primary
+  // summary. Falls out of effective price (best ask for BUY, best bid
+  // for SELL, limit price for non-MARKET).
+  const avgPriceUsd = effectivePriceCents / 100;
+
+  // Available-balance label for the "Amount" row. 6 decimals atomic →
+  // USD dollars (parseFloat is fine — under $1B the precision is
+  // preserved). Empty when balance hasn't loaded yet.
+  const availableUsd = availableUsdAtomic > BigInt(0)
+    ? Number(availableUsdAtomic) / 1_000_000
+    : 0;
+
+  // State-adaptive CTA descriptor. Single source of truth for both
+  // label and the disabled flag — avoids drift between disabled state
+  // and the tooltip string that the legacy CTA carried.
+  //
+  // States flow from "blocker first" so the most actionable label wins:
+  //   - geoBlock → static label, disabled (region gate)
+  //   - !isConnected → "Connect Wallet" (handled by WalletConnectorList
+  //     panel below; CTA itself stays hidden)
+  //   - !smartAccount → "Sign in" (waiting on ThinWallet provisioning)
+  //   - insufficient balance → "Deposit" (links to Header deposit flow)
+  //   - market terminal / no liquidity / insufficient depth / out of
+  //     range → contextual disabled label (no tooltip; visible inline)
+  //   - happy path → "Buy More UP" / "Sell DOWN" tuned to side+orderSide
+  //
+  // The label is intentionally short so the CTA never wraps at 375px.
+  type CtaDescriptor = {
+    label: string;
+    disabled: boolean;
+    inlineError: string | null;
+  };
+  const cta: CtaDescriptor = (() => {
+    if (!isConnected) {
+      return { label: "Connect Wallet", disabled: true, inlineError: null };
+    }
+    if (geoBlocked) {
+      return {
+        label: "Not available in your region",
+        disabled: true,
+        inlineError: null,
+      };
+    }
+    if (submit.isPending) {
+      return { label: "Signing…", disabled: true, inlineError: null };
+    }
+    if (!isMarketTradeable) {
+      return {
+        label: "Market closing",
+        disabled: true,
+        inlineError: "This market is closing — pick the next live one.",
+      };
+    }
+    if (!smartAccount) {
+      return {
+        label: "Sign in to trade",
+        disabled: true,
+        inlineError: null,
+      };
+    }
+    if (priceInputInvalid) {
+      return {
+        label: "Fix limit price",
+        disabled: true,
+        inlineError: userPriceParsed.error ?? "Limit price must be 1¢–99¢.",
+      };
+    }
+    if (stakeUsd <= 0) {
+      const verb = orderSide === 0 ? "Buy" : "Sell";
+      const dir = side === 1 ? "UP" : "DOWN";
+      return { label: `${verb} ${dir}`, disabled: true, inlineError: null };
+    }
+    if (stakeOutOfRange) {
+      return {
+        label: "Adjust amount",
+        disabled: true,
+        inlineError: `Amount must be $${MIN_STAKE_USDT}–$${MAX_STAKE_USDT}.`,
+      };
+    }
+    if (insufficientBalance) {
+      return {
+        label: "Deposit",
+        disabled: true,
+        inlineError: `You need $${insufficientBalanceShortfallUsd.toFixed(2)} more to place this trade.`,
+      };
+    }
+    if (noLiquidity) {
+      return {
+        label: "No liquidity",
+        disabled: true,
+        inlineError: `No ${side === 1 ? "UP" : "DOWN"} ${orderSide === 0 ? "asks" : "bids"} on the book — try a Limit order.`,
+      };
+    }
+    if (insufficientDepth) {
+      return {
+        label: "Insufficient depth",
+        disabled: true,
+        inlineError: `Max $${insufficientDepthMaxUsd.toFixed(2)} fillable right now.`,
+      };
+    }
+    const verb = orderSide === 0 ? "Buy" : "Sell";
+    const more = orderSide === 0 ? " More" : "";
+    const dir = side === 1 ? "UP" : "DOWN";
+    return {
+      label: `${verb}${more} ${dir} · $${stakeUsd.toFixed(2)}`,
+      disabled: false,
+      inlineError: null,
+    };
+  })();
+
+  const ctaSideClass = side === 1 ? "pp-trade-v2__cta--up" : "pp-trade-v2__cta--down";
+  // The "Deposit" branch routes the user to the Header deposit modal
+  // via a CustomEvent the Header listens for. We don't open a modal
+  // from inside TradeForm — single trade UI surface discipline —
+  // and we don't route through hash anchors because the URL state
+  // would persist across navigation. The event is fire-and-forget;
+  // the Header's effect handler opens DepositModal on receipt.
+  const handleCtaClick = () => {
+    if (cta.disabled) {
+      if (cta.label === "Deposit" && typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("pp:open-deposit"));
+      }
+      return;
+    }
+    if (geoBlocked) return;
+    if (address && !hasAcceptedCurrentVersion(address)) {
+      setTermsModalOpen(true);
+      return;
+    }
+    submit.mutate();
+  };
+
   return (
-    <div className="pp-panel pp-trade">
-      {/* Order-type row: compact pill (short click toggles Market ↔ Limit,
-          long-press opens full menu). Sits above the Buy/Sell control. */}
-      <div className="flex items-center justify-between">
-        <span className="pp-micro">Trade</span>
-        <div ref={otypeRef} className="relative">
+    <div className="pp-panel pp-trade-v2">
+      {/* Header row — section label + compact order-type pill. Short
+          click toggles MARKET ↔ LIMIT; long-press / right-click opens
+          the 4-item menu including POST_ONLY + IOC. */}
+      <div className="pp-trade-v2__header">
+        <span className="pp-trade-v2__heading">Trade</span>
+        <div ref={otypeRef} className="pp-trade-v2__otype-wrap">
           <button
             type="button"
-            className="pp-otype"
+            className="pp-trade-v2__otype"
             onPointerDown={handleOtypePressStart}
             onPointerUp={handleOtypePressEnd}
             onPointerLeave={handleOtypeCancel}
@@ -830,17 +988,17 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             title="Click: toggle Market / Limit — hold: more types"
           >
             {activeOtype.label}
-            <span className="pp-otype__caret">▾</span>
+            <span className="pp-trade-v2__otype-caret">▾</span>
           </button>
           {otypeMenuOpen && (
-            <div className="pp-otype-menu" style={{ right: 0, top: "calc(100% + 4px)" }}>
+            <div className="pp-trade-v2__otype-menu">
               {ORDER_TYPES.map((ot) => (
                 <button
                   key={ot.id}
                   type="button"
                   className={cn(
-                    "pp-otype-menu__item",
-                    orderType === ot.id && "pp-otype-menu__item--on",
+                    "pp-trade-v2__otype-item",
+                    orderType === ot.id && "pp-trade-v2__otype-item--on",
                   )}
                   onClick={() => {
                     setOrderType(ot.id);
@@ -848,7 +1006,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
                   }}
                 >
                   <span>{ot.label}</span>
-                  {ot.hint && <span className="pp-otype-menu__item-hint">{ot.hint}</span>}
+                  {ot.hint && <span className="pp-trade-v2__otype-hint">{ot.hint}</span>}
                 </button>
               ))}
             </div>
@@ -856,74 +1014,107 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         </div>
       </div>
 
-      {/* Buy / Sell segmented */}
-      <div className="pp-seg">
+      {/* Buy / Sell tabs — underline indicator, no pill background. */}
+      <div className="pp-trade-v2__tabs" role="tablist">
         <button
           type="button"
-          className={cn("pp-seg__btn", orderSide === 0 && "pp-seg__btn--on")}
+          role="tab"
+          aria-selected={orderSide === 0}
+          className={cn("pp-trade-v2__tab", orderSide === 0 && "pp-trade-v2__tab--on")}
           onClick={() => setOrderSide(0)}
         >
           Buy
         </button>
         <button
           type="button"
-          className={cn("pp-seg__btn", orderSide === 1 && "pp-seg__btn--on")}
+          role="tab"
+          aria-selected={orderSide === 1}
+          className={cn("pp-trade-v2__tab", orderSide === 1 && "pp-trade-v2__tab--on")}
           onClick={() => setOrderSide(1)}
         >
           Sell
         </button>
       </div>
 
-      {/* Phase2-C: BIG UP / DOWN side selector — Polymarket-parity. Each
-          button shows the current implied probability (mid in cents) for
-          its side. Click to choose which outcome to trade.
+      {/* Probability split bar. Reads from orderbook-mid via upMidCents
+          (same source as the direction buttons). Falls back to 50/50
+          when book is empty so the visual never collapses to nothing. */}
+      <div
+        className="pp-trade-v2__probbar"
+        role="img"
+        aria-label={`Probability UP ${upPct}% / DOWN ${downPct}%`}
+      >
+        <span className="pp-trade-v2__probbar-label pp-trade-v2__probbar-label--up">
+          {upPct}% UP
+        </span>
+        <div className="pp-trade-v2__probbar-track">
+          <div
+            className="pp-trade-v2__probbar-fill pp-trade-v2__probbar-fill--up"
+            style={{ width: `${upPct}%` }}
+          />
+          <div
+            className="pp-trade-v2__probbar-fill pp-trade-v2__probbar-fill--down"
+            style={{ width: `${downPct}%` }}
+          />
+        </div>
+        <span className="pp-trade-v2__probbar-label pp-trade-v2__probbar-label--down">
+          {downPct}% DOWN
+        </span>
+      </div>
 
-          For BUY: the price the user effectively pays settles into Total +
-          fee math via `effectivePriceCents` (best ASK / mid fallback).
-          For SELL: the price they effectively receive does the same via
-          best BID / mid. Both side buttons display the MID so the user
-          always sees the live probability of both outcomes. */}
-      <div className="pp-trade__ud">
+      {/* Direction selector — flat fills. Selected = solid full color;
+          unselected = ghost outline with same-color text + arrow. No
+          shine, no gradient, no animation. */}
+      <div className="pp-trade-v2__direction">
         <button
           type="button"
-          className={cn("pp-trade__udbtn", side === 1 && "pp-trade__udbtn--up-on")}
+          className={cn(
+            "pp-trade-v2__direction-btn",
+            "pp-trade-v2__direction-btn--up",
+            side === 1 && "pp-trade-v2__direction-btn--on",
+          )}
+          aria-pressed={side === 1}
           onClick={() => {
             setSide(1);
             if (!isConnected) scrollToConnect();
           }}
         >
           <span>▲ Up</span>
-          <span style={{ fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums", fontSize: 18, fontWeight: 600 }}>
+          <span className="pp-trade-v2__direction-cents pp-tabular">
             {Math.round(upMidCents)}¢
           </span>
         </button>
         <button
           type="button"
-          className={cn("pp-trade__udbtn", side === 2 && "pp-trade__udbtn--down-on")}
+          className={cn(
+            "pp-trade-v2__direction-btn",
+            "pp-trade-v2__direction-btn--down",
+            side === 2 && "pp-trade-v2__direction-btn--on",
+          )}
+          aria-pressed={side === 2}
           onClick={() => {
             setSide(2);
             if (!isConnected) scrollToConnect();
           }}
         >
           <span>▼ Down</span>
-          <span style={{ fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums", fontSize: 18, fontWeight: 600 }}>
+          <span className="pp-trade-v2__direction-cents pp-tabular">
             {Math.round(downMidCents)}¢
           </span>
         </button>
       </div>
 
-      {/* Limit price — only visible when the order type rests on the book.
-          Pre-fills with the auto-derived cents (best-ask + 50 bps / best-bid
-          − 50 bps) so the user sees a sensible number they can edit in place. */}
+      {/* Limit price — only visible when order type rests on the book.
+          Same ± steppers as before; restyled inputs only. */}
       {orderType !== "MARKET" && (
-        <div className="mt-3">
-          <label className="pp-micro" htmlFor="limit-price-cents">
+        <div className="pp-trade-v2__limit">
+          <label className="pp-trade-v2__row-label" htmlFor="limit-price-cents">
             Limit price · cents
           </label>
-          <div className="mt-1 flex items-center gap-2">
+          <div className="pp-trade-v2__limit-row">
             <button
               type="button"
-              className="pp-btn pp-btn--secondary pp-btn--sm"
+              className="pp-trade-v2__stepper"
               onClick={() => {
                 const cur = userPriceCentsInput === "" ? autoCentsDisplay : Number(userPriceCentsInput);
                 const next = Math.max(1, (Number.isFinite(cur) ? cur : 0) - 1);
@@ -944,15 +1135,15 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
               onChange={(e) => setUserPriceCentsInput(e.target.value)}
               onFocus={(e) => e.currentTarget.select()}
               className={cn(
-                "pp-input pp-input--mono w-24 text-center",
-                priceInputInvalid && "pp-input--invalid",
+                "pp-trade-v2__limit-input pp-tabular",
+                priceInputInvalid && "pp-trade-v2__limit-input--error",
               )}
               aria-invalid={priceInputInvalid}
               aria-describedby="limit-price-hint"
             />
             <button
               type="button"
-              className="pp-btn pp-btn--secondary pp-btn--sm"
+              className="pp-trade-v2__stepper"
               onClick={() => {
                 const cur = userPriceCentsInput === "" ? autoCentsDisplay : Number(userPriceCentsInput);
                 const next = Math.min(99, (Number.isFinite(cur) ? cur : 0) + 1);
@@ -962,33 +1153,30 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             >
               +
             </button>
-            <span className="pp-caption" style={{ marginLeft: "auto" }}>
-              {limitPrice} bps
-            </span>
+            <span className="pp-trade-v2__limit-bps pp-tabular">{limitPrice} bps</span>
           </div>
           {priceInputInvalid && (
-            <p id="limit-price-hint" className="pp-caption mt-1 pp-down">
+            <p id="limit-price-hint" className="pp-trade-v2__hint pp-trade-v2__hint--error">
               {userPriceParsed.error}
             </p>
           )}
         </div>
       )}
 
-      {/* PR-18 P1-19: USD stake input + $N quick-add. Polymarket-parity:
-          user enters dollar amount; shares acquired computed from price.
-          Backend wire amount stays atomic-USDT (= our model's "shares"
-          1:1) so the signing path is unchanged — see PR-18 design §5
-          wire-shape note. */}
-      <div className="mt-3">
-        <label className="pp-micro" htmlFor="trade-stake">
-          Stake (USD)
-        </label>
-        <div className="mt-1 flex items-center gap-2">
-          <span
-            className="pp-tabular"
-            style={{ color: "var(--fg-2)", fontWeight: 600 }}
-            aria-hidden
-          >
+      {/* Amount row — Myriad pattern: label + tiny gray "Available $X"
+          subtitle on the left, single big numeric input below the label
+          row. Replaces the old "Stake (USD)" + inline-$ layout. */}
+      <div className="pp-trade-v2__amount">
+        <div className="pp-trade-v2__amount-label-row">
+          <label className="pp-trade-v2__row-label" htmlFor="trade-stake">
+            Amount
+          </label>
+          <span className="pp-trade-v2__amount-available pp-tabular">
+            Available ${availableUsd.toFixed(2)}
+          </span>
+        </div>
+        <div className="pp-trade-v2__amount-input-wrap">
+          <span className="pp-trade-v2__amount-currency" aria-hidden>
             $
           </span>
           <input
@@ -998,10 +1186,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             placeholder="0.00"
             value={stakeUsdInput}
             onChange={(e) => {
-              // Allow empty / partial / decimal. Strip anything that
-              // isn't digits-or-dot. Number-coerce at use-sites.
               const raw = e.target.value.replace(/[^0-9.]/g, "");
-              // Disallow more than one decimal point.
               const parts = raw.split(".");
               const cleaned = parts.length > 2
                 ? `${parts[0]}.${parts.slice(1).join("")}`
@@ -1010,31 +1195,27 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             }}
             onFocus={(e) => e.currentTarget.select()}
             className={cn(
-              "pp-input pp-input--mono flex-1 text-right",
-              stakeOutOfRange && "pp-input--invalid",
+              "pp-trade-v2__amount-input pp-tabular",
+              stakeOutOfRange && "pp-trade-v2__amount-input--error",
             )}
             aria-invalid={stakeOutOfRange}
           />
         </div>
-        <div className="pp-trade__presets mt-2">
+        <div className="pp-trade-v2__chips">
           {STAKE_QUICK_ADDS.map((qa, i) =>
             qa.kind === "max" ? (
               <button
                 key="max"
                 type="button"
-                className="pp-trade__preset"
+                className="pp-trade-v2__chip"
                 onClick={() => {
-                  // PR-18 P0-11: "Max" = min(availableBalance, MAX_STAKE_USDT).
-                  // Falls back to MAX_STAKE_USDT cap when balance hasn't
-                  // loaded yet (rare — the query usually resolves before
-                  // the user clicks Max).
                   setStakeUsdInput(
                     maxStakeForBalance(
                       availableUsdAtomic > BigInt(0) ? availableUsdAtomic : MAX_STAKE_ATOMIC,
                     ),
                   );
                 }}
-                aria-label="Set stake to max"
+                aria-label="Set amount to max"
               >
                 Max
               </button>
@@ -1042,7 +1223,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
               <button
                 key={`add-${qa.usd}-${i}`}
                 type="button"
-                className="pp-trade__preset"
+                className="pp-trade-v2__chip"
                 onClick={() => {
                   const cur = parseFloat(stakeUsdInput);
                   const base = Number.isFinite(cur) && cur > 0 ? cur : 0;
@@ -1055,177 +1236,159 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
           )}
           <button
             type="button"
-            className="pp-trade__preset"
+            className="pp-trade-v2__chip pp-trade-v2__chip--ghost"
             onClick={() => setStakeUsdInput("")}
-            aria-label="Clear stake"
+            aria-label="Clear amount"
           >
             Clear
           </button>
         </div>
-        {stakeOutOfRange ? (
-          <p className="pp-caption mt-1 pp-down">
-            Stake must be ${MIN_STAKE_USDT}–${MAX_STAKE_USDT}.
+        {/* Inline error replaces the To Win row when triggered. Always
+            colored --down so the user sees it at a glance; tooltip-on-
+            disabled-CTA pattern is gone. */}
+        {cta.inlineError ? (
+          <p className="pp-trade-v2__inline-error" role="alert">
+            {cta.inlineError}
           </p>
         ) : null}
       </div>
 
-      {/* PR-18 P1-19: USD-stake summary. Stake first (the user's input),
-          then derived shares-acquired, then To-win and net profit.
-          Polymarket parity. */}
-      <div className="pp-trade__summary">
-        <div className="flex items-baseline justify-between">
-          <span className="pp-micro">{orderSide === 0 ? "You spend" : "You receive"}</span>
-          <span className="pp-tabular" style={{ color: "var(--fg-0)", fontWeight: 600 }}>
-            ${(orderSide === 0 ? stakeUsd : sellProceedsUsd).toFixed(2)}
-          </span>
-        </div>
-        <div className="flex items-baseline justify-between">
-          <span className="pp-micro">Shares acquired</span>
-          <span className="pp-tabular" style={{ color: "var(--fg-1)" }}>
-            {sharesPreview.toFixed(2)}
-          </span>
-        </div>
-        <div className="flex items-baseline justify-between">
-          <span className="pp-micro">
-            {orderSide === 0 ? "To win" : "Exposure if " + (side === 1 ? "Up" : "Down") + " wins"}
-          </span>
-          <span
-            className="pp-tabular"
-            style={{
-              color: orderSide === 0 ? "var(--up)" : "var(--fg-2)",
-              fontWeight: 500,
-            }}
-          >
-            ${toWinUsd.toFixed(2)}
-          </span>
-        </div>
-        {orderSide === 0 ? (
-          <div className="flex items-baseline justify-between">
-            <span className="pp-micro">Net profit if {side === 1 ? "Up" : "Down"} wins</span>
-            <span className="pp-tabular pp-up" style={{ fontWeight: 500 }}>
-              +${profitIfBuyWin.toFixed(2)}
+      {/* Primary payoff — "To Win $X" + "Avg Price $0.XX". Replaces the
+          5-line summary. Full breakdown lives behind the Details ▾
+          accordion below so power users can still verify the math. */}
+      {!cta.inlineError && (
+        <div className="pp-trade-v2__payoff">
+          <div className="pp-trade-v2__payoff-primary">
+            <span className="pp-trade-v2__payoff-label">
+              {orderSide === 0 ? "To Win" : "Receive"}
+            </span>
+            <span
+              className={cn(
+                "pp-trade-v2__payoff-value pp-tabular",
+                orderSide === 0 && "pp-trade-v2__payoff-value--win",
+              )}
+            >
+              ${(orderSide === 0 ? toWinUsd : sellProceedsUsd).toFixed(2)}
             </span>
           </div>
-        ) : null}
-        <div className="pp-caption" style={{ marginTop: 4 }}>
-          {/* PR-5-bundle (formula (c)): fees come from the buyer's residual,
-              not the seller's proceeds. Label the line accordingly so a SELL
-              user doesn't see "Fee" and assume it's deducted from their
-              receipt above. */}
-          {orderSide === 0 ? "Fee" : "Buyer pays fee"}:{" "}
-          <span className="pp-tabular" style={{ color: "var(--fg-0)" }}>
-            ${feeUsdDisplay.toFixed(2)} ({effectivePercentOfNotional.toFixed(2)}% at {shareCentsLabel})
-          </span>
-          <InfoTip
-            text={`Peak ${peakFeePct}% at 50¢. Probability-weighted, tapers at extremes.`}
-          />
-        </div>
-        {rebateBps != null && rebateBps > 0 ? (
-          <div className="pp-caption pp-up" style={{ fontWeight: 500 }}>
-            Earns {(rebateBps / 100).toFixed(2)}% rebate on this fill
+          <div className="pp-trade-v2__payoff-secondary">
+            <span className="pp-trade-v2__payoff-secondary-label">Avg. Price</span>
+            <span className="pp-trade-v2__payoff-secondary-value pp-tabular">
+              ${avgPriceUsd.toFixed(2)}
+            </span>
           </div>
-        ) : null}
-      </div>
-
-      {/* Phase2-C: Expires dropdown. Default "Until close" — typical
-          prediction-market expectation is the order vanishes when the
-          market window closes. Long-press not used here; segmented buttons
-          are clearer than a dropdown for 3 options. */}
-      <div className="mt-3">
-        <label className="pp-micro">Expires</label>
-        <div className="pp-seg mt-1">
-          {EXPIRY_MODES.map((m) => (
-            <button
-              key={m.id}
-              type="button"
-              className={cn("pp-seg__btn", expiryMode === m.id && "pp-seg__btn--on")}
-              onClick={() => setExpiryMode(m.id)}
-              title={m.hint}
-            >
-              {m.label}
-            </button>
-          ))}
         </div>
-      </div>
+      )}
 
-      {/* Submit / connect */}
+      {/* Details accordion — default closed. Holds the 4 sub-numbers
+          (You spend / Shares acquired / Fee / Net profit) plus the DMM
+          rebate row when applicable. All data preserved; just one click
+          away. */}
+      <details
+        className="pp-trade-v2__details"
+        open={detailsOpen}
+        onToggle={(e) => setDetailsOpen((e.target as HTMLDetailsElement).open)}
+      >
+        <summary className="pp-trade-v2__details-summary">Details</summary>
+        <div className="pp-trade-v2__details-body">
+          <div className="pp-trade-v2__details-row">
+            <span>{orderSide === 0 ? "You spend" : "You receive"}</span>
+            <span className="pp-tabular">
+              ${(orderSide === 0 ? stakeUsd : sellProceedsUsd).toFixed(2)}
+            </span>
+          </div>
+          <div className="pp-trade-v2__details-row">
+            <span>Shares acquired</span>
+            <span className="pp-tabular">{sharesPreview.toFixed(2)}</span>
+          </div>
+          <div className="pp-trade-v2__details-row">
+            <span>
+              {orderSide === 0 ? "Fee" : "Buyer pays fee"}
+              <InfoTip
+                text={`Peak ${peakFeePct}% at 50¢. Probability-weighted, tapers at extremes.`}
+              />
+            </span>
+            <span className="pp-tabular">
+              ${feeUsdDisplay.toFixed(2)} ({effectivePercentOfNotional.toFixed(2)}% at {shareCentsLabel})
+            </span>
+          </div>
+          {orderSide === 0 ? (
+            <div className="pp-trade-v2__details-row">
+              <span>Net profit if {side === 1 ? "Up" : "Down"} wins</span>
+              <span className="pp-tabular pp-up">+${profitIfBuyWin.toFixed(2)}</span>
+            </div>
+          ) : null}
+          {rebateBps != null && rebateBps > 0 ? (
+            <div className="pp-trade-v2__details-row pp-trade-v2__details-row--rebate">
+              <span>Maker rebate</span>
+              <span className="pp-tabular pp-up">
+                +{(rebateBps / 100).toFixed(2)}% on this fill
+              </span>
+            </div>
+          ) : null}
+        </div>
+      </details>
+
+      {/* CTA — flat solid fill matching selected side. No shine, no
+          gradient. State-adaptive label drives both visible text and
+          (separately) the disabled state. */}
       {isConnected ? (
         <button
           type="button"
-          disabled={
-            submit.isPending ||
-            !isMarketTradeable ||
-            priceInputInvalid ||
-            !smartAccount ||
-            stakeUsd <= 0 ||
-            stakeOutOfRange ||
-            insufficientBalance ||
-            noLiquidity ||
-            insufficientDepth ||
-            geoBlocked
-          }
-          title={
-            geoBlocked
-              ? "Not available in your region"
-              : !isMarketTradeable
-                ? "Market is closing — pick the next live market"
-                : priceInputInvalid
-                  ? (userPriceParsed.error ?? "Fix price before submitting")
-                  : !smartAccount
-                    ? "Finish wallet sign-in to enable trading"
-                    : stakeUsd <= 0
-                      ? "Enter a stake amount"
-                      : stakeOutOfRange
-                        ? `Stake must be $${MIN_STAKE_USDT}–$${MAX_STAKE_USDT}`
-                        : insufficientBalance
-                          ? `You need $${insufficientBalanceShortfallUsd.toFixed(2)} more USDT in your wallet`
-                          : noLiquidity
-                            ? `No liquidity on ${side === 1 ? "Up" : "Down"} ${orderSide === 0 ? "asks" : "bids"} — try a Limit order or wait for new orders`
-                            : insufficientDepth
-                              ? `Insufficient liquidity for $${stakeUsd.toFixed(2)} stake (max $${insufficientDepthMaxUsd.toFixed(2)} available now)`
-                              : undefined
-          }
-          className={cn(
-            "pp-btn pp-btn--lg pp-trade__cta",
-            side === 1 ? "pp-btn--up" : "pp-btn--down",
-          )}
-          onClick={() => {
-            // WS3 PR C: defense-in-depth — even if the geo overlay is
-            // removed via DevTools, we don't let a restricted visitor
-            // produce a signed payload.
-            if (geoBlocked) return;
-            // WS2 PR B: gate the first trade behind Terms acceptance for the
-            // connected wallet. After accept, the user clicks Trade again —
-            // we deliberately don't auto-resubmit so the price they see at
-            // the moment they confirm is the price they signed for (no
-            // hidden re-fetch between accept and signature).
-            if (address && !hasAcceptedCurrentVersion(address)) {
-              setTermsModalOpen(true);
-              return;
-            }
-            submit.mutate();
-          }}
+          disabled={cta.disabled}
+          className={cn("pp-trade-v2__cta", ctaSideClass, cta.disabled && "pp-trade-v2__cta--disabled")}
+          onClick={handleCtaClick}
         >
-          {submit.isPending
-            ? "Signing…"
-            : stakeUsd <= 0
-              ? "Trade"
-              : `${orderSide === 0 ? "Buy" : "Sell"} $${stakeUsd.toFixed(2)} of ${side === 1 ? "Up" : "Down"} · ${sharesPreview.toFixed(2)} shares @ ${Math.round(effectivePriceCents)}¢`}
+          {cta.label}
         </button>
-      ) : (
-        // F3 (2026-05-16): inline mint CTA at the friction point.
-        // Renders when: connected + on testnet + smartAccount provisioned +
-        // balance is insufficient for the current stake. Single click mints
-        // 100 USDTM to the TW; toast confirms broadcast. Backend route is
-        // env-gated (404 in production) and rate-limited (1/addr/5min).
-        null
+      ) : null}
+
+      {/* Tiny gray terms link — Myriad pattern. Always rendered (auxiliary
+          surface to the gating modal that fires on first-trade). */}
+      {isConnected && (
+        <p className="pp-trade-v2__terms-link">
+          By trading you accept the{" "}
+          <Link href="/docs/terms" className="pp-trade-v2__terms-link-anchor">
+            Terms
+          </Link>
+          .
+        </p>
       )}
 
+      {/* Expires — secondary, BELOW the CTA. Only rendered when the
+          order type makes expiry meaningful (LIMIT / POST_ONLY / IOC).
+          MARKET orders fill on submit so the control is hidden. */}
+      {orderType !== "MARKET" && (
+        <div className="pp-trade-v2__expires">
+          <span className="pp-trade-v2__row-label">Expires</span>
+          <div className="pp-trade-v2__expires-row">
+            {EXPIRY_MODES.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                className={cn(
+                  "pp-trade-v2__expires-btn",
+                  expiryMode === m.id && "pp-trade-v2__expires-btn--on",
+                )}
+                onClick={() => setExpiryMode(m.id)}
+                title={m.hint}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* F3 (2026-05-16): inline mint CTA at the friction point.
+          Renders when: connected + on testnet + smartAccount provisioned +
+          balance is insufficient for the current stake. Single click mints
+          100 USDTM to the TW; toast confirms broadcast. Backend route is
+          env-gated (404 in production) and rate-limited (1/addr/5min). */}
       {isConnected && isTestnet && insufficientBalance && smartAccount && (
         <button
           type="button"
-          className="pp-btn pp-btn--secondary pp-btn--md"
-          style={{ marginTop: 8, width: "100%" }}
+          className="pp-trade-v2__testnet-mint"
           disabled={mintingTestUsdt}
           data-testid="tradeform-mint-test-usdtm"
           onClick={async () => {
@@ -1250,16 +1413,12 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       )}
 
       {!isConnected && (
-        <div
-          ref={connectSectionRef}
-          className="mt-3 rounded-[var(--r-md)] border p-3"
-          style={{ background: "var(--bg-0)", borderColor: "var(--border-0)" }}
-        >
-          <p className="pp-body-strong text-center">Connect wallet to trade</p>
-          <p className="pp-caption mt-1 text-center">
+        <div ref={connectSectionRef} className="pp-trade-v2__connect">
+          <p className="pp-trade-v2__connect-title">Connect wallet to trade</p>
+          <p className="pp-trade-v2__connect-body">
             Choose a wallet. Side and size can be adjusted before signing.
           </p>
-          <WalletConnectorList className="mt-3" />
+          <WalletConnectorList className="pp-trade-v2__connect-list" />
         </div>
       )}
 

@@ -580,28 +580,491 @@
   background: var(--bg-2);
 }
 
-/* ---------- trade form ---------- */
-.pp-trade { display: flex; flex-direction: column; gap: 6px; }
-.pp-trade__ud { display: flex; gap: 6px; margin-top: 8px; }
-.pp-trade__udbtn {
-  flex: 1; background: var(--bg-0); border: 1px solid var(--border-0); border-radius: var(--r-md);
-  padding: 11px; font-family: var(--font-sans); font-size: 13px; font-weight: 600;
-  color: var(--fg-1); cursor: pointer; display: flex; flex-direction: column; gap: 2px; align-items: center;
-  transition: background var(--dur-micro) var(--ease), border-color var(--dur-micro) var(--ease), color var(--dur-micro) var(--ease);
+/* ---------- trade form (pp-trade-v2 — 2026-05-16 BUG A redesign) ----------
+   Visual streamlining of TradeForm. Style discipline:
+     - Flat fills only on direction buttons + CTA (no shine, no gradient,
+       no rotating accents). UP / DOWN are the only directional colors.
+     - Visual hierarchy: probability bar + direction → big amount input
+       → primary "To Win + Avg Price" → expandable Details accordion
+       → flat CTA → Expires (only when order rests on the book).
+     - Information density: 5-line payoff summary collapses to one
+       primary line; full breakdown remains accessible behind <details>.
+   Functionality stays unchanged — every order type, every chip, every
+   capability the legacy `pp-trade__*` ladder served is preserved
+   under pp-trade-v2 class names. */
+.pp-trade-v2 { display: flex; flex-direction: column; gap: 12px; }
+
+.pp-trade-v2__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
-.pp-trade__udbtn:hover { border-color: var(--border-1); }
-.pp-trade__udbtn--up-on { background: var(--up); color: var(--bg-0); border-color: var(--up); }
-.pp-trade__udbtn--down-on { background: var(--down); color: var(--bg-0); border-color: var(--down); }
-.pp-trade__size { text-align: center; font-family: var(--font-mono); font-size: 22px; font-weight: 500; color: var(--fg-0); font-variant-numeric: tabular-nums; margin: 4px 0; }
-.pp-trade__presets { display: flex; gap: 4px; }
-.pp-trade__preset {
-  flex: 1; background: var(--bg-0); border: 1px solid var(--border-0); border-radius: var(--r-md);
-  font-family: var(--font-mono); font-size: 11px; color: var(--fg-1); padding: 5px; cursor: pointer;
+.pp-trade-v2__heading {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-2);
 }
-.pp-trade__preset:hover { border-color: var(--border-1); color: var(--fg-0); }
-.pp-trade__preset--on { background: var(--bg-2); border-color: var(--border-strong); color: var(--fg-0); }
-.pp-trade__summary { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-0); font-family: var(--font-sans); font-size: 12px; color: var(--fg-1); line-height: 1.5; }
-.pp-trade__cta { width: 100%; margin-top: 10px; }
+.pp-trade-v2__otype-wrap { position: relative; }
+.pp-trade-v2__otype {
+  background: var(--bg-2);
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-md);
+  padding: 6px 10px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-0);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: border-color var(--dur-micro) var(--ease);
+}
+.pp-trade-v2__otype:hover { border-color: var(--border-1); }
+.pp-trade-v2__otype-caret {
+  color: var(--fg-2);
+  font-size: 10px;
+}
+.pp-trade-v2__otype-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  background: var(--bg-1);
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-md);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 20;
+  min-width: 160px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+}
+.pp-trade-v2__otype-item {
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-sm);
+  padding: 8px 10px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--fg-1);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+}
+.pp-trade-v2__otype-item:hover { background: var(--bg-2); color: var(--fg-0); }
+.pp-trade-v2__otype-item--on { background: var(--bg-2); color: var(--fg-0); }
+.pp-trade-v2__otype-hint {
+  font-size: 10px;
+  color: var(--fg-2);
+}
+
+.pp-trade-v2__tabs {
+  display: flex;
+  gap: 24px;
+  border-bottom: 1px solid var(--border-0);
+}
+.pp-trade-v2__tab {
+  background: transparent;
+  border: 0;
+  padding: 8px 0;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-2);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color var(--dur-micro) var(--ease), border-color var(--dur-micro) var(--ease);
+}
+.pp-trade-v2__tab:hover { color: var(--fg-1); }
+.pp-trade-v2__tab--on { color: var(--fg-0); border-bottom-color: var(--fg-0); }
+
+.pp-trade-v2__probbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+.pp-trade-v2__probbar-label--up { color: var(--up); }
+.pp-trade-v2__probbar-label--down { color: var(--down); }
+.pp-trade-v2__probbar-track {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  display: flex;
+  background: var(--bg-2);
+}
+.pp-trade-v2__probbar-fill--up { background: var(--up); }
+.pp-trade-v2__probbar-fill--down { background: var(--down); }
+
+.pp-trade-v2__direction {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.pp-trade-v2__direction-btn {
+  background: transparent;
+  border: 1px solid;
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  transition: background var(--dur-micro) var(--ease), color var(--dur-micro) var(--ease);
+}
+.pp-trade-v2__direction-btn--up {
+  border-color: color-mix(in oklch, var(--up) 70%, transparent);
+  color: var(--up);
+}
+.pp-trade-v2__direction-btn--up:hover {
+  background: color-mix(in oklch, var(--up) 10%, transparent);
+}
+.pp-trade-v2__direction-btn--up.pp-trade-v2__direction-btn--on {
+  background: var(--up);
+  color: var(--bg-0);
+}
+.pp-trade-v2__direction-btn--down {
+  border-color: color-mix(in oklch, var(--down) 70%, transparent);
+  color: var(--down);
+}
+.pp-trade-v2__direction-btn--down:hover {
+  background: color-mix(in oklch, var(--down) 10%, transparent);
+}
+.pp-trade-v2__direction-btn--down.pp-trade-v2__direction-btn--on {
+  background: var(--down);
+  color: var(--bg-0);
+}
+.pp-trade-v2__direction-cents { font-size: 16px; font-weight: 600; }
+
+.pp-trade-v2__row-label {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+
+.pp-trade-v2__limit { display: flex; flex-direction: column; gap: 6px; }
+.pp-trade-v2__limit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pp-trade-v2__stepper {
+  background: var(--bg-2);
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-sm);
+  width: 28px;
+  height: 28px;
+  font-size: 14px;
+  color: var(--fg-0);
+  cursor: pointer;
+  transition: border-color var(--dur-micro) var(--ease);
+}
+.pp-trade-v2__stepper:hover { border-color: var(--border-1); }
+.pp-trade-v2__limit-input {
+  background: var(--bg-2);
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-sm);
+  width: 72px;
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  color: var(--fg-0);
+  text-align: center;
+  outline: none;
+  transition: border-color var(--dur-micro) var(--ease);
+}
+.pp-trade-v2__limit-input:focus { border-color: var(--border-1); }
+.pp-trade-v2__limit-input--error { border-color: var(--down); }
+.pp-trade-v2__limit-bps {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--fg-2);
+}
+
+.pp-trade-v2__amount { display: flex; flex-direction: column; gap: 6px; }
+.pp-trade-v2__amount-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pp-trade-v2__amount-available {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--fg-2);
+}
+.pp-trade-v2__amount-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-md);
+  padding: 10px 14px;
+}
+.pp-trade-v2__amount-input-wrap:focus-within { border-color: var(--border-1); }
+.pp-trade-v2__amount-currency {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  color: var(--fg-2);
+}
+.pp-trade-v2__amount-input {
+  background: transparent;
+  border: 0;
+  outline: none;
+  flex: 1;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--fg-0);
+  text-align: right;
+  min-width: 0;
+}
+.pp-trade-v2__amount-input--error { color: var(--down); }
+.pp-trade-v2__amount-input::placeholder { color: var(--fg-3); }
+
+.pp-trade-v2__chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pp-trade-v2__chip {
+  flex: 1;
+  min-width: 56px;
+  background: transparent;
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-md);
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--fg-1);
+  cursor: pointer;
+  transition: border-color var(--dur-micro) var(--ease), color var(--dur-micro) var(--ease);
+}
+.pp-trade-v2__chip:hover { border-color: var(--border-1); color: var(--fg-0); }
+.pp-trade-v2__chip--ghost { color: var(--fg-2); }
+
+.pp-trade-v2__inline-error {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--down);
+  margin: 0;
+}
+.pp-trade-v2__hint {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--fg-2);
+  margin: 0;
+}
+.pp-trade-v2__hint--error { color: var(--down); }
+
+.pp-trade-v2__payoff {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-0);
+}
+.pp-trade-v2__payoff-primary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pp-trade-v2__payoff-label {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-0);
+}
+.pp-trade-v2__payoff-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--fg-0);
+}
+.pp-trade-v2__payoff-value--win { color: var(--up); }
+.pp-trade-v2__payoff-secondary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pp-trade-v2__payoff-secondary-label {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--fg-2);
+}
+.pp-trade-v2__payoff-secondary-value {
+  font-size: 11px;
+  color: var(--fg-2);
+}
+
+.pp-trade-v2__details {
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+  padding: 0;
+}
+.pp-trade-v2__details-summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 8px 12px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.pp-trade-v2__details-summary::-webkit-details-marker { display: none; }
+.pp-trade-v2__details-summary::after {
+  content: "▾";
+  color: var(--fg-3);
+  font-size: 10px;
+  transition: transform var(--dur-micro) var(--ease);
+}
+.pp-trade-v2__details[open] .pp-trade-v2__details-summary::after { transform: rotate(180deg); }
+.pp-trade-v2__details-body {
+  padding: 0 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--fg-1);
+}
+.pp-trade-v2__details-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pp-trade-v2__details-row--rebate { color: var(--up); }
+
+.pp-trade-v2__cta {
+  width: 100%;
+  padding: 14px 16px;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 700;
+  border: 0;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  color: var(--bg-0);
+  transition: filter var(--dur-micro) var(--ease), opacity var(--dur-micro) var(--ease);
+}
+.pp-trade-v2__cta--up { background: var(--up); }
+.pp-trade-v2__cta--down { background: var(--down); }
+.pp-trade-v2__cta:hover:not(:disabled) { filter: brightness(1.06); }
+.pp-trade-v2__cta:disabled,
+.pp-trade-v2__cta--disabled {
+  background: var(--bg-3, var(--bg-2));
+  color: var(--fg-1);
+  cursor: not-allowed;
+  opacity: 0.85;
+}
+
+.pp-trade-v2__terms-link {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  color: var(--fg-3);
+  text-align: center;
+  margin: -4px 0 0;
+}
+.pp-trade-v2__terms-link-anchor { color: var(--fg-2); text-decoration: underline; }
+.pp-trade-v2__terms-link-anchor:hover { color: var(--fg-0); }
+
+.pp-trade-v2__expires { display: flex; flex-direction: column; gap: 6px; }
+.pp-trade-v2__expires-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.pp-trade-v2__expires-btn {
+  background: transparent;
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-sm);
+  padding: 6px 8px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--fg-1);
+  cursor: pointer;
+  transition: border-color var(--dur-micro) var(--ease), color var(--dur-micro) var(--ease);
+}
+.pp-trade-v2__expires-btn:hover { border-color: var(--border-1); color: var(--fg-0); }
+.pp-trade-v2__expires-btn--on {
+  background: var(--bg-2);
+  border-color: var(--border-strong, var(--border-1));
+  color: var(--fg-0);
+}
+
+.pp-trade-v2__testnet-mint {
+  width: 100%;
+  background: var(--bg-2);
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-md);
+  padding: 10px 12px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--fg-1);
+  cursor: pointer;
+  transition: border-color var(--dur-micro) var(--ease);
+}
+.pp-trade-v2__testnet-mint:hover:not(:disabled) { border-color: var(--border-1); color: var(--fg-0); }
+.pp-trade-v2__testnet-mint:disabled { cursor: not-allowed; opacity: 0.6; }
+
+.pp-trade-v2__connect {
+  background: var(--bg-0);
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-md);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pp-trade-v2__connect-title {
+  text-align: center;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-0);
+  margin: 0;
+}
+.pp-trade-v2__connect-body {
+  text-align: center;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--fg-2);
+  margin: 0;
+}
+.pp-trade-v2__connect-list { margin-top: 6px; }
 
 /* ---------- tables ---------- */
 .pp-table { width: 100%; border-collapse: collapse; }
@@ -684,43 +1147,9 @@
    late-override is no longer needed but kept as an empty comment for
    diff-readability when the design tokens get audited next. */
 
-/* ---------- order-type pill (TradeForm) ----------
-   Compact control at the top of the trade form. Short click toggles
-   Market ↔ Limit; long-press opens a popover with Market/Limit/Post-only/IOC. */
-.pp-otype {
-  display: inline-flex; align-items: center; gap: 4px;
-  background: transparent; border: 1px solid var(--border-0); border-radius: var(--r-md);
-  padding: 4px 8px;
-  font-family: var(--font-sans); font-size: 11px; font-weight: 600;
-  letter-spacing: 0.04em; text-transform: uppercase;
-  color: var(--fg-1); cursor: pointer;
-  transition: color var(--dur-micro) var(--ease), border-color var(--dur-micro) var(--ease), background var(--dur-micro) var(--ease);
-  user-select: none;
-}
-.pp-otype:hover { color: var(--fg-0); border-color: var(--border-1); }
-.pp-otype__caret { font-size: 9px; color: var(--fg-2); }
-
-.pp-otype-menu {
-  position: absolute; z-index: 40;
-  background: var(--bg-1); border: 1px solid var(--border-0); border-radius: var(--r-lg);
-  box-shadow: var(--shadow-popover);
-  padding: 4px; min-width: 160px;
-  display: flex; flex-direction: column; gap: 2px;
-}
-.pp-otype-menu__item {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  background: transparent; border: 0; cursor: pointer; text-align: left;
-  padding: 8px 10px; border-radius: var(--r-md);
-  font-family: var(--font-sans); font-size: 13px; font-weight: 500;
-  color: var(--fg-0);
-}
-.pp-otype-menu__item:hover { background: var(--bg-hover); }
-.pp-otype-menu__item--on { background: var(--bg-2); }
-.pp-otype-menu__item-hint {
-  font-family: var(--font-sans); font-size: 10px; font-weight: 500;
-  letter-spacing: 0.04em; text-transform: uppercase;
-  color: var(--fg-2);
-}
+/* 2026-05-16 BUG A redesign: the legacy `.pp-otype*` order-type pill +
+   menu ladder is deleted. Replaced by `pp-trade-v2__otype*` further up
+   (see "trade form" block) which inherits the redesigned token system. */
 
 /* ============================================================================
    Responsive overrides — mobile pass.
@@ -772,8 +1201,8 @@
   /* Order book columns slightly tighter */
   .pp-book__hd, .pp-book__row { grid-template-columns: 52px 1fr 1fr 42px; }
 
-  /* Trade form preset pills stay on one line */
-  .pp-trade__presets { flex-wrap: wrap; }
+  /* Trade form chip strip wraps cleanly when the panel narrows. */
+  .pp-trade-v2__chips { flex-wrap: wrap; }
 }
 
 /* ---------- Phase2-B time-range outcome strip ---------- */
@@ -1148,7 +1577,30 @@
 
 /* ---------- Open state ----------
    Center zone holds two pp-btn pp-btn--up/--down buttons at --lg size with
-   the share price tucked inside via pp-market-row__buy-btn-price. */
+   the share price tucked inside via pp-market-row__buy-btn-price.
+
+   2026-05-16 BUG A redesign: OpenMarketRow now uses a stretched-link
+   cover anchor for the whole row + per-direction Links on the UP/DOWN
+   buttons (so the user can land on the market detail with `?side=`
+   pre-selected). Mirrors `.pp-tile__cover-link` from MarketCard. */
+.pp-market-row--open { position: relative; }
+.pp-market-row__cover-link {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+}
+.pp-market-row--open:has(.pp-market-row__cover-link:focus-visible) {
+  outline: 2px solid var(--accent-0, currentColor);
+  outline-offset: 2px;
+  border-radius: var(--r-lg, 12px);
+}
+.pp-market-row__buy-link {
+  /* Sit above the cover-link layer so the per-side click target wins. */
+  position: relative;
+  z-index: 2;
+  text-decoration: none;
+}
 .pp-market-row__buy-buttons {
   display: flex;
   align-items: center;
@@ -1376,168 +1828,9 @@
   .pp-row-skeleton { animation: none; opacity: 0.7; }
 }
 
-/* ---------- Trade drawer ---------- */
-.pp-drawer-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  z-index: 80;
-  animation: pp-fade-in 180ms var(--ease);
-}
-@keyframes pp-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-.pp-trade-drawer {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 380px;
-  max-width: 92vw;
-  background: var(--bg-1);
-  border-left: 1px solid var(--border-0);
-  padding: 24px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  z-index: 90;
-  overflow-y: auto;
-  animation: pp-drawer-in 240ms var(--ease);
-}
-@keyframes pp-drawer-in {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
-}
-
-.pp-trade-drawer__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border-0);
-  gap: 12px;
-}
-
-.pp-trade-drawer__title {
-  font-family: var(--font-sans);
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--fg-0);
-}
-
-.pp-trade-drawer__subtitle {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums slashed-zero;
-  color: var(--fg-2);
-  margin-top: 2px;
-}
-
-.pp-trade-drawer__close {
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  color: var(--fg-2);
-  padding: 4px;
-  border-radius: var(--r-sm);
-  transition: color var(--dur-micro) var(--ease);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.pp-trade-drawer__close:hover { color: var(--fg-0); }
-
-.pp-trade-drawer__side-picker {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-}
-
-.pp-trade-drawer__stake-input {
-  width: 100%;
-  background: var(--bg-2);
-  border: 1px solid var(--border-0);
-  border-radius: var(--r-md);
-  padding: 14px 16px;
-  font-family: var(--font-mono);
-  font-size: 22px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums slashed-zero;
-  color: var(--fg-0);
-  outline: none;
-  transition: border-color var(--dur-micro) var(--ease);
-}
-.pp-trade-drawer__stake-input:focus { border-color: var(--border-1); }
-.pp-trade-drawer__stake-input--error { border-color: var(--down); }
-
-.pp-trade-drawer__stake-error {
-  font-family: var(--font-sans);
-  font-size: 12px;
-  color: var(--down);
-  margin-top: -8px;
-}
-
-.pp-trade-drawer__quick-picks {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
-}
-
-.pp-trade-drawer__summary {
-  background: var(--bg-2);
-  border-radius: var(--r-md);
-  padding: 14px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.pp-trade-drawer__summary-row {
-  display: flex;
-  justify-content: space-between;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums slashed-zero;
-}
-.pp-trade-drawer__summary-row > .label {
-  color: var(--fg-2);
-  font-family: var(--font-sans);
-}
-.pp-trade-drawer__summary-row > .value { color: var(--fg-0); }
-.pp-trade-drawer__summary-divider {
-  height: 1px;
-  background: var(--border-0);
-  margin: 4px 0;
-}
-.pp-trade-drawer__footer-caption {
-  font-size: 11px;
-  color: var(--fg-3);
-  text-align: center;
-  line-height: 1.45;
-  margin-top: 4px;
-}
-
-/* ---------- Mobile bottom-sheet (<640) ----------
-   Polymarket / Kalshi / Robinhood-style. Same content, flipped to slide up
-   from the bottom edge, full-width with a top radius. Matches PR-1/PR-2's
-   explicit-breakpoint mobile discipline. */
-@media (max-width: 640px) {
-  .pp-trade-drawer {
-    top: auto;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    width: 100%;
-    max-width: 100%;
-    max-height: 88vh;
-    border-left: 0;
-    border-top: 1px solid var(--border-0);
-    border-radius: var(--r-lg) var(--r-lg) 0 0;
-    animation: pp-drawer-up 240ms var(--ease);
-  }
-  @keyframes pp-drawer-up {
-    from { transform: translateY(100%); }
-    to { transform: translateY(0); }
-  }
-}
+/* 2026-05-16 BUG A redesign: TradeDrawer + its mobile bottom-sheet are
+   deleted. The home page now navigates UP/DOWN clicks to the market
+   detail page (single trade UI surface). All `.pp-trade-drawer*`,
+   `.pp-drawer-overlay`, and the `pp-fade-in` / `pp-drawer-in` /
+   `pp-drawer-up` keyframes were dropped — there are no remaining
+   references in `src/`. */

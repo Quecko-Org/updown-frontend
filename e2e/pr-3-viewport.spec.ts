@@ -171,7 +171,12 @@ test("state: live missing but open present (headline note)", async ({ browser })
   await ctx.close();
 });
 
-test("drawer: desktop slide-in (1280)", async ({ browser }) => {
+// 2026-05-16 BUG A redesign: the home-page TradeDrawer is deleted. The
+// UP / DOWN buttons on `.pp-market-row--open` are now Next.js `<Link>`
+// elements that navigate to `/market/{addr}?side=up|down` so the
+// market-detail TradeForm becomes the single trade UI surface. These
+// tests assert the new navigation pattern + ensure NO drawer mounts.
+test("open-row UP navigates to market detail with ?side=up (1280)", async ({ browser }) => {
   test.setTimeout(60_000);
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 1200 } });
   const page = await ctx.newPage();
@@ -197,16 +202,27 @@ test("drawer: desktop slide-in (1280)", async ({ browser }) => {
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([live, open]) });
   });
   await gotoAndWait(page, "/?asset=btc&timeframe=5m");
-  // Click the Open row's UP button.
+  // Click the Open row's UP link. Wait for SPA navigation to settle.
   await page.locator('.pp-market-row--open .pp-btn--up').first().click();
-  await page.locator('[data-testid="trade-drawer"]').waitFor({ state: "visible", timeout: 15_000 });
-  await page.waitForTimeout(400); // settle the slide-in animation
-  expect(errors, `console + pageerror: ${errors.join(" | ")}`).toEqual([]);
-  await page.screenshot({ path: path.join(OUT, "1280__drawer-up.png"), fullPage: true });
+  await page.waitForURL(/\/market\/[^?]+\?side=up/, { timeout: 15_000 });
+  // Drawer must NOT mount — single trade UI surface invariant.
+  expect(await page.locator('[data-testid="trade-drawer"]').count()).toBe(0);
+  // Filter mock-URL 404s — the mocked market addresses don't have real
+  // routes, so the RSC prefetch + page load 404 is expected here. Real
+  // bugs (page errors, real-route 404s) are NOT filtered.
+  // Mock-URL 404s on the synthesized market addresses are expected (no
+  // real backend route exists), as are RSC prefetch 404s against header
+  // nav targets on the local prod build. Real page errors + non-RSC
+  // 404s stay strict.
+  const realErrors = errors.filter(
+    (e) => !/0xmock(live|open)|\?_rsc=/.test(e),
+  );
+  expect(realErrors, `console + pageerror: ${realErrors.join(" | ")}`).toEqual([]);
+  await page.screenshot({ path: path.join(OUT, "1280__open-row-up-nav.png"), fullPage: true });
   await ctx.close();
 });
 
-test("drawer: mobile bottom-sheet (375)", async ({ browser }) => {
+test("open-row DOWN navigates to market detail with ?side=down (375)", async ({ browser }) => {
   test.setTimeout(60_000);
   const ctx = await browser.newContext({ viewport: { width: 375, height: 2200 } });
   const page = await ctx.newPage();
@@ -233,10 +249,17 @@ test("drawer: mobile bottom-sheet (375)", async ({ browser }) => {
   });
   await gotoAndWait(page, "/?asset=btc&timeframe=5m");
   await page.locator('.pp-market-row--open .pp-btn--down').first().click();
-  await page.locator('[data-testid="trade-drawer"]').waitFor({ state: "visible", timeout: 15_000 });
-  await page.waitForTimeout(400);
-  expect(errors, `console + pageerror: ${errors.join(" | ")}`).toEqual([]);
-  await page.screenshot({ path: path.join(OUT, "375__drawer-down.png"), fullPage: true });
+  await page.waitForURL(/\/market\/[^?]+\?side=down/, { timeout: 15_000 });
+  expect(await page.locator('[data-testid="trade-drawer"]').count()).toBe(0);
+  // Mock-URL 404s on the synthesized market addresses are expected (no
+  // real backend route exists), as are RSC prefetch 404s against header
+  // nav targets on the local prod build. Real page errors + non-RSC
+  // 404s stay strict.
+  const realErrors = errors.filter(
+    (e) => !/0xmock(live|open)|\?_rsc=/.test(e),
+  );
+  expect(realErrors, `console + pageerror: ${realErrors.join(" | ")}`).toEqual([]);
+  await page.screenshot({ path: path.join(OUT, "375__open-row-down-nav.png"), fullPage: true });
   await ctx.close();
 });
 
