@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAccount } from "wagmi";
+import { useAtomValue } from "jotai";
 import { toast } from "sonner";
 import { getDmmRebates, postDmmClaimRebate } from "@/lib/api";
 import { formatUsdt } from "@/lib/format";
 import { formatUserFacingError } from "@/lib/errors";
 import { EmptyState } from "@/components/EmptyState";
+import { userSmartAccount } from "@/store/atoms";
 
 function formatAtomicUsdtSafe(raw: string | undefined): string {
   if (raw == null || raw === "") return "0.00";
@@ -19,22 +21,27 @@ function formatAtomicUsdtSafe(raw: string | undefined): string {
 }
 
 export default function RebatesPage() {
-  const { address, isConnected } = useAccount();
+  const { isConnected } = useAccount();
+  // Phase 4 PR-A (2026-05-16): rebates accrue to order.maker = TW (traced
+  // via DMMService.scheduleRebateFromFill → maker). Querying by EOA returns
+  // 0 always. Read the TW from the shared atom; Path-1 fallback (no factory)
+  // → atom is set to EOA, so this still resolves.
+  const smartAccount = useAtomValue(userSmartAccount);
   const qc = useQueryClient();
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["dmmRebates", address?.toLowerCase() ?? ""],
-    queryFn: () => getDmmRebates(address!),
-    enabled: !!address && isConnected,
+    queryKey: ["dmmRebates", smartAccount?.toLowerCase() ?? ""],
+    queryFn: () => getDmmRebates(smartAccount!),
+    enabled: !!smartAccount && isConnected,
   });
 
   const claim = useMutation({
-    mutationFn: () => postDmmClaimRebate({ wallet: address! }),
+    mutationFn: () => postDmmClaimRebate({ wallet: smartAccount! }),
     onSuccess: () => {
       toast.success("Claim submitted");
-      void qc.invalidateQueries({ queryKey: ["dmmRebates", address?.toLowerCase()] });
-      const eoa = address?.toLowerCase() ?? "";
-      if (eoa) void qc.invalidateQueries({ queryKey: ["balance", eoa] });
+      void qc.invalidateQueries({ queryKey: ["dmmRebates", smartAccount?.toLowerCase()] });
+      const ti = smartAccount?.toLowerCase() ?? "";
+      if (ti) void qc.invalidateQueries({ queryKey: ["balance", ti] });
     },
     onError: (e: Error) => toast.error(formatUserFacingError(e)),
   });

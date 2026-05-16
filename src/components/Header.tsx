@@ -135,18 +135,26 @@ export function Header() {
     return () => document.removeEventListener("mousedown", onDoc);
   }, [menuOpen]);
 
+  // Phase 4 PR-A (2026-05-16): trading-identity queries route through the
+  // ThinWallet, not the EOA. Balance, orders, DMM rebate eligibility all
+  // accrue to `order.maker` which under Phase 4 is the TW. Pre-fix these
+  // queries returned 0 / empty because they were keyed by EOA, which had
+  // never been the maker on any fill. Path-1 fallback (chain w/o factory):
+  // smartAccount atom is set to EOA so this still resolves.
+  const tradingIdentity = smartAccount || walletAddress;
+
   const { data: bal } = useQuery({
-    queryKey: ["balance", walletAddress?.toLowerCase() ?? ""],
-    queryFn: () => getBalance(walletAddress!),
-    enabled: !!walletAddress && isWalletConnected,
+    queryKey: ["balance", tradingIdentity?.toLowerCase() ?? ""],
+    queryFn: () => getBalance(tradingIdentity!),
+    enabled: !!tradingIdentity && isWalletConnected,
     refetchInterval: 15_000,
     retry: 1,
   });
 
   const { data: dmmStatus } = useQuery({
-    queryKey: ["dmmStatus", walletAddress?.toLowerCase() ?? ""],
-    queryFn: () => getDmmStatus(walletAddress!),
-    enabled: !!walletAddress && isWalletConnected,
+    queryKey: ["dmmStatus", tradingIdentity?.toLowerCase() ?? ""],
+    queryFn: () => getDmmStatus(tradingIdentity!),
+    enabled: !!tradingIdentity && isWalletConnected,
     staleTime: 60_000,
   });
 
@@ -163,9 +171,9 @@ export function Header() {
   // Result: the dropdown's "In orders" cell = sum(amount - filledAmount)
   // across orders the same query Portfolio renders.
   const { data: ordersResp } = useQuery({
-    queryKey: ["orders", walletAddress?.toLowerCase() ?? ""],
-    queryFn: () => getOrders(walletAddress!, { limit: 50 }),
-    enabled: !!walletAddress && isWalletConnected,
+    queryKey: ["orders", tradingIdentity?.toLowerCase() ?? ""],
+    queryFn: () => getOrders(tradingIdentity!, { limit: 50 }),
+    enabled: !!tradingIdentity && isWalletConnected,
     staleTime: 5_000,
     retry: 1,
   });
@@ -200,15 +208,11 @@ export function Header() {
     }
   }, [bal?.cachedBalance, bal?.available, inOrdersDerived]);
 
-  // Phase 4: USDTM lives on the user's ThinWallet (the `smartAccount` atom
-  // value carries the TW address once `useThinWallet` provisioning finishes).
-  // Deposit/withdraw UI targets the TW so the user funds the contract that
-  // will actually be `transferFrom`'d by Settlement at fill time.
-  //
-  // Path-1 fallback (chains with no factory deployed): `smartAccount` atom
-  // is set to the EOA in that case, so this still resolves correctly with
-  // no branching.
-  const depositAddress = smartAccount || walletAddress;
+  // Phase 4: USDTM lives on the user's ThinWallet. Deposit + Withdraw UI
+  // target the TW so the user funds/empties the contract that Settlement
+  // pulls from at fill time. `tradingIdentity` (above) is the same atom
+  // sourced this way and used for balance + orders queries.
+  const depositAddress = tradingIdentity;
 
   function navActive(href: string): boolean {
     if (href === "/") return pathname === "/" || pathname.startsWith("/market/");
@@ -313,7 +317,7 @@ export function Header() {
                     <span className="pp-walletchip__dot" />
                     <span className="pp-walletchip__bal">${formatUsdt(availableDerived)}</span>
                     <span className="pp-walletchip__sep" />
-                    <span className="pp-walletchip__addr">{getFormattedAddress(walletAddress)}</span>
+                    <span className="pp-walletchip__addr">{getFormattedAddress(tradingIdentity ?? "")}</span>
                   </span>
                   <div
                     id="balance-breakdown"
