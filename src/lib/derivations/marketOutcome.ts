@@ -9,7 +9,7 @@
  * own status text mapping.
  */
 
-import { formatStrikeUsd } from "../format";
+import { formatStrikeUsd, parseStrikeUsdNumber } from "../format";
 
 /** RESOLVED / CLAIMED = on-chain settlement final, winner determined. */
 export function isResolvedMarketStatus(status: string | undefined | null): boolean {
@@ -84,9 +84,19 @@ export function formatResolutionOutcome(market: {
 
   let deltaStr: string | null = null;
   let deltaUsedFinePrecision = false;
-  const strike = market.strikePrice ? Number(market.strikePrice) : NaN;
-  const settled = market.settlementPrice ? Number(market.settlementPrice) : NaN;
-  if (Number.isFinite(strike) && Number.isFinite(settled) && strike !== 0) {
+  // pr-fix-3 (2026-05-16) Issue 8a sibling: `Number(market.strikePrice)` on
+  // a raw on-chain atomic value gave a number at the wrong scale (e.g.
+  // 350000000000 = $3,500 strike at 1e8). The arithmetic below then
+  // computed ((settled_1e18 − strike_1e8) / strike_1e8) × 100 ≈ 6.45e11 %.
+  // Use `parseStrikeUsdNumber` to apply the canonical 1e8 divisor on
+  // both sides before computing % delta. The 1e18-scale Settlement bug
+  // (audited mismatch between Streams + Data Feeds oracles) is being
+  // closed separately by pr-fix-4; until that lands, the % delta on
+  // resolved markets will still be off when settlementPrice is 1e18,
+  // but at least no longer 11 orders of magnitude wrong.
+  const strike = parseStrikeUsdNumber(market.strikePrice);
+  const settled = parseStrikeUsdNumber(market.settlementPrice);
+  if (strike != null && settled != null && strike !== 0) {
     const pct = ((settled - strike) / strike) * 100;
     const sign = pct >= 0 ? "+" : "−";
     const abs = Math.abs(pct);

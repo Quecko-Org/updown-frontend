@@ -68,6 +68,22 @@ test.describe("Phase 4d — ThinWallet 5-state ladder", () => {
   test("[1] no-tw: connect + auto-sign → TW provisions, Header reflects TW", async ({
     page,
   }) => {
+    // pr-fix-3 (2026-05-16) — ACTIVE-markets invariant. The dev cycle
+    // broke for days while the Phase 4d ladder ran green: the spec
+    // mocked the wallet flow but never asserted that the backend was
+    // producing tradeable markets. If `/markets?status=ACTIVE` is empty,
+    // the ladder fails BEFORE the connect flow even runs. Catches
+    // "production has been broken for days, gate ran green" failure mode.
+    const activeProbe = await fetch(`${API}/markets?status=ACTIVE`);
+    const activeJson = (await activeProbe.json()) as unknown;
+    const activeList = Array.isArray(activeJson)
+      ? activeJson
+      : ((activeJson as { markets?: unknown[] }).markets ?? []);
+    expect(
+      activeList.length,
+      `Phase 4d invariant: /markets?status=ACTIVE returned 0 markets. Dev cycle is broken — cycler dormant, MARKET_PAIRS misconfigured, or Automation out of LINK. Gate cannot validate UX against a dead backend.`,
+    ).toBeGreaterThan(0);
+
     const watch = attachErrorWatch(page);
     const wallet = await installMockWallet(page, { rpcUrl: ALCHEMY_RPC });
 
@@ -113,12 +129,12 @@ test.describe("Phase 4d — ThinWallet 5-state ladder", () => {
 
     // Click the mint button. Backend rate-limited at 1/addr/5min, so this
     // single mint is sufficient. Wait for the success toast.
-    const balanceBefore = await getUsdtBalance(twAddress);
+    const balanceBefore = await getUsdtBalance(twAddress as `0x${string}`);
     await mintBtn.click();
     await expect(page.locator("text=/Minted 100/i")).toBeVisible({ timeout: 30_000 });
 
     // Verify on-chain balance increased by ~100 USDTM (100_000_000 atomic).
-    const balanceAfter = await pollUntilUsdtIncrease(twAddress, balanceBefore, 30_000);
+    const balanceAfter = await pollUntilUsdtIncrease(twAddress as `0x${string}`, balanceBefore, 30_000);
     expect(balanceAfter - balanceBefore).toBeGreaterThanOrEqual(BigInt(100_000_000));
 
     await page.screenshot({

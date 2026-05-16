@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import type { MarketListItem } from "@/lib/api";
 import { MAX_STAKE_USDT, MIN_STAKE_USDT } from "@/lib/stakeBounds";
+import { formatStrikeUsd } from "@/lib/format";
 
 export type TradeSide = "up" | "down";
 
@@ -155,7 +156,7 @@ export function TradeDrawer({
             </div>
             <div className="pp-trade-drawer__subtitle">
               {market.strikePrice
-                ? `Opens at $${Number(market.strikePrice).toLocaleString("en-US")}`
+                ? `Opens at ${formatStrikeUsd(market.strikePrice)}`
                 : "Strike pending"}
             </div>
           </div>

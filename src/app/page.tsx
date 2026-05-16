@@ -406,6 +406,7 @@ function renderResolvedBranch(buckets: Buckets) {
               downTraderCount={0}
               upPct={prob?.upPct ?? null}
               downPct={prob?.downPct ?? null}
+              variant="resolved"
             />
           </Link>
         );

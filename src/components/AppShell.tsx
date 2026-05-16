@@ -13,6 +13,7 @@ import { CookieConsentBanner } from "./CookieConsentBanner";
 import { Footer } from "./Footer";
 import { GeoBlockOverlay } from "./GeoBlockOverlay";
 import { Header } from "./Header";
+import { SubNav } from "./SubNav";
 import { QuickMarketsStrip } from "./QuickMarketsStrip";
 import { useAnalytics } from "@/hooks/useAnalytics";
 import { useGeoCheck } from "@/hooks/useGeoCheck";
@@ -59,6 +60,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col bg-background">
       <Header />
+      <SubNav />
       <QuickMarketsStrip />
       <main
         className={cn(
