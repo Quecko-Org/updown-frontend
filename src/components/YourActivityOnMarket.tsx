@@ -41,14 +41,19 @@ export function YourActivityOnMarket({
    *  visible would just imply reversibility that doesn't exist. */
   marketStatus?: string | null;
 }) {
-  const { address, isConnected } = useAccount();
-  const addrLower = address?.toLowerCase() ?? "";
+  const { isConnected } = useAccount();
+  // Phase 4 PR-A (2026-05-16): orders are keyed by order.maker = TW address
+  // post-Phase-4. Querying by EOA returns empty. The `smartAccount` prop
+  // is already the TW (parent MarketPageClient reads userSmartAccount atom
+  // and passes it). Path-1 fallback: atom (= prop) is set to EOA when no
+  // factory deployed, so this still resolves.
+  const addrLower = smartAccount?.toLowerCase() ?? "";
   const mKey = marketComposite.toLowerCase();
 
   const { data: ordersResp } = useQuery({
     queryKey: ["orders", addrLower],
-    queryFn: () => getOrders(address!, { status: ["OPEN", "PARTIALLY_FILLED"], limit: 50 }),
-    enabled: !!address && isConnected,
+    queryFn: () => getOrders(smartAccount!, { status: ["OPEN", "PARTIALLY_FILLED"], limit: 50 }),
+    enabled: !!smartAccount && isConnected,
     staleTime: 5_000,
     retry: 1,
   });
