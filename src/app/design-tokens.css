@@ -69,6 +69,16 @@
   inherits: false;
 }
 
+/* pr-fix-2: second angle for the reverse-rotation shine animation.
+   Counter-rotates on :hover for the dual-shimmer effect. Same registration
+   trick — the conic-gradient `from` angle needs to be a typed <angle> for
+   @keyframes to interpolate cleanly. */
+@property --gradient-angle-reverse {
+  syntax: '<angle>';
+  initial-value: 360deg;
+  inherits: false;
+}
+
 :root {
   /* ---------- Surfaces ----------
      PR-4 (Myriad-parity audit): three discrete elevation tiers with clear
@@ -149,12 +159,22 @@
   --shadow-live: 0 0 32px oklch(74% 0.18 155 / 0.10),
                  0 0 0 1px oklch(74% 0.18 155 / 0.18);
 
-  /* PR-fix: shine flank color for pp-shiny-cta. Cool-blue desaturated, same
-     hue as the page (268) so it reads as "the page's own light" rather than
-     a new brand color. Not directional — only used by pp-shiny-cta to give
-     the rotating shine visual contour. The shine without this flank reads
-     as a fuzzy white smear; with it, it reads as a defined highlight band. */
-  --shine-flank: oklch(62% 0.08 268);
+  /* pr-fix-2 (Myriad-parity full recipe, 2026-05-16). The shine system on
+     `.pp-shiny-cta` consumes two named non-directional accents — both
+     reserved for that single consumer. They do NOT violate the
+     "`--up`/`--down` are the only directional accents" rule: directional
+     accents carry semantic UP/DOWN meaning; these are visual shine tokens
+     for the funnel-critical CTA, no semantic load.
+     - `--shine-flank` — vivid indigo (full chroma) that flanks the white
+       peak of the rotating conic gradient. Was a muted blue in pr-fix-1;
+       the muted version read as a soft halo. The full-chroma indigo gives
+       the shine a defined "this catches the light" band, Myriad-parity.
+     - `--shine-inner-ring` — near-black ring INSIDE the gradient border,
+       creating the depth that makes the shine look like it's reflecting
+       off a physical surface (vs floating on the bg-0 page). Replaces
+       `var(--border-0)` in the inset box-shadow. */
+  --shine-flank: oklch(53% 0.27 273);
+  --shine-inner-ring: oklch(15% 0.01 268);
 
   /* ---------- Radii (three-tier scale, every component pulls from one) ----------
      --r-sm  hairline: badges, chips, status pills, tags

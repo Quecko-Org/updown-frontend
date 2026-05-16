@@ -32,6 +32,12 @@
       gates: Deposit and Connect Wallet. Two instances site-wide, max.
       Using it on a trade button, nav item, or anywhere else is a reject.
 
+      The shine accents (`--shine-flank` vivid indigo, `--shine-inner-ring`
+      near-black) are NAMED SINGLE-USE non-directional tokens — reserved
+      for `.pp-shiny-cta` only. They do NOT violate the directional-accent
+      rule: `--up` and `--down` carry semantic UP/DOWN meaning; the shine
+      tokens carry no semantic load, only the rotating-conic visual recipe.
+
    4. The logo locks --up and --down. They do not change.
    ========================================================================== */
 
@@ -60,20 +66,42 @@
 
 /* ---------- shiny CTA (funnel-critical onboarding gates only) ----------
    Reserved for Deposit and Connect Wallet. Using this class anywhere else
-   is a code-review reject. Continuous rotating gradient border via Houdini
-   @property --gradient-angle (registered in design-tokens.css).
+   is a code-review reject. pr-fix-2 (2026-05-16) — full Myriad-parity
+   recipe. Six material differences from pr-fix-1's partial fix, all
+   applied here:
 
-   Two constraints worth flagging:
-   - Pill radius (999px) is the one exception to the controls-tier rule.
-     Pills are allowed for two roles consumer-wide: asset pickers and
-     funnel CTAs. This is a funnel CTA.
-   - The animation flanks a pure-white peak with `--shine-flank` (desaturated
-     cool blue at the page's own hue). Not a brand accent — the flank shares
-     the page's hue at low chroma, so it reads as the page's own light. The
-     "strictly directional accents only" rule still holds — `--up` and
-     `--down` are reserved for semantic meaning and never appear in the shine. */
+     1. `--shine-flank` is vivid indigo `oklch(53% 0.27 273)` (full chroma)
+        instead of the muted `oklch(62% 0.08 268)`. The shine reads as a
+        defined band catching the light, not a soft halo.
+     2. New `--shine-inner-ring` near-black token replaces `var(--border-0)`
+        in the inset box-shadow. Gives the button physical depth — the
+        shine appears to ride on the surface of a dark ring rather than
+        floating on the page bg.
+     3. Background structure is `none padding-box, conic-gradient(...)
+        border-box`. No solid fill. The dark interior comes entirely from
+        the box-shadow inset — that's what makes the rotating conic a
+        true "border" rather than a flat overlay.
+     4. Padding tightens to `8px 14px` for ~36px Myriad-parity height
+        (pr-fix-1 shipped 9px 18px → 41px).
+     5. Dual animation — forward (3s) always runs, reverse (7.5s) is
+        paused by default and un-pauses on `:hover`. Counter-rotating
+        shimmer when the user attends to the CTA.
+     6. New `::before` pseudo with a radial-dot mesh masked by a slowly
+        rotating conic — the "starfield catches the light" texture. The
+        `::after` bloom color shifts from white (var(--fg-0)) to indigo
+        (var(--shine-flank)) for consistency with the new shine.
+
+   Pill radius (999px) is the one exception to the controls-tier rule.
+   Pills are allowed for two roles consumer-wide: asset pickers and
+   funnel CTAs. This is a funnel CTA.
+
+   The shine tokens are named single-use non-directional accents — they
+   do NOT violate the "`--up`/`--down` are the only directional accents"
+   rule. Directional accents carry semantic UP/DOWN meaning; the shine
+   tokens carry no semantic load, only the visual recipe. */
 
 @keyframes pp-shiny-rotate { to { --gradient-angle: 360deg; } }
+@keyframes pp-shiny-rotate-reverse { to { --gradient-angle-reverse: 0deg; } }
 
 .pp-shiny-cta {
   position: relative;
@@ -81,7 +109,8 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 9px 18px;
+  /* Recipe step 4: 8px/14px padding for Myriad-parity ~36px height. */
+  padding: 8px 14px;
   font-family: var(--font-sans);
   font-size: 14px;
   font-weight: 500;
@@ -96,8 +125,12 @@
   border-radius: 999px;
   isolation: isolate;
   overflow: hidden;
+  /* Recipe step 3: no solid fill on padding-box. Darkness comes from the
+     inset box-shadow (--shine-inner-ring near-black). The conic-gradient
+     paints only the border-box; bg-clip + bg-origin pinning makes the
+     gradient a true border, not a flat overlay. */
   background:
-    linear-gradient(var(--bg-0), var(--bg-0)) padding-box,
+    none padding-box,
     conic-gradient(
       from var(--gradient-angle),
       transparent 0%,
@@ -106,25 +139,69 @@
       var(--shine-flank) 30%,
       transparent 40%
     ) border-box;
-  box-shadow: inset 0 0 0 1px var(--border-0);
-  animation: pp-shiny-rotate 3s linear infinite;
+  background-origin: padding-box, border-box;
+  background-clip: padding-box, border-box;
+  /* Recipe step 2: near-black inner ring instead of --border-0. */
+  box-shadow: inset 0 0 0 1px var(--shine-inner-ring);
+  /* Recipe step 5: dual animation. Forward runs continuously; reverse is
+     paused by default and resumes on :hover for a counter-rotating
+     shimmer that signals user attention. */
+  animation:
+    pp-shiny-rotate 3s linear infinite,
+    pp-shiny-rotate-reverse 7.5s linear infinite paused;
   transition: opacity var(--dur-micro) var(--ease);
 }
 
-.pp-shiny-cta:hover { opacity: 0.92; }
+.pp-shiny-cta:hover {
+  opacity: 0.92;
+  /* Un-pause the reverse — counter-rotating shimmer on hover. */
+  animation-play-state: running, running;
+}
+
+.pp-shiny-cta::before {
+  /* Recipe step 6: radial-dot mesh masked by a slow rotating conic.
+     The dots are a fine 6px-tile background; the conic masks them so
+     they fade in/out in a rotating arc. Reads as faint "starfield
+     catches the light" texture under the shine, only visible against
+     the inner ring's near-black. */
+  content: '';
+  position: absolute;
+  inset: 1px;
+  border-radius: inherit;
+  background:
+    radial-gradient(
+      circle at center,
+      oklch(100% 0 0 / 0.18) 0.6px,
+      transparent 1.2px
+    ) 0 0 / 6px 6px;
+  -webkit-mask-image: conic-gradient(
+    from var(--gradient-angle-reverse),
+    transparent 0%,
+    black 25%,
+    transparent 50%,
+    black 75%,
+    transparent 100%
+  );
+          mask-image: conic-gradient(
+    from var(--gradient-angle-reverse),
+    transparent 0%,
+    black 25%,
+    transparent 50%,
+    black 75%,
+    transparent 100%
+  );
+  z-index: -1;
+  pointer-events: none;
+}
 
 .pp-shiny-cta::after {
-  /* PR-4 Myriad-parity (commit 4/10): the under-button glow. PR-1
-     shipped this at opacity 0.18 — too subtle to register as depth.
-     Myriad's recipe is 0.6 with the same mask-image bottom-center
-     radial fade. The mask confines the linear-gradient to a glow
-     spilling out under the button rather than a flat overlay,
-     producing the "shine reflects off something" effect Meir flagged
-     as the missing premium feel. */
+  /* Under-button bloom. Recipe step 6: color shifts from var(--fg-0)
+     (white in pr-fix-1) to var(--shine-flank) (vivid indigo) so the
+     bloom matches the dominant accent. */
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(-50deg, transparent, var(--fg-0), transparent);
+  background: linear-gradient(-50deg, transparent, var(--shine-flank), transparent);
   -webkit-mask-image: radial-gradient(circle at center bottom, transparent 40%, black);
           mask-image: radial-gradient(circle at center bottom, transparent 40%, black);
   opacity: 0.6;
