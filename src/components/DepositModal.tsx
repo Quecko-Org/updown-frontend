@@ -1,9 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
 import { Modal } from "./Modal";
 import { activeChain, tokenSymbolForActiveChain } from "@/config/environment";
+import { postDevmintUsdt } from "@/lib/api";
+import { formatUserFacingError } from "@/lib/errors";
 
 type Props = {
   open: boolean;
@@ -11,16 +14,47 @@ type Props = {
   depositAddress: string;
 };
 
+/**
+ * F3 (2026-05-16): on testnet, fresh users land with 0 USDTM and no way
+ * to acquire some without Meir running cast send. The "Get test USDTM"
+ * button below the QR mints $100 USDTM to their ThinWallet via the
+ * relayer (`POST /test/devmint`). Rate-limited at 1 per address per 5min.
+ *
+ * Production safety (Layer 1): button is gated to chainId 421614 (Sepolia)
+ * — `isTestnet === false` returns null, so mainnet users never see it.
+ * Layer 2 (backend route 404 on NODE_ENV=production) and Layer 3
+ * (Playwright assertion in phase-4d ladder) cover the residual surface.
+ */
+const TESTNET_MINT_AMOUNT_ATOMIC = "100000000"; // 100 USDTM (6 decimals)
+
 export function DepositModal({ open, onClose, depositAddress }: Props) {
   const address = depositAddress || "";
   const canCopy = address.length > 0;
   const tokenSymbol = tokenSymbolForActiveChain();
   const chainName = activeChain.name;
+  const isTestnet = activeChain.id === 421614;
+  const [minting, setMinting] = useState(false);
 
   function copy() {
     if (!canCopy) return;
     navigator.clipboard.writeText(address);
     toast.success("Address copied");
+  }
+
+  async function mintTestnetUsdt() {
+    if (!canCopy) return;
+    setMinting(true);
+    try {
+      const result = await postDevmintUsdt({
+        address: address as `0x${string}`,
+        amount: TESTNET_MINT_AMOUNT_ATOMIC,
+      });
+      toast.success(`Minted 100 ${tokenSymbol} — tx ${result.txHash.slice(0, 10)}…`);
+    } catch (e) {
+      toast.error(formatUserFacingError(e));
+    } finally {
+      setMinting(false);
+    }
   }
 
   return (
@@ -67,6 +101,19 @@ export function DepositModal({ open, onClose, depositAddress }: Props) {
       >
         Copy address
       </button>
+
+      {isTestnet && (
+        <button
+          type="button"
+          className="pp-btn pp-btn--secondary pp-btn--md"
+          style={{ marginTop: 10, width: "100%" }}
+          onClick={mintTestnetUsdt}
+          disabled={!canCopy || minting}
+          data-testid="deposit-get-test-usdtm"
+        >
+          {minting ? "Minting…" : `Get 100 ${tokenSymbol} (testnet)`}
+        </button>
+      )}
     </Modal>
   );
 }

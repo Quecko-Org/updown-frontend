@@ -117,6 +117,28 @@ export async function postThinWalletExecuteWithSig(
   return parseJson<ExecuteWithSigResponse>(res);
 }
 
+/**
+ * F3 (2026-05-16) — testnet faucet for self-funding ThinWallets.
+ *
+ * Calls the backend's `POST /test/devmint`, which is env-gated to
+ * `NODE_ENV !== 'production'`. Returns 404 on prod regardless of the
+ * frontend gate, by design (defense in depth).
+ *
+ * `amount` is atomic units of USDTM (6 decimals). $100 USDTM = "100000000".
+ * Per-address rate limit: 1 per 5 min (backend middleware).
+ */
+export type DevmintRequest = { address: `0x${string}`; amount: string };
+export type DevmintResponse = { txHash: string; blockNumber: number };
+
+export async function postDevmintUsdt(req: DevmintRequest): Promise<DevmintResponse> {
+  const res = await fetch(url("/test/devmint"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  return parseJson<DevmintResponse>(res);
+}
+
 export type PairSymbol = "BTC-USD" | "ETH-USD";
 
 export type MarketListItem = {
