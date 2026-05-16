@@ -66,20 +66,17 @@ jobs:
         env:
           PHASE4D_BASE: http://localhost:3000
 
-      - name: Upload screenshots on failure
+      - name: Upload Playwright artifacts on failure
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: phase-4d-screenshots-${{ github.run_id }}
-          path: e2e/screenshots/phase-4d/
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Upload Playwright report on failure
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: phase-4d-playwright-report-${{ github.run_id }}
-          path: playwright-report/
+          name: phase-4d-artifacts-${{ github.run_id }}
+          # test-results/ has per-failure screenshots + traces + videos
+          # (the diagnostic gold). e2e/screenshots/ has the per-state
+          # spec-driven snapshots when tests pass.
+          path: |
+            test-results/
+            e2e/screenshots/phase-4d/
+            playwright-report/
           if-no-files-found: ignore
           retention-days: 14

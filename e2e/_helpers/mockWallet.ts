@@ -134,6 +134,17 @@ export async function installMockWallet(
     },
   );
 
+  // Pre-consent to cookies so the cookie banner doesn't overlay the header
+  // and interfere with click flows. Key matches src/lib/cookieConsent.ts
+  // STORAGE_KEY. Runs before any page script.
+  await page.addInitScript(() => {
+    try {
+      window.localStorage.setItem("pp.cookie.consent.v1", "rejected");
+    } catch {
+      /* swallow — some envs disallow localStorage in init scripts */
+    }
+  });
+
   // ── Browser-side injection ──────────────────────────────────────
   // Runs BEFORE any other script on the page (per Playwright addInitScript
   // contract). wagmi's `injected()` then discovers our shim during its
