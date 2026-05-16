@@ -44,8 +44,8 @@ function formatMmSs(totalSeconds: number): string {
   return `${m}m:${String(r).padStart(2, "0")}s`;
 }
 
-function formatStrike(strikePrice: string | undefined): string {
-  const formatted = formatStrikeUsd(strikePrice);
+function formatStrike(strikePrice: string | undefined, decimals: number | undefined): string {
+  const formatted = formatStrikeUsd(strikePrice, decimals);
   return formatted === "Pending" ? "Strike —" : `Strike ${formatted}`;
 }
 
@@ -69,7 +69,7 @@ export function LiveMarketRow({
   const winnerLabel =
     market.winner === 1 ? "UP won" : market.winner === 2 ? "DOWN won" : null;
   const settledLabel = market.settlementPrice
-    ? formatStrikeUsd(market.settlementPrice)
+    ? formatStrikeUsd(market.settlementPrice, market.strikeDecimals)
     : null;
 
   return (
@@ -83,7 +83,7 @@ export function LiveMarketRow({
         <div className="pp-market-row__time">
           {formatTimeRange(market.startTime, market.endTime)}
         </div>
-        <div className="pp-market-row__strike">{formatStrike(market.strikePrice)}</div>
+        <div className="pp-market-row__strike">{formatStrike(market.strikePrice, market.strikeDecimals)}</div>
       </div>
 
       <div className="pp-market-row__counters">

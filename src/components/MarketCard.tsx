@@ -69,8 +69,8 @@ export function MarketCard({
   const marketHref = marketPathFromAddress(market.address);
   const { label: cdLabel, urgent: cdUrgent } = useCountdownRemaining(market.endTime);
   const effectiveStatus = deriveEffectiveStatus(market.status, cdLabel);
-  const strikeLabel = formatStrikeUsd(market.strikePrice);
-  const strikeNum = parseStrikeUsdNumber(market.strikePrice);
+  const strikeLabel = formatStrikeUsd(market.strikePrice, market.strikeDecimals);
+  const strikeNum = parseStrikeUsdNumber(market.strikePrice, market.strikeDecimals);
   const pairBase = (market.pairSymbol ?? market.pairId).split("-")[0] ?? "BTC";
   const pairLabel = `${pairBase}/USD`;
   const tfLabel = marketDurationLabel(market.duration);
@@ -107,7 +107,7 @@ export function MarketCard({
 
   const displayPrice: number | null = useMemo(() => {
     if (resolving) return null;
-    if (isResolved && market.settlementPrice) return parseStrikeUsdNumber(market.settlementPrice);
+    if (isResolved && market.settlementPrice) return parseStrikeUsdNumber(market.settlementPrice, market.strikeDecimals);
     return spotUsd;
   }, [spotUsd, market.settlementPrice, isResolved, resolving]);
 
@@ -151,7 +151,7 @@ export function MarketCard({
           <div>
             <span className="pp-micro">Settled</span>
             <span className="pp-tile__num">
-              {market.settlementPrice ? formatStrikeUsd(market.settlementPrice) : "—"}
+              {market.settlementPrice ? formatStrikeUsd(market.settlementPrice, market.strikeDecimals) : "—"}
             </span>
           </div>
           <div>

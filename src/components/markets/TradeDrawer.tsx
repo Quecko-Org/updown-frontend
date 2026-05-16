@@ -156,7 +156,7 @@ export function TradeDrawer({
             </div>
             <div className="pp-trade-drawer__subtitle">
               {market.strikePrice
-                ? `Opens at ${formatStrikeUsd(market.strikePrice)}`
+                ? `Opens at ${formatStrikeUsd(market.strikePrice, market.strikeDecimals)}`
                 : "Strike pending"}
             </div>
           </div>
