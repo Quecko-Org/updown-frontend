@@ -66,39 +66,36 @@
 
 /* ---------- shiny CTA (funnel-critical onboarding gates only) ----------
    Reserved for Deposit and Connect Wallet. Using this class anywhere else
-   is a code-review reject. pr-fix-2 (2026-05-16) — full Myriad-parity
-   recipe. Six material differences from pr-fix-1's partial fix, all
-   applied here:
+   is a code-review reject. Continuous rotating gradient border via Houdini
+   @property --gradient-angle (registered in design-tokens.css).
 
-     1. `--shine-flank` is vivid indigo `oklch(53% 0.27 273)` (full chroma)
-        instead of the muted `oklch(62% 0.08 268)`. The shine reads as a
-        defined band catching the light, not a soft halo.
-     2. New `--shine-inner-ring` near-black token replaces `var(--border-0)`
-        in the inset box-shadow. Gives the button physical depth — the
-        shine appears to ride on the surface of a dark ring rather than
-        floating on the page bg.
-     3. Background structure is `none padding-box, conic-gradient(...)
-        border-box`. No solid fill. The dark interior comes entirely from
-        the box-shadow inset — that's what makes the rotating conic a
-        true "border" rather than a flat overlay.
-     4. Padding tightens to `8px 14px` for ~36px Myriad-parity height
-        (pr-fix-1 shipped 9px 18px → 41px).
-     5. Dual animation — forward (3s) always runs, reverse (7.5s) is
-        paused by default and un-pauses on `:hover`. Counter-rotating
-        shimmer when the user attends to the CTA.
-     6. New `::before` pseudo with a radial-dot mesh masked by a slowly
-        rotating conic — the "starfield catches the light" texture. The
-        `::after` bloom color shifts from white (var(--fg-0)) to indigo
-        (var(--shine-flank)) for consistency with the new shine.
+   Structure (pr-fix-4 final, 2026-05-16): a solid dark-indigo linear
+   gradient fills the pill body (padding-box layer), and a conic-gradient
+   paints the 1px perimeter border with indigo→white→indigo as the
+   gradient rotates. The pill reads as a solid object with a moving
+   perimeter highlight.
+
+   Why solid body: pr-fix-2 mirrored Myriad's two-element approach in a
+   single element by making padding-box transparent and relying on the
+   inset shadow + ::before mesh to fill the inside. Side-by-side against
+   Myriad's render showed the mesh became visible polka-dot noise without
+   an inner solid <button> hiding it. Collapse the two-element approach
+   into one element with the solid fill ON the .pp-shiny-cta itself.
+
+   A subtle white bloom sits below the button (::after, mask-clipped to
+   the bottom edge, opacity 0.18) as a hint of "light spilling out."
+
+   Forward animation runs continuously; reverse animation un-pauses on
+   :hover for a counter-rotating shimmer.
 
    Pill radius (999px) is the one exception to the controls-tier rule.
-   Pills are allowed for two roles consumer-wide: asset pickers and
-   funnel CTAs. This is a funnel CTA.
+   Pills are allowed for two consumer roles: asset pickers and funnel
+   CTAs. This is a funnel CTA.
 
-   The shine tokens are named single-use non-directional accents — they
-   do NOT violate the "`--up`/`--down` are the only directional accents"
-   rule. Directional accents carry semantic UP/DOWN meaning; the shine
-   tokens carry no semantic load, only the visual recipe. */
+   `--shine-flank` and `--shine-inner-ring` are named single-use
+   non-directional accents — `--up` and `--down` retain the directional-
+   accent monopoly. Directional accents carry semantic UP/DOWN meaning;
+   the shine tokens carry no semantic load, only the visual recipe. */
 
 @keyframes pp-shiny-rotate { to { --gradient-angle: 360deg; } }
 @keyframes pp-shiny-rotate-reverse { to { --gradient-angle-reverse: 0deg; } }
@@ -125,12 +122,13 @@
   border-radius: 999px;
   isolation: isolate;
   overflow: hidden;
-  /* Recipe step 3: no solid fill on padding-box. Darkness comes from the
-     inset box-shadow (--shine-inner-ring near-black). The conic-gradient
-     paints only the border-box; bg-clip + bg-origin pinning makes the
-     gradient a true border, not a flat overlay. */
+  /* pr-fix-4 (2026-05-16): solid dark-indigo fill on padding-box. The
+     linear gradient is a static fill — the conic-gradient on border-box
+     is what rotates. Both endpoints stay within the page's cool-blue
+     hue family (273/268), so this reads as a darker saturated cousin of
+     --bg-0 rather than a "new color." */
   background:
-    none padding-box,
+    linear-gradient(135deg, oklch(22% 0.12 273), oklch(14% 0.05 268)) padding-box,
     conic-gradient(
       from var(--gradient-angle),
       transparent 0%,
@@ -158,53 +156,25 @@
   animation-play-state: running, running;
 }
 
-.pp-shiny-cta::before {
-  /* Recipe step 6: radial-dot mesh masked by a slow rotating conic.
-     The dots are a fine 6px-tile background; the conic masks them so
-     they fade in/out in a rotating arc. Reads as faint "starfield
-     catches the light" texture under the shine, only visible against
-     the inner ring's near-black. */
-  content: '';
-  position: absolute;
-  inset: 1px;
-  border-radius: inherit;
-  background:
-    radial-gradient(
-      circle at center,
-      oklch(100% 0 0 / 0.18) 0.6px,
-      transparent 1.2px
-    ) 0 0 / 6px 6px;
-  -webkit-mask-image: conic-gradient(
-    from var(--gradient-angle-reverse),
-    transparent 0%,
-    black 25%,
-    transparent 50%,
-    black 75%,
-    transparent 100%
-  );
-          mask-image: conic-gradient(
-    from var(--gradient-angle-reverse),
-    transparent 0%,
-    black 25%,
-    transparent 50%,
-    black 75%,
-    transparent 100%
-  );
-  z-index: -1;
-  pointer-events: none;
-}
-
 .pp-shiny-cta::after {
-  /* Under-button bloom. Recipe step 6: color shifts from var(--fg-0)
-     (white in pr-fix-1) to var(--shine-flank) (vivid indigo) so the
-     bloom matches the dominant accent. */
+  /* pr-fix-4 (2026-05-16): the ::before mesh was deleted (only worked
+     under Myriad's two-element nest where the inner button hid it; with
+     our single-element solid fill it has nowhere to hide).
+
+     The bloom here is now a subtle WHITE light-spill at the bottom edge,
+     not a colored halo. The conic shine on the border rotates indigo
+     through white through indigo — the bloom matches the white peak,
+     not the indigo flank, so it reads as "light catching the bottom
+     edge of the pill" rather than "indigo halo under the pill."
+     Opacity 0.18 + mask threshold 60% keeps it constrained to a
+     hint of light, not a glare. */
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(-50deg, transparent, var(--shine-flank), transparent);
-  -webkit-mask-image: radial-gradient(circle at center bottom, transparent 40%, black);
-          mask-image: radial-gradient(circle at center bottom, transparent 40%, black);
-  opacity: 0.6;
+  background: linear-gradient(-50deg, transparent, oklch(100% 0 0), transparent);
+  -webkit-mask-image: radial-gradient(circle at center bottom, transparent 60%, black);
+          mask-image: radial-gradient(circle at center bottom, transparent 60%, black);
+  opacity: 0.18;
   z-index: -1;
   pointer-events: none;
 }
