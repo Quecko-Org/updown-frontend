@@ -103,6 +103,24 @@ test.describe("Phase 4d — ThinWallet 5-state ladder", () => {
     expect(depositText?.toLowerCase()).toContain(twAddress.slice(-4).toLowerCase());
     expect(depositText?.toLowerCase()).not.toContain(eoaLast4);
 
+    // F3 (2026-05-16): testnet faucet button is visible in the Deposit modal
+    // on Sepolia builds. Layer-1 chain gate is `activeChain.id === 421614`;
+    // this assertion confirms the positive case. Mainnet-absence (Layer 3)
+    // is verified by a separate CI build with NEXT_PUBLIC_CHAIN_ID=42161
+    // — deferred to a follow-up.
+    const mintBtn = page.getByTestId("deposit-get-test-usdtm");
+    await expect(mintBtn).toBeVisible({ timeout: 5_000 });
+
+    // Click the mint button. Backend rate-limited at 1/addr/5min, so this
+    // single mint is sufficient. Wait for the success toast.
+    const balanceBefore = await getUsdtBalance(twAddress);
+    await mintBtn.click();
+    await expect(page.locator("text=/Minted 100/i")).toBeVisible({ timeout: 30_000 });
+
+    // Verify on-chain balance increased by ~100 USDTM (100_000_000 atomic).
+    const balanceAfter = await pollUntilUsdtIncrease(twAddress, balanceBefore, 30_000);
+    expect(balanceAfter - balanceBefore).toBeGreaterThanOrEqual(BigInt(100_000_000));
+
     await page.screenshot({
       path: path.join(OUT, "state-1-no-tw.png"),
       fullPage: false,

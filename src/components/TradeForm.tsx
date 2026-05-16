@@ -8,7 +8,8 @@ import { useAtomValue } from "jotai";
 import { useAccount, useSignTypedData, useWalletClient } from "wagmi";
 import { erc20Abi, encodeFunctionData, maxUint256 } from "viem";
 import { createPublicClient, http } from "viem";
-import { ALCHEMY_RPC_URL, activeChain } from "@/config/environment";
+import { ALCHEMY_RPC_URL, activeChain, tokenSymbolForActiveChain } from "@/config/environment";
+import { postDevmintUsdt } from "@/lib/api";
 import { toast } from "sonner";
 import {
   getBalance,
@@ -102,6 +103,12 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const apiConfig = useAtomValue(apiConfigAtom);
   const geo = useAtomValue(geoStateAtom);
   const geoBlocked = geo.status === "restricted";
+  // F3 (2026-05-16): testnet self-funding affordance. Visible only on
+  // Sepolia (`activeChain.id === 421614`); chain gate at render keeps the
+  // button absent on mainnet builds.
+  const isTestnet = activeChain.id === 421614;
+  const tokenSymbolForChain = tokenSymbolForActiveChain();
+  const [mintingTestUsdt, setMintingTestUsdt] = useState(false);
   const [side, setSide] = useState<1 | 2>(1);
   // PR-18 P1-19: USD-stake-based primary input. Polymarket-parity. The
   // string-typed state lets the user type partial / decimal values
@@ -1206,6 +1213,43 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
               : `${orderSide === 0 ? "Buy" : "Sell"} $${stakeUsd.toFixed(2)} of ${side === 1 ? "Up" : "Down"} · ${sharesPreview.toFixed(2)} shares @ ${Math.round(effectivePriceCents)}¢`}
         </button>
       ) : (
+        // F3 (2026-05-16): inline mint CTA at the friction point.
+        // Renders when: connected + on testnet + smartAccount provisioned +
+        // balance is insufficient for the current stake. Single click mints
+        // 100 USDTM to the TW; toast confirms broadcast. Backend route is
+        // env-gated (404 in production) and rate-limited (1/addr/5min).
+        null
+      )}
+
+      {isConnected && isTestnet && insufficientBalance && smartAccount && (
+        <button
+          type="button"
+          className="pp-btn pp-btn--secondary pp-btn--md"
+          style={{ marginTop: 8, width: "100%" }}
+          disabled={mintingTestUsdt}
+          data-testid="tradeform-mint-test-usdtm"
+          onClick={async () => {
+            setMintingTestUsdt(true);
+            try {
+              const result = await postDevmintUsdt({
+                address: smartAccount as `0x${string}`,
+                amount: "100000000", // 100 USDTM atomic
+              });
+              toast.success(
+                `Minted 100 ${tokenSymbolForChain} — tx ${result.txHash.slice(0, 10)}…`,
+              );
+            } catch (e) {
+              toast.error(formatUserFacingError(e));
+            } finally {
+              setMintingTestUsdt(false);
+            }
+          }}
+        >
+          {mintingTestUsdt ? "Minting…" : `Get 100 ${tokenSymbolForChain} (testnet)`}
+        </button>
+      )}
+
+      {!isConnected && (
         <div
           ref={connectSectionRef}
           className="mt-3 rounded-[var(--r-md)] border p-3"
