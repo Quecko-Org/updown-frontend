@@ -298,10 +298,15 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   // available USDT (cachedBalance - inOrders) so we can disable submit
   // BEFORE the wallet popup if their stake exceeds available. Same
   // queryKey as Header — React Query dedupes, no extra request.
+  // 2026-05-16: query the trading identity (smartAccount when present,
+  // else EOA). Balance lives on the ThinWallet, so keying on the raw
+  // EOA returns 0 and falsely fires "Insufficient balance" for users
+  // with ThinWallet-held USDT.
+  const tradingIdentity = smartAccount || address;
   const { data: balanceData } = useQuery({
-    queryKey: ["balance", address?.toLowerCase() ?? ""],
-    queryFn: () => getBalance(address!),
-    enabled: !!address && isConnected,
+    queryKey: ["balance", tradingIdentity?.toLowerCase() ?? ""],
+    queryFn: () => getBalance(tradingIdentity!),
+    enabled: !!tradingIdentity && isConnected,
     refetchInterval: 15_000,
     staleTime: 5_000,
   });
