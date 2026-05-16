@@ -74,8 +74,12 @@ export function formatProbabilityPrice(raw: string): string {
   }
 }
 
-/** Chainlink BTC/USD / ETH/USD answer decimals */
-const STRIKE_USD_DECIMALS = 8;
+/** Legacy AggregatorV3 strike scale (BTC/USD, ETH/USD answer decimals).
+ *  Streams-strike markets (post 2026-05-16 contract migration) carry their
+ *  own scale via `Market.strikeDecimals` from the API; this constant is the
+ *  fallback for historic markets and any old callsite that hasn't been
+ *  threaded through with a per-market value yet. */
+const STRIKE_USD_DECIMALS_LEGACY = 8;
 
 const strikeUsdFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -84,13 +88,19 @@ const strikeUsdFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 });
 
-/** Strike from API as integer string (8 decimals). */
-export function formatStrikeUsd(raw: string | undefined | null): string {
+/** Strike from API as integer string. `decimals` is the atomic-scale
+ *  exponent for that market (`Market.strikeDecimals`). Defaults to 8 so
+ *  legacy callers without per-market context still render correctly for
+ *  pre-Streams-strike markets. */
+export function formatStrikeUsd(
+  raw: string | undefined | null,
+  decimals: number = STRIKE_USD_DECIMALS_LEGACY,
+): string {
   if (raw == null || raw === "") return "Pending";
   try {
     const v = BigInt(raw);
     if (v === BigInt(0)) return "Pending";
-    const s = formatUnits(v, STRIKE_USD_DECIMALS);
+    const s = formatUnits(v, decimals);
     const n = Number(s);
     if (!Number.isFinite(n) || n <= 0) return "Pending";
     return strikeUsdFormatter.format(n);
@@ -107,13 +117,17 @@ export function marketDurationLabel(durationSec: number): string {
   return `${Math.round(durationSec / 60)} min`;
 }
 
-/** Strike as USD number for comparisons; null if pending / invalid. */
-export function parseStrikeUsdNumber(raw: string | undefined | null): number | null {
+/** Strike as USD number for comparisons; null if pending / invalid. See
+ *  `formatStrikeUsd` for the `decimals` parameter contract. */
+export function parseStrikeUsdNumber(
+  raw: string | undefined | null,
+  decimals: number = STRIKE_USD_DECIMALS_LEGACY,
+): number | null {
   if (raw == null || raw === "") return null;
   try {
     const v = BigInt(raw);
     if (v === BigInt(0)) return null;
-    const s = formatUnits(v, STRIKE_USD_DECIMALS);
+    const s = formatUnits(v, decimals);
     const n = Number(s);
     if (!Number.isFinite(n) || n <= 0) return null;
     return n;
