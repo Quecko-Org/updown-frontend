@@ -1,5 +1,6 @@
 import { Clock } from "lucide-react";
 import type { MarketListItem } from "@/lib/api";
+import { formatStrikeUsd } from "@/lib/format";
 
 export type LiveMarketRowProps = {
   market: MarketListItem;
@@ -36,10 +37,8 @@ function formatMmSs(totalSeconds: number): string {
 }
 
 function formatStrike(strikePrice: string | undefined): string {
-  if (!strikePrice) return "Strike —";
-  const n = Number(strikePrice);
-  if (!Number.isFinite(n)) return "Strike —";
-  return `Strike $${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+  const formatted = formatStrikeUsd(strikePrice);
+  return formatted === "Pending" ? "Strike —" : `Strike ${formatted}`;
 }
 
 function formatPool(volume: string): string {

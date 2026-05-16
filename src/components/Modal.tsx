@@ -36,7 +36,7 @@ export function Modal({
   title,
   children,
   width = 420,
-  zIndex = 80,
+  zIndex,
   className,
 }: Props) {
   useEffect(() => {
@@ -53,7 +53,7 @@ export function Modal({
   return (
     <div
       className="pp-scrim"
-      style={{ zIndex }}
+      style={{ zIndex: zIndex ?? "var(--z-dialog)" }}
       onClick={onClose}
       role="dialog"
       aria-modal="true"

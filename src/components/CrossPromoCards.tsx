@@ -5,6 +5,7 @@ import { useQueries } from "@tanstack/react-query";
 import { getMarkets, type MarketListItem } from "@/lib/api";
 import { marketDurationLabel } from "@/lib/format";
 import { marketPathFromAddress } from "@/lib/marketKey";
+import { useMarketImpliedProb } from "@/hooks/useMarketImpliedProb";
 
 /**
  * Phase2-B right-rail cross-promo card list. Shows up to 3 alternative live
@@ -89,13 +90,15 @@ export function CrossPromoCards({
 function CrossPromoCard({ market }: { market: MarketListItem }) {
   const pairBase = (market.pairSymbol ?? market.pairId).split("-")[0] ?? "BTC";
   const tfLabel = marketDurationLabel(market.duration);
-  const upPrice = Number(market.upPrice);
-  const downPrice = Number(market.downPrice);
-  const total = upPrice + downPrice;
-  const upPct =
-    Number.isFinite(upPrice) && Number.isFinite(downPrice) && total > 0
-      ? Math.round((upPrice / total) * 100)
-      : null;
+  // PR-5: cross-promo markets are ACTIVE per the parent filter (line 50),
+  // so the orderbook-mid hook is the right source. Pool fallback ladders
+  // in when the orderbook is empty.
+  const { upPct } = useMarketImpliedProb({
+    marketId: market.address,
+    upPool: market.upPrice,
+    downPool: market.downPrice,
+    enabled: true,
+  });
 
   return (
     <Link

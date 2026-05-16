@@ -17,8 +17,6 @@
  *                            a switch-timeframe nudge
  *   - live missing, open present → headline note above the open row
  *   - happy path           → live + open + nextThree rendered in sequence
- *
- * Old composition is preserved at /legacy during the PR-3 → PR-4 soak.
  */
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
@@ -37,6 +35,7 @@ import { TimeframeSegmented, type Timeframe } from "@/components/markets/Timefra
 import { LiveResolvedToggle, type RowsMode } from "@/components/markets/LiveResolvedToggle";
 import { TradeDrawer, type TradeSide } from "@/components/markets/TradeDrawer";
 import { useTrackLastMarketView } from "@/hooks/useLastMarketView";
+import { useMarketImpliedProb } from "@/hooks/useMarketImpliedProb";
 
 const TF_TO_SEC: Record<Timeframe, 300 | 900 | 3600> = {
   "5m": 300,
@@ -64,6 +63,44 @@ type Buckets = {
   next: MarketListItem[];
   resolved: MarketListItem[];
 };
+
+/**
+ * PR-5: live row uses orderbook-mid for implied probability (the canonical
+ * CLOB-derived probability). Extracted into its own component so the hook
+ * can run cleanly — the previous IIFE inside renderLiveBranch couldn't host
+ * a hook. OpenMarketRow + resolved rows still use pool ratios (orderbook
+ * doesn't apply pre-trade or post-resolution).
+ */
+function LiveMarketRowContainer({
+  market,
+  nowSec,
+}: {
+  market: MarketListItem;
+  nowSec: number;
+}) {
+  const { upPct, downPct } = useMarketImpliedProb({
+    marketId: market.address,
+    upPool: market.upPrice,
+    downPool: market.downPrice,
+    enabled: true,
+  });
+  return (
+    <Link
+      href={`/market/${market.address}`}
+      className="pp-market-row-link"
+      aria-label={`Open market detail for ${market.address}`}
+    >
+      <LiveMarketRow
+        market={market}
+        countdownSeconds={Math.max(0, market.endTime - nowSec)}
+        upTraderCount={0}
+        downTraderCount={0}
+        upPct={upPct}
+        downPct={downPct}
+      />
+    </Link>
+  );
+}
 
 function bucketMarkets(list: MarketListItem[] | undefined, nowSec: number): Buckets {
   if (!list?.length) return { live: null, open: null, next: [], resolved: [] };
@@ -276,29 +313,7 @@ function renderLiveBranch(
   return (
     <>
       {live ? (
-        (() => {
-          const prob = computeImpliedProb(live.upPrice, live.downPrice);
-          return (
-            // F4-B (2026-05-14): wrap the row in a Link so clicking the
-            // entire row navigates to the market detail page. LiveMarketRow
-            // has no internal interactive buttons, so the whole-row click
-            // affordance is safe here.
-            <Link
-              href={`/market/${live.address}`}
-              className="pp-market-row-link"
-              aria-label={`Open market detail for ${live.address}`}
-            >
-              <LiveMarketRow
-                market={live}
-                countdownSeconds={Math.max(0, live.endTime - nowSec)}
-                upTraderCount={0}
-                downTraderCount={0}
-                upPct={prob?.upPct ?? null}
-                downPct={prob?.downPct ?? null}
-              />
-            </Link>
-          );
-        })()
+        <LiveMarketRowContainer market={live} nowSec={nowSec} />
       ) : (
         <div className="pp-state-card" data-testid="state-no-live">
           <p className="pp-state-card__body">

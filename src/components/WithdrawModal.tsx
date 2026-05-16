@@ -6,7 +6,7 @@ import { useAtomValue } from "jotai";
 import { encodeFunctionData, erc20Abi, parseUnits, isAddress } from "viem";
 import { toast } from "sonner";
 import { Modal } from "./Modal";
-import { activeChain } from "@/config/environment";
+import { activeChain, tokenSymbolForActiveChain } from "@/config/environment";
 import { apiConfigAtom, userSmartAccount, balanceSnapshotAtom } from "@/store/atoms";
 import { postThinWalletExecuteWithSig } from "@/lib/api";
 import { formatUsdt } from "@/lib/format";
@@ -42,10 +42,6 @@ type Props = {
   open: boolean;
   onClose: () => void;
 };
-
-function tokenSymbolForActiveChain(): string {
-  return activeChain.id === 421614 ? "USDTM" : "USDT";
-}
 
 function randomUint256AsString(): string {
   const bytes = new Uint8Array(32);

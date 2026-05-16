@@ -2,6 +2,7 @@
 
 import { ArrowDown, ArrowUp } from "lucide-react";
 import type { MarketListItem } from "@/lib/api";
+import { formatStrikeUsd } from "@/lib/format";
 
 export type OpenMarketRowProps = {
   market: MarketListItem;
@@ -27,10 +28,8 @@ function formatTimeRange(startSec: number, endSec: number): string {
 }
 
 function formatOpensAt(strikePrice: string | undefined): string {
-  if (!strikePrice) return "Opens at —";
-  const n = Number(strikePrice);
-  if (!Number.isFinite(n)) return "Opens at —";
-  return `Opens at $${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+  const formatted = formatStrikeUsd(strikePrice);
+  return formatted === "Pending" ? "Opens at —" : `Opens at ${formatted}`;
 }
 
 function formatPool(usdt: number): string {
