@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Menu, X } from "lucide-react";
+import { Menu, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -245,22 +245,11 @@ export function Header() {
 
       <header className="pp-hdr">
         <div className="pp-hdr__inner">
-          {/* PR-4 nav-friction fix: when the user is on any non-/ route,
-              surface an explicit ← Markets back-button next to the logo.
-              The button's href reads sessionStorage for the last-viewed
-              {asset, timeframe} (written by useTrackLastMarketView on
-              the homepage) so the user lands on the same market they
-              left, not the default 5m view. */}
-          {pathname !== "/" && (
-            <Link
-              href={getRestoredMarketsHref()}
-              className="pp-hdr__back"
-              aria-label="Back to markets"
-            >
-              <ArrowLeft size={16} />
-              <span className="hidden sm:inline">Markets</span>
-            </Link>
-          )}
+          {/* pr-fix-3 (2026-05-16): back button moved OUT of the header to a
+              dedicated SubNav bar below. The previous in-header placement
+              broke the 3-column grid on every sub-page (4 children
+              overflowed to row 2). SubNav is sticky directly below this
+              header. */}
           {/* Brand — SVG wordmark (mark + "PulsePairs" text baked into the SVG).
               On non-/ routes the logo also restores the last market view; on /
               it points home for accessibility. */}
@@ -376,20 +365,9 @@ export function Header() {
                 >
                   Deposit
                 </button>
-                <button
-                  type="button"
-                  className="pp-btn pp-btn--secondary pp-btn--sm hidden sm:inline-flex"
-                  onClick={() => setWithdrawOpen(true)}
-                >
-                  Withdraw
-                </button>
-                <button
-                  type="button"
-                  className="pp-btn pp-btn--ghost pp-btn--sm hidden sm:inline-flex"
-                  onClick={() => void disconnectWallet()}
-                >
-                  Disconnect
-                </button>
+                {/* pr-fix-3 (2026-05-16): Withdraw + Disconnect removed
+                    from the top bar — both already exist in the hamburger
+                    menu. Top bar at every viewport: [Deposit] [☰]. */}
               </>
             )}
 

@@ -15,6 +15,14 @@ export type LiveMarketRowProps = {
    */
   upPct: number | null;
   downPct: number | null;
+  /**
+   * pr-fix-3 (2026-05-16) Issue 6: when `market.status` is RESOLVED or
+   * CLAIMED, the row swaps from the "live trading" treatment (UP%/DOWN%
+   * bar) to a Polymarket-style outcome treatment showing which side won.
+   * `variant="resolved"` is the explicit toggle; left as `"live"` for
+   * ACTIVE/OPEN rows so existing call sites are unaffected.
+   */
+  variant?: "live" | "resolved";
 };
 
 function formatTimeRange(startSec: number, endSec: number): string {
@@ -54,13 +62,21 @@ export function LiveMarketRow({
   downTraderCount,
   upPct,
   downPct,
+  variant = "live",
 }: LiveMarketRowProps) {
   const traders = upTraderCount + downTraderCount;
+  const isResolved = variant === "resolved";
+  const winnerLabel =
+    market.winner === 1 ? "UP won" : market.winner === 2 ? "DOWN won" : null;
+  const settledLabel = market.settlementPrice
+    ? formatStrikeUsd(market.settlementPrice)
+    : null;
+
   return (
     <div className="pp-market-row pp-market-row--live">
       <div className="pp-market-row__timer">
         <Clock size={12} />
-        <span>{formatMmSs(countdownSeconds)}</span>
+        <span>{isResolved ? "ENDED" : formatMmSs(countdownSeconds)}</span>
       </div>
 
       <div>
@@ -71,44 +87,80 @@ export function LiveMarketRow({
       </div>
 
       <div className="pp-market-row__counters">
-        <span className="pp-market-row__count-chip pp-market-row__count-chip--up">
-          <span>UP</span>
-          <span>{upTraderCount}</span>
-        </span>
-
-        <div className="pp-market-row__pct-bar">
-          {upPct == null || downPct == null ? (
+        {isResolved ? (
+          /* pr-fix-3 Issue 6: resolved-row outcome treatment. Replaces
+             the broken "0% up / 0% down" rendering that came from
+             reading raw atomic upPrice/downPrice values (always zero for
+             markets without recorded trades). Polymarket-parity: winner
+             badge in the directional color, settled price callout,
+             ENDED time chip. Loser side fades out via the same
+             pp-market-row__pct-bar-row container so the existing CSS
+             grid keeps the row geometry stable across live vs resolved. */
+          <div className="pp-market-row__pct-bar">
             <div className="pp-market-row__pct-bar-row">
-              <span className="pp-up">—</span>
-              <span className="pp-market-row__pct-label" style={{ marginTop: 0 }}>
-                no trades yet
+              {winnerLabel == null ? (
+                <span style={{ color: "var(--fg-2)" }}>—</span>
+              ) : market.winner === 1 ? (
+                <span className="pp-badge pp-badge--up" style={{ fontWeight: 700 }}>
+                  ▲ {winnerLabel}
+                </span>
+              ) : (
+                <span className="pp-badge pp-badge--down" style={{ fontWeight: 700 }}>
+                  ▼ {winnerLabel}
+                </span>
+              )}
+              <span
+                className="pp-market-row__pct-label pp-tabular"
+                style={{ marginTop: 0, color: "var(--fg-1)" }}
+              >
+                {settledLabel == null ? "Settling…" : `Settled ${settledLabel}`}
               </span>
-              <span className="pp-down">—</span>
             </div>
-          ) : (
-            <>
-              <div className="pp-market-row__pct-bar-row">
-                <span className="pp-up">{upPct}%</span>
-                <div className="pp-market-row__pct-bar-track">
-                  <div className="pp-up-fill" style={{ width: `${upPct}%` }} />
-                  <div className="pp-down-fill" style={{ width: `${downPct}%` }} />
-                </div>
-                <span className="pp-down">{downPct}%</span>
-              </div>
-              <div className="pp-market-row__pct-label">Counting</div>
-            </>
-          )}
-        </div>
+          </div>
+        ) : (
+          <>
+            <span className="pp-market-row__count-chip pp-market-row__count-chip--up">
+              <span>UP</span>
+              <span>{upTraderCount}</span>
+            </span>
 
-        <span className="pp-market-row__count-chip pp-market-row__count-chip--down">
-          <span>{downTraderCount}</span>
-          <span>DOWN</span>
-        </span>
+            <div className="pp-market-row__pct-bar">
+              {upPct == null || downPct == null ? (
+                <div className="pp-market-row__pct-bar-row">
+                  <span className="pp-up">—</span>
+                  <span className="pp-market-row__pct-label" style={{ marginTop: 0 }}>
+                    no trades yet
+                  </span>
+                  <span className="pp-down">—</span>
+                </div>
+              ) : (
+                <>
+                  <div className="pp-market-row__pct-bar-row">
+                    <span className="pp-up">{upPct}%</span>
+                    <div className="pp-market-row__pct-bar-track">
+                      <div className="pp-up-fill" style={{ width: `${upPct}%` }} />
+                      <div className="pp-down-fill" style={{ width: `${downPct}%` }} />
+                    </div>
+                    <span className="pp-down">{downPct}%</span>
+                  </div>
+                  <div className="pp-market-row__pct-label">Counting</div>
+                </>
+              )}
+            </div>
+
+            <span className="pp-market-row__count-chip pp-market-row__count-chip--down">
+              <span>{downTraderCount}</span>
+              <span>DOWN</span>
+            </span>
+          </>
+        )}
       </div>
 
       <div>
         <div className="pp-market-row__pool">{formatPool(market.volume)}</div>
-        <div className="pp-market-row__traders">{traders} traders</div>
+        <div className="pp-market-row__traders">
+          {isResolved ? "Resolved" : `${traders} traders`}
+        </div>
       </div>
     </div>
   );

@@ -294,15 +294,70 @@
 }
 .pp-hdr__brand { display: flex; align-items: center; gap: 8px; text-decoration: none; color: var(--fg-0); }
 
-/* PR-4: back-to-markets affordance, only rendered on non-/ routes.
-   Sits to the left of the brand on desktop; collapses to icon-only at
-   <640 to keep the header tight. */
-.pp-hdr__back {
+.pp-hdr__mark { width: 22px; height: 18px; }
+.pp-hdr__word { font-family: var(--font-sans); font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.pp-hdr__nav { display: flex; gap: 2px; justify-content: center; }
+
+/* pr-fix-3 (2026-05-16): nav links inherit the typography + color treatment
+   of `.pp-shiny-cta` so the top bar reads as a single design system. NO
+   rotating shine — that recipe is reserved for funnel-critical CTAs
+   (Deposit, Connect Wallet). Hierarchy preserved by:
+     - radius `var(--r-md)` here, full pill (999px) on shiny CTA
+     - no animation / inset shine ring here
+     - hover swaps to near-black bg (the same `--shine-inner-ring` that
+       lives on the shiny CTA's surface, so the visual relationship is
+       coherent)
+   active = `--shine-inner-ring` bg + white text. Same typography family
+   (var(--font-sans), 14px, 500) and same 8px/14px padding as the shiny
+   CTA. */
+.pp-hdr__navlink {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: var(--fg-1);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: var(--r-md);
+  text-decoration: none;
+  transition: color var(--dur-micro) var(--ease), background var(--dur-micro) var(--ease);
+}
+.pp-hdr__navlink:hover {
+  color: var(--fg-0);
+  background: var(--shine-inner-ring);
+}
+.pp-hdr__navlink--on {
+  color: var(--fg-0);
+  background: var(--shine-inner-ring);
+}
+.pp-hdr__right { justify-self: end; display: flex; align-items: center; gap: 6px; }
+
+/* pr-fix-3 (2026-05-16): SubNav bar — sticky directly below `.pp-hdr` on
+   non-/ routes. Hosts the `← Markets` affordance that used to live inside
+   `.pp-hdr__inner` (and broke the 3-column grid when added as a 4th child).
+   Self-contained scope so adding/removing the back link doesn't perturb
+   the main header geometry. */
+.pp-subnav {
+  position: sticky;
+  top: 56px;
+  z-index: calc(var(--z-chrome) - 1);
+  background: var(--bg-0);
+  border-bottom: 1px solid var(--border-0);
+}
+.pp-subnav__inner {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 8px 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pp-subnav__back {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
-  margin-right: 4px;
   border: 1px solid var(--border-0);
   border-radius: var(--r-md);
   background: transparent;
@@ -313,19 +368,7 @@
   text-decoration: none;
   transition: border-color var(--dur-micro) var(--ease), color var(--dur-micro) var(--ease);
 }
-.pp-hdr__back:hover { border-color: var(--border-1); color: var(--fg-0); }
-.pp-hdr__mark { width: 22px; height: 18px; }
-.pp-hdr__word { font-family: var(--font-sans); font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
-.pp-hdr__nav { display: flex; gap: 2px; justify-content: center; }
-.pp-hdr__navlink {
-  background: transparent; border: 0; cursor: pointer;
-  color: var(--fg-2); font-family: var(--font-sans); font-size: 13px; font-weight: 500;
-  padding: 6px 10px; border-radius: var(--r-md);
-  transition: color var(--dur-micro) var(--ease), background var(--dur-micro) var(--ease);
-}
-.pp-hdr__navlink:hover { color: var(--fg-0); background: var(--bg-1); }
-.pp-hdr__navlink--on { color: var(--fg-0); background: var(--bg-1); }
-.pp-hdr__right { justify-self: end; display: flex; align-items: center; gap: 6px; }
+.pp-subnav__back:hover { border-color: var(--border-1); color: var(--fg-0); }
 
 /* ---------- wallet chip ---------- */
 .pp-walletchip {
@@ -666,8 +709,10 @@
   color: var(--fg-2);
 }
 
-/* ---------- nav link (explicit 14px 500 spec) ---------- */
-.pp-hdr__navlink { font-size: 14px; font-weight: 500; }
+/* pr-fix-3 (2026-05-16): the 14px/500 spec now lives in the main
+   `.pp-hdr__navlink` rule above (redesign-system-unified). This
+   late-override is no longer needed but kept as an empty comment for
+   diff-readability when the design tokens get audited next. */
 
 /* ---------- order-type pill (TradeForm) ----------
    Compact control at the top of the trade form. Short click toggles

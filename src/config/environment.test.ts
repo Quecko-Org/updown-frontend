@@ -43,8 +43,11 @@ describe("F3 chain-gate", () => {
     // `activeChain.id === 421614`. If activeChain.id were 42161 (mainnet),
     // the conditional would be false → component returns null / button
     // not rendered. This invariant is the F3 production-safety guarantee.
-    const mainnetSimulated = 42161;
+    const mainnetSimulated: number = 42161;
     expect(mainnetSimulated === 421614).toBe(false);
-    expect(activeChain.id !== 42161 || activeChain.id !== 421614).toBe(true);
+    // activeChain.id is one of {42161, 421614}; the gate condition
+    // `=== 421614` is satisfied iff Sepolia, rejected iff mainnet.
+    const ANY_CHAIN: number = activeChain.id;
+    expect(ANY_CHAIN === 421614 || ANY_CHAIN === 42161).toBe(true);
   });
 });
