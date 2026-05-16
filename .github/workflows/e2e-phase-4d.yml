@@ -65,6 +65,12 @@ jobs:
         run: npm run test:e2e:phase-4d
         env:
           PHASE4D_BASE: http://localhost:3000
+          # Mirror the build env so `npm run start` reads the same values
+          # at runtime (Next.js inlines NEXT_PUBLIC_* at build but reads
+          # other env at runtime; mirroring is harmless and defends against
+          # any code path that re-reads env post-build).
+          NEXT_PUBLIC_CHAIN_ID: '421614'
+          NEXT_PUBLIC_API_BASE: 'https://dev-api.pulsepairs.com'
 
       - name: Upload Playwright artifacts on failure
         if: always()

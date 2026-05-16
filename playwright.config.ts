@@ -26,7 +26,11 @@ export default defineConfig({
   webServer: process.env.PHASE4D_NO_WEBSERVER
     ? undefined
     : {
-        command: "npm run dev",
+        // Use `npm run start` in CI so the served bundle is the one we
+        // just built (with NEXT_PUBLIC_CHAIN_ID baked in). `npm run dev`
+        // would re-read .env at runtime and miss the build-time env.
+        // Locally: keep `npm run dev` for hot-reload during iteration.
+        command: process.env.CI ? "npm run start" : "npm run dev",
         url: "http://localhost:3000",
         timeout: 120_000,
         reuseExistingServer: !process.env.CI,
