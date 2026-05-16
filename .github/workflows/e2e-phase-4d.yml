@@ -1,0 +1,80 @@
+name: Phase 4d — ThinWallet E2E ladder
+
+# Required gate on PRs that touch UX-rendering code. Runs the 5-state
+# ladder from e2e/phase-4d-thinwallet-ladder.spec.ts against the deployed
+# Sepolia dev backend + a fresh `npm run dev` of THIS PR's bundle.
+#
+# Posture (locked Phase 4d, 2026-05-16): no path filter — every PR runs the
+# gate. Path-filtering was the scope-completeness antipattern that caused
+# the Phase 4c regression. ~5 minutes per run is cheap; a missed bug is not.
+#
+# Concurrency: parallel PR runs share Sepolia state (orderbook, market
+# rotation). Each run mints a fresh test EOA so private-key state is
+# isolated, but the orderbook is shared. `concurrency` queues runs rather
+# than cancelling — losing a half-broadcast tx is worse than waiting.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: e2e-phase-4d-sepolia
+  cancel-in-progress: false
+
+jobs:
+  phase-4d-ladder:
+    name: ThinWallet 5-state ladder
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      PHASE4D_API_BASE: ${{ secrets.PHASE4D_API_BASE || 'https://dev-api.pulsepairs.com' }}
+      PHASE4D_ALCHEMY_RPC: ${{ secrets.PHASE4D_ALCHEMY_RPC }}
+      # Force CI mode so Playwright honors retries: 1.
+      CI: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers (chromium only)
+        run: npx playwright install --with-deps chromium
+
+      - name: Build Next.js
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+
+      - name: Run Phase 4d ladder
+        run: npm run test:e2e:phase-4d
+        env:
+          PHASE4D_BASE: http://localhost:3000
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase-4d-screenshots-${{ github.run_id }}
+          path: e2e/screenshots/phase-4d/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase-4d-playwright-report-${{ github.run_id }}
+          path: playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
