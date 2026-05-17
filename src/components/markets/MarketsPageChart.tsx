@@ -50,6 +50,7 @@ export function MarketsPageChart({ asset, timeframe, liveMarket }: MarketsPageCh
       marketStartSec={liveMarket.startTime}
       marketEndSec={liveMarket.endTime}
       strikePriceRaw={liveMarket.strikePrice}
+      strikeDecimals={liveMarket.strikeDecimals}
       settlementPriceRaw={liveMarket.settlementPrice}
       isResolved={liveMarket.status !== "ACTIVE"}
     />
