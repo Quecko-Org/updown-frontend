@@ -37,15 +37,25 @@ export function YourActivityOnMarket({
   const addrLower = smartAccount?.toLowerCase() ?? "";
   const mKey = marketComposite.toLowerCase();
 
+  // 2026-05-17: previously filtered to OPEN/PARTIALLY_FILLED only, which
+  // meant a wallet whose orders had all been cancelled (USER_CANCEL,
+  // EXPIRED, MARKET_ENDED) saw an empty "your activity" panel even when
+  // it should clearly show the recent attempts. Drop the status filter,
+  // sort newest first, surface the canonical recent activity for this
+  // market with status badges. Cancel action gated on OPEN/PARTIAL only.
   const { data: ordersResp } = useQuery({
     queryKey: ["orders", addrLower],
-    queryFn: () => getOrders(smartAccount!, { status: ["OPEN", "PARTIALLY_FILLED"], limit: 50 }),
+    queryFn: () => getOrders(smartAccount!, { limit: 50 }),
     enabled: !!smartAccount && isConnected,
     staleTime: 5_000,
     retry: 1,
   });
-  const openOrders: OrderRow[] = (ordersResp?.orders ?? []).filter(
-    (o) => o.market.toLowerCase() === mKey,
+  const recentOrders: OrderRow[] = (ordersResp?.orders ?? [])
+    .filter((o) => o.market.toLowerCase() === mKey)
+    .sort((a, b) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0))
+    .slice(0, 20);
+  const hasOpenOrders = recentOrders.some(
+    (o) => o.status === "OPEN" || o.status === "PARTIALLY_FILLED",
   );
 
   if (!isConnected || !smartAccount) {
@@ -64,7 +74,7 @@ export function YourActivityOnMarket({
     );
   }
 
-  if (openOrders.length === 0 && positions.length === 0) {
+  if (recentOrders.length === 0 && positions.length === 0) {
     return (
       <section className="pp-your-activity">
         <h2 className="pp-your-activity__title">Your activity in this market</h2>
@@ -82,10 +92,12 @@ export function YourActivityOnMarket({
     <section className="pp-your-activity">
       <h2 className="pp-your-activity__title">Your activity in this market</h2>
 
-      {openOrders.length > 0 ? (
+      {recentOrders.length > 0 ? (
         <div className="pp-your-activity__section">
-          <h3 className="pp-your-activity__section-title">Open orders</h3>
-          <OrdersSubtable rows={openOrders} marketStatus={marketStatus ?? null} />
+          <h3 className="pp-your-activity__section-title">
+            {hasOpenOrders ? "Orders" : "Recent orders"}
+          </h3>
+          <OrdersSubtable rows={recentOrders} marketStatus={marketStatus ?? null} />
         </div>
       ) : null}
 
@@ -155,13 +167,22 @@ function OrdersSubtable({
                     "pp-chip-status",
                     o.status === "OPEN" && "pp-chip-status--open",
                     o.status === "PARTIALLY_FILLED" && "pp-chip-status--partial",
+                    o.status === "FILLED" && "pp-chip-status--filled",
+                    o.status === "CANCELLED" && "pp-chip-status--cancelled",
                   )}
+                  title={o.status === "CANCELLED" && o.reason ? `Reason: ${o.reason}` : undefined}
                 >
-                  {o.status === "PARTIALLY_FILLED" ? "PARTIAL" : o.status}
+                  {o.status === "PARTIALLY_FILLED"
+                    ? "PARTIAL"
+                    : o.status === "CANCELLED" && o.reason === "EXPIRED"
+                      ? "EXPIRED"
+                      : o.status === "CANCELLED" && o.reason === "MARKET_ENDED"
+                        ? "MARKET ENDED"
+                        : o.status}
                 </span>
               </td>
               <td className="r">
-                {marketStatus === "ACTIVE" ? (
+                {marketStatus === "ACTIVE" && (o.status === "OPEN" || o.status === "PARTIALLY_FILLED") ? (
                   <CancelOrderButton orderId={o.orderId} />
                 ) : null}
               </td>

@@ -183,10 +183,17 @@ export function Header() {
   //      query key, so they cannot disagree.
   // Result: the dropdown's "In orders" cell = sum(amount - filledAmount)
   // across orders the same query Portfolio renders.
+  // 2026-05-17: added refetchInterval matching the balance query cadence.
+  // Pre-fix, this query only refreshed on mount / window-focus, so an
+  // order auto-cancelled by the expiry sweep (no user-initiated action)
+  // would leave the derived inOrders stale until the user clicked away
+  // and back. WS `order_update` merges (useUpDownWebSocket) cover the
+  // common case but rely on a healthy authed `orders:<wallet>` channel.
   const { data: ordersResp } = useQuery({
     queryKey: ["orders", tradingIdentity?.toLowerCase() ?? ""],
     queryFn: () => getOrders(tradingIdentity!, { limit: 50 }),
     enabled: !!tradingIdentity && isWalletConnected,
+    refetchInterval: 15_000,
     staleTime: 5_000,
     retry: 1,
   });
