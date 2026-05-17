@@ -28,8 +28,8 @@ function formatTimeRange(startSec: number, endSec: number): string {
   return `${hourNum}:${m} – ${full}`;
 }
 
-function formatOpensAt(strikePrice: string | undefined): string {
-  const formatted = formatStrikeUsd(strikePrice);
+function formatOpensAt(strikePrice: string | undefined, decimals: number | undefined): string {
+  const formatted = formatStrikeUsd(strikePrice, decimals);
   return formatted === "Pending" ? "Opens at —" : `Opens at ${formatted}`;
 }
 
@@ -67,7 +67,7 @@ export function OpenMarketRow({
         <div className="pp-market-row__time">
           {formatTimeRange(market.startTime, market.endTime)}
         </div>
-        <div className="pp-market-row__strike">{formatOpensAt(market.strikePrice)}</div>
+        <div className="pp-market-row__strike">{formatOpensAt(market.strikePrice, market.strikeDecimals)}</div>
       </div>
 
       <div>

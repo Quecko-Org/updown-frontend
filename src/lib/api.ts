@@ -156,6 +156,10 @@ export type MarketListItem = {
   upPrice: string;
   downPrice: string;
   strikePrice?: string;
+  /** Atomic-scale exponent for strikePrice + settlementPrice. 8 = legacy
+   *  AggregatorV3 markets; 18 = Streams-strike markets (post 2026-05-16
+   *  contract migration). Backend defaults missing field to 8. */
+  strikeDecimals?: number;
   /** Chainlink settlement at resolution (resolved/claimed); same scale as strikePrice. */
   settlementPrice?: string;
   volume: string;

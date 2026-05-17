@@ -104,6 +104,7 @@ export function MarketPriceChart({
   marketStartSec,
   marketEndSec,
   strikePriceRaw,
+  strikeDecimals,
   settlementPriceRaw,
   isResolved = false,
 }: {
@@ -115,6 +116,9 @@ export function MarketPriceChart({
   marketStartSec: number;
   marketEndSec: number;
   strikePriceRaw?: string;
+  /** Streams-strike Path B (2026-05-16): atomic scale for strike/settlement
+   *  raw values. Defaults inside the formatter when omitted. */
+  strikeDecimals?: number;
   settlementPriceRaw?: string;
   isResolved?: boolean;
 }) {
@@ -134,9 +138,9 @@ export function MarketPriceChart({
     staleTime: isResolved ? Infinity : 0,
   });
 
-  const strikeNum = parseStrikeUsdNumber(strikePriceRaw);
-  const settlementNum = parseStrikeUsdNumber(settlementPriceRaw);
-  const strikeLabel = formatStrikeUsd(strikePriceRaw);
+  const strikeNum = parseStrikeUsdNumber(strikePriceRaw, strikeDecimals);
+  const settlementNum = parseStrikeUsdNumber(settlementPriceRaw, strikeDecimals);
+  const strikeLabel = formatStrikeUsd(strikePriceRaw, strikeDecimals);
   const [yScaleMode, setYScaleMode] = useState<YScaleMode>("strike");
 
   const allPoints = useMemo(() => normalizePriceHistoryData(data), [data]);

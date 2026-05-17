@@ -114,8 +114,8 @@ export function MarketPageClient({ address }: { address: string }) {
     );
   }
 
-  const strikeLabel = formatStrikeUsd(market.strikePrice);
-  const strikeNum = parseStrikeUsdNumber(market.strikePrice);
+  const strikeLabel = formatStrikeUsd(market.strikePrice, market.strikeDecimals);
+  const strikeNum = parseStrikeUsdNumber(market.strikePrice, market.strikeDecimals);
   const pairBase = (market.pairSymbol ?? market.pairId).split("-")[0] ?? "BTC";
   const pairLabel = `${pairBase}/USD`;
   const tfLabel = marketDurationLabel(market.duration);
@@ -127,7 +127,7 @@ export function MarketPageClient({ address }: { address: string }) {
   // formatResolutionOutcome helper for resolved markets and drop "Currently".
   const resolution = formatResolutionOutcome(market);
   const isResolvedView = resolution.winnerSide != null;
-  const settledLabel = market.settlementPrice ? formatStrikeUsd(market.settlementPrice) : null;
+  const settledLabel = market.settlementPrice ? formatStrikeUsd(market.settlementPrice, market.strikeDecimals) : null;
 
   // PR-18 OBS-2: removed "Currently UP ▲ / DOWN ▼" arrow that derived
   // direction from spot vs strike. Polymarket has no equivalent — they
@@ -260,6 +260,7 @@ export function MarketPageClient({ address }: { address: string }) {
             marketStartSec={market.startTime}
             marketEndSec={market.endTime}
             strikePriceRaw={market.strikePrice}
+            strikeDecimals={market.strikeDecimals}
             settlementPriceRaw={market.settlementPrice}
             isResolved={market.status === "RESOLVED" || market.status === "CLAIMED"}
           />

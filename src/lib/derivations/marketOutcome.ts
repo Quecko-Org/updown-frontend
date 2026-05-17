@@ -71,6 +71,7 @@ export function formatResolutionOutcome(market: {
   status: string;
   winner: number | null;
   strikePrice?: string;
+  strikeDecimals?: number;
   settlementPrice?: string;
 }): MarketOutcome {
   const isResolved = isResolvedMarketStatus(market.status);
@@ -79,23 +80,18 @@ export function formatResolutionOutcome(market: {
   const winnerLabel = winnerSide === 1 ? "UP won" : winnerSide === 2 ? "DOWN won" : null;
 
   const settledPriceStr = market.settlementPrice
-    ? formatStrikeUsd(market.settlementPrice)
+    ? formatStrikeUsd(market.settlementPrice, market.strikeDecimals)
     : null;
 
   let deltaStr: string | null = null;
   let deltaUsedFinePrecision = false;
-  // pr-fix-3 (2026-05-16) Issue 8a sibling: `Number(market.strikePrice)` on
-  // a raw on-chain atomic value gave a number at the wrong scale (e.g.
-  // 350000000000 = $3,500 strike at 1e8). The arithmetic below then
-  // computed ((settled_1e18 − strike_1e8) / strike_1e8) × 100 ≈ 6.45e11 %.
-  // Use `parseStrikeUsdNumber` to apply the canonical 1e8 divisor on
-  // both sides before computing % delta. The 1e18-scale Settlement bug
-  // (audited mismatch between Streams + Data Feeds oracles) is being
-  // closed separately by pr-fix-4; until that lands, the % delta on
-  // resolved markets will still be off when settlementPrice is 1e18,
-  // but at least no longer 11 orders of magnitude wrong.
-  const strike = parseStrikeUsdNumber(market.strikePrice);
-  const settled = parseStrikeUsdNumber(market.settlementPrice);
+  // Streams-strike Path B (2026-05-16): both strike and settlement are
+  // emitted by the resolver at `market.strikeDecimals` scale (8 = legacy
+  // AggregatorV3 markets, 18 = Streams-strike markets). Threading the
+  // per-market scale through `parseStrikeUsdNumber` closes the 1e18-scale
+  // settlement bug that pr-fix-3/4 patched at the strike-side only.
+  const strike = parseStrikeUsdNumber(market.strikePrice, market.strikeDecimals);
+  const settled = parseStrikeUsdNumber(market.settlementPrice, market.strikeDecimals);
   if (strike != null && settled != null && strike !== 0) {
     const pct = ((settled - strike) / strike) * 100;
     const sign = pct >= 0 ? "+" : "−";
