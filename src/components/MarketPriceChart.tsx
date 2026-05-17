@@ -66,10 +66,29 @@ function fmtTick(secEpoch: number, windowSec: number): string {
  * fallback to 0) could pin pMin=0 and freeze a $0–$2600 axis even after
  * real ticks arrived in the $2322 band, making $4 of price variance
  * invisible at the resolution of $720 per gridline.
+ *
+ * 2026-05-17 Item 6 fix: `padFactor` is now caller-supplied. Strike-fit
+ * passes 0.12 (the historical default — gives strike + spot room to
+ * breathe). Spot-fit passes 0.04 (tight to the tick envelope so the
+ * toggle visibly affects the frame even when strike sits inside the
+ * spot envelope, which was the convergence case that made the toggle a
+ * silent no-op pre-fix). The minimum pad floor remains `Math.max(rawMax
+ * * 0.0005, 1)` so tiny ranges always get at least $1 of padding.
  */
-function useStableYRange(seriesKey: string, rawMin: number, rawMax: number) {
+function useStableYRange(seriesKey: string, rawMin: number, rawMax: number, padFactor = 0.12) {
   const stateRef = useRef<{ key: string; min: number; max: number } | null>(null);
-  const pad = Math.max((rawMax - rawMin) * 0.12, rawMax * 0.0005, 1);
+  // Both pad floors scale with padFactor so spot-fit (low padFactor) can
+  // actually produce a tighter frame than strike-fit. Previously:
+  //   - abs floor `$1` dominated tight ETH ranges
+  //   - relative floor `rawMax * 0.0005` (≈ $1.10 for $2200 ETH)
+  //     dominated once abs was beaten
+  // → both modes converged on identical frames. Scaling both floors keeps
+  // the degenerate-range guard intact while letting spot-fit's tighter
+  // intent express. Strike-fit retains the historical 12%/0.05%/$1 ratios.
+  const padScale = padFactor / 0.12;
+  const relPadFloor = rawMax * 0.0005 * padScale;
+  const absPadFloor = padScale;
+  const pad = Math.max((rawMax - rawMin) * padFactor, relPadFloor, absPadFloor);
   const target = { min: rawMin - pad, max: rawMax + pad };
 
   const prev = stateRef.current;
@@ -202,31 +221,39 @@ export function MarketPriceChart({
   // for live markets — `rangeSeries = series` works for either mode. We keep
   // the explicit branch to make the strike-vs-spot intent obvious and to
   // future-proof against re-introducing synthetic anchors elsewhere.
+  // 2026-05-17 Item 6 fix: strike-fit and spot-fit had collapsing-to-
+  // identical Y-range math whenever strike sat inside the spot envelope
+  // (the normal case for any market where price hasn't moved far). The
+  // toggle was a silent no-op for users. Two distinct behaviors now:
+  //
+  //   strike-fit (default): include strike + spot in extrema so the
+  //   strike line is always in frame. 12% pad for breathing room.
+  //
+  //   spot-fit: ONLY the raw tick envelope, no strike, no currentSpot
+  //   bias. 4% pad so the frame hugs actual price action. Visibly tighter
+  //   than strike-fit even when strike sits inside the tick range.
+  //
+  // 2026-05-03: fallback chain when rawSeries is empty (first render
+  // before data lands) — `currentSpot ?? strikeNum ?? 0`. Pre-fix the
+  // `?? 0` got baked into useStableYRange's persistent state, pinning
+  // pMin=0 forever. strikeNum is parsed from market metadata and present
+  // for any market the chart could render, so it's a safer default.
   const includeStrike = yScaleMode === "strike";
-  const rangeSeries = includeStrike ? series : rawSeries;
-  // 2026-05-03: fallback chain when rangeSeries is empty (first render before
-  // data lands) — `currentSpot ?? strikeNum ?? 0`. Pre-fix the `?? 0` got
-  // baked into useStableYRange's persistent state, pinning pMin=0 forever.
-  // strikeNum is parsed from market metadata and present for any market the
-  // chart could possibly render, so it's a much safer default.
+  const padFactor = includeStrike ? 0.12 : 0.04;
   const fallbackPrice = currentSpot ?? strikeNum ?? 0;
-  const priceMin = rangeSeries.length ? Math.min(...rangeSeries.map((p) => p.p)) : fallbackPrice;
-  const priceMax = rangeSeries.length ? Math.max(...rangeSeries.map((p) => p.p)) : fallbackPrice;
-  const ymin = Math.min(
-    priceMin,
-    includeStrike ? (strikeNum ?? priceMin) : priceMin,
-    currentSpot ?? priceMin,
-  );
-  const ymax = Math.max(
-    priceMax,
-    includeStrike ? (strikeNum ?? priceMax) : priceMax,
-    currentSpot ?? priceMax,
-  );
-  // Re-key on yScaleMode so useStableYRange resets to the new extrema instead
-  // of carrying the wider strike-fit range into spot-fit (otherwise the toggle
-  // would be a no-op until the next out-of-range tick).
+  const tickPrices = rawSeries.length ? rawSeries.map((p) => p.p) : [fallbackPrice];
+  const tickMin = Math.min(...tickPrices);
+  const tickMax = Math.max(...tickPrices);
+  const ymin = includeStrike
+    ? Math.min(tickMin, strikeNum ?? tickMin, currentSpot ?? tickMin)
+    : tickMin;
+  const ymax = includeStrike
+    ? Math.max(tickMax, strikeNum ?? tickMax, currentSpot ?? tickMax)
+    : tickMax;
+  // Re-key on yScaleMode so useStableYRange resets to the new extrema
+  // instead of carrying the wider strike-fit range into spot-fit.
   const seriesKey = `${symbol}:${marketStartSec}:${marketEndSec}:${isResolved ? "R" : "A"}:${yScaleMode}`;
-  const yRange = useStableYRange(seriesKey, ymin, ymax);
+  const yRange = useStableYRange(seriesKey, ymin, ymax, padFactor);
 
   const geom = useMemo(() => {
     if (series.length < 2) return null;
@@ -243,25 +270,68 @@ export function MarketPriceChart({
       PAD_L + (Math.max(t0, Math.min(t1, t)) - t0) / dt * CHART_W;
     const py = (p: number) => PAD_T + CHART_H - ((p - pMin) / dp) * CHART_H;
 
-    // 2026-05-04: step-after interpolation. Price was P[i-1] from t[i-1]
-    // until t[i], at which point it stepped to P[i]. Each segment becomes
-    // two SVG commands: a horizontal line holding the prior y until the
-    // new x, then a vertical line stepping to the new y. Pre-fix the
-    // raw `M ... L ... L ...` was linear interpolation between samples,
-    // which visually invented gradual transitions that didn't actually
-    // happen — Coinbase ticker fires per-match and the price held flat
-    // between matches. Step-after matches reality.
-    const lineD = series
-      .map((pt, i) => {
-        const x = tx(pt.t).toFixed(1);
-        const y = py(pt.p).toFixed(1);
-        if (i === 0) return `M${x},${y}`;
-        const prev = series[i - 1]!;
-        const prevY = py(prev.p).toFixed(1);
-        // Horizontal at prior y to new x, then vertical to new y.
-        return `L${x},${prevY} L${x},${y}`;
-      })
-      .join(" ");
+    // 2026-05-17 Item 7: monotone cubic interpolation (Fritsch-Carlson).
+    // Streams reports arrive at fixed intervals so step-after rendering
+    // produced visible plateaus + sharp vertical jumps that read as
+    // "data missing." Monotone cubic draws a smooth curve through each
+    // sample while preserving the local price extrema — no overshoot
+    // (i.e. the curve never invents prices outside [min(P[i], P[i+1]),
+    // max(P[i], P[i+1])] for any segment), so the chart still tells the
+    // truth about whether spot crossed strike at a given tick.
+    //
+    // Trade-off vs step-after: the smoothed curve visually implies a
+    // gradual transition between Streams ticks that, strictly speaking,
+    // we don't have data for. For PulsePairs' use case (UX polish over
+    // tick-fidelity) this is the right call per the 2026-05-17 brief.
+    const lineD = (() => {
+      if (series.length === 1) {
+        const pt = series[0]!;
+        return `M${tx(pt.t).toFixed(1)},${py(pt.p).toFixed(1)}`;
+      }
+      const pts = series.map((p) => ({ x: tx(p.t), y: py(p.p) }));
+      const n = pts.length;
+      const dxs: number[] = [];
+      const ms: number[] = [];
+      for (let i = 0; i < n - 1; i++) {
+        const dx = pts[i + 1]!.x - pts[i]!.x;
+        const dy = pts[i + 1]!.y - pts[i]!.y;
+        dxs[i] = dx;
+        ms[i] = dx === 0 ? 0 : dy / dx;
+      }
+      // Per-point tangents; ends use the adjacent segment slope.
+      const tangents: number[] = new Array(n);
+      tangents[0] = ms[0]!;
+      tangents[n - 1] = ms[n - 2]!;
+      for (let i = 1; i < n - 1; i++) {
+        const mPrev = ms[i - 1]!;
+        const mNext = ms[i]!;
+        if (mPrev * mNext <= 0) {
+          // Sign change or flat: zero tangent preserves monotonicity.
+          tangents[i] = 0;
+        } else {
+          // Three-point Fritsch-Carlson tangent, clamped to ≤ 3× the
+          // smaller adjacent slope so the spline can't overshoot.
+          let t = (mPrev + mNext) / 2;
+          if (Math.abs(t) > 3 * Math.abs(mPrev)) t = 3 * mPrev;
+          if (Math.abs(t) > 3 * Math.abs(mNext)) t = 3 * mNext;
+          tangents[i] = t;
+        }
+      }
+      // Hermite → Bezier conversion: control points at 1/3 the segment
+      // span along the tangent direction at each endpoint.
+      let d = `M${pts[0]!.x.toFixed(1)},${pts[0]!.y.toFixed(1)}`;
+      for (let i = 0; i < n - 1; i++) {
+        const p0 = pts[i]!;
+        const p1 = pts[i + 1]!;
+        const dx = dxs[i]!;
+        const cx1 = p0.x + dx / 3;
+        const cy1 = p0.y + (tangents[i]! * dx) / 3;
+        const cx2 = p1.x - dx / 3;
+        const cy2 = p1.y - (tangents[i + 1]! * dx) / 3;
+        d += ` C${cx1.toFixed(1)},${cy1.toFixed(1)} ${cx2.toFixed(1)},${cy2.toFixed(1)} ${p1.x.toFixed(1)},${p1.y.toFixed(1)}`;
+      }
+      return d;
+    })();
 
     const xFirst = tx(series[0]!.t);
     const xLast = tx(series[series.length - 1]!.t);
@@ -501,11 +571,15 @@ export function MarketPriceChart({
             )}
 
             <path d={geom.areaD} fill={`url(#${gradId})`} />
+            {/* 2026-05-17 Item 8: stroke-width bump 1.5 → 2.5. Thicker
+                line reads as the primary visual element rather than a
+                hairline annotation. `vectorEffect="non-scaling-stroke"`
+                preserves the visual width across viewport widths. */}
             <path
               d={geom.lineD}
               fill="none"
               stroke={directionColor}
-              strokeWidth="1.5"
+              strokeWidth="2.5"
               strokeLinejoin="round"
               strokeLinecap="round"
               vectorEffect="non-scaling-stroke"
