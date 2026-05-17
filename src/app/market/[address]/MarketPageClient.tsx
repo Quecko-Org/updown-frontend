@@ -1,51 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { useAccount } from "wagmi";
 import { getMarket, getPositions, getDmmStatus } from "@/lib/api";
-import { formatStrikeUsd, marketDurationLabel } from "@/lib/format";
+import { marketDurationLabel } from "@/lib/format";
 import { parseCompositeMarketKey } from "@/lib/marketKey";
 import {
   formatMarketWindow,
-  formatResolutionOutcome,
   isTerminalMarketStatus,
 } from "@/lib/derivations";
 import { ImpliedProbStrip } from "@/components/ImpliedProbStrip";
 import { MarketPriceChart } from "@/components/MarketPriceChart";
 import { TradeForm } from "@/components/TradeForm";
-import { OrderBookPanel } from "@/components/OrderBook";
+import { OrderBookDrawer } from "@/components/markets/OrderBookDrawer";
 import { YourActivityOnMarket } from "@/components/YourActivityOnMarket";
 import { EmptyState } from "@/components/EmptyState";
 import { CancelAllMarketOrders } from "@/components/CancelAllMarketOrders";
 import { MarketHeaderActions } from "@/components/MarketHeaderActions";
 import { TimeRangeStrip } from "@/components/TimeRangeStrip";
-import { formatUsdt } from "@/lib/format";
-import { cn } from "@/lib/cn";
 import { userSmartAccount } from "@/store/atoms";
-
-function useEndsInCountdown(endTimeSec: number) {
-  const [left, setLeft] = useState(() =>
-    endTimeSec > 0 ? Math.max(0, endTimeSec - Math.floor(Date.now() / 1000)) : 0,
-  );
-  useEffect(() => {
-    if (!endTimeSec) {
-      setLeft(0);
-      return;
-    }
-    setLeft(Math.max(0, endTimeSec - Math.floor(Date.now() / 1000)));
-    const t = setInterval(() => {
-      setLeft(Math.max(0, endTimeSec - Math.floor(Date.now() / 1000)));
-    }, 1000);
-    return () => clearInterval(t);
-  }, [endTimeSec]);
-  const m = Math.floor(left / 60);
-  const s = left % 60;
-  if (!endTimeSec) return "—";
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
 
 export function MarketPageClient({ address }: { address: string }) {
   const { address: eoa, isConnected } = useAccount();
@@ -84,8 +60,6 @@ export function MarketPageClient({ address }: { address: string }) {
     staleTime: 60_000,
   });
 
-  const endsIn = useEndsInCountdown(market?.endTime ?? 0);
-
   const localPositions =
     positions?.filter((p) => p.market.toLowerCase() === marketKey.toLowerCase()) ?? [];
 
@@ -108,26 +82,10 @@ export function MarketPageClient({ address }: { address: string }) {
     return <div className="pp-market-detail__loading pp-caption">Loading…</div>;
   }
 
-  const strikeLabel = formatStrikeUsd(market.strikePrice, market.strikeDecimals);
   const pairBase = (market.pairSymbol ?? market.pairId).split("-")[0] ?? "BTC";
   const pairLabel = `${pairBase}/USD`;
   const tfLabel = marketDurationLabel(market.duration);
   const heroTitle = `${pairLabel} · ${tfLabel}`;
-
-  // Bug C: pre-fix, "Currently" always rendered live spot vs strike — for
-  // RESOLVED markets this contradicted the home page card's winner badge once
-  // spot had drifted past strike post-resolve. Now use the canonical
-  // formatResolutionOutcome helper for resolved markets and drop "Currently".
-  const resolution = formatResolutionOutcome(market);
-  const isResolvedView = resolution.winnerSide != null;
-  const settledLabel = market.settlementPrice ? formatStrikeUsd(market.settlementPrice, market.strikeDecimals) : null;
-
-  // PR-18 OBS-2: removed "Currently UP ▲ / DOWN ▼" arrow that derived
-  // direction from spot vs strike. Polymarket has no equivalent — they
-  // surface implied probability only, not a parallel directional badge.
-  // The implied-probability bar already covers directional sentiment;
-  // the arrow duplicated and confused. spotUsd / strikeNum keep their
-  // other consumers (chart anchor, header readouts).
 
   // Phase2-PRE: even DMMs can't cancel-all on a terminal market — orders are
   // already cancelled by the matching engine at MARKET_ENDED. Hide the kill
@@ -146,81 +104,13 @@ export function MarketPageClient({ address }: { address: string }) {
         <MarketHeaderActions marketKey={marketKey} marketAddress={market.address} />
       </div>
 
-      {/* Hero: pair · timeframe heading + per-metric tile row (Strike / Ends in
-          / Volume / Status). Mirrors the home-page `pp-tile` visual language
-          so the surface reads as the same product as the markets list. */}
+      {/* 2026-05-17 UX redesign: the prior 4-stat tile row (Strike / Ends in
+          / Volume / Status) is gone. Strike + countdown + status are all
+          already surfaced inside TradeForm; the chart shows the strike
+          line. The duplicate tile row added visual noise without adding
+          information. Heading kept as a slim crumb for deep-link context. */}
       <header className="pp-market-detail__hero">
         <h1 className="pp-market-detail__hero-title">{heroTitle}</h1>
-        <div className="pp-market-detail__stats">
-          {isResolvedView ? (
-            <>
-              <div className="pp-market-detail__stat">
-                <span className="pp-micro">Price To Beat</span>
-                <span className="pp-market-detail__stat-value pp-tabular">{strikeLabel}</span>
-              </div>
-              <div className="pp-market-detail__stat">
-                <span className="pp-micro">Settled Price</span>
-                <span
-                  className={cn(
-                    "pp-market-detail__stat-value pp-tabular",
-                    resolution.winnerSide === 1 && "pp-market-detail__stat-value--up",
-                    resolution.winnerSide === 2 && "pp-market-detail__stat-value--down",
-                  )}
-                >
-                  {resolution.winnerSide === 1 ? "▲ " : resolution.winnerSide === 2 ? "▼ " : ""}
-                  {settledLabel ?? "—"}
-                </span>
-                {resolution.deltaStr ? (
-                  <span
-                    className="pp-market-detail__stat-sub pp-tabular"
-                    title={
-                      resolution.deltaUsedFinePrecision
-                        ? "Sub-cent gap — extra precision shown so the result is unambiguous"
-                        : undefined
-                    }
-                  >
-                    {resolution.deltaStr}
-                  </span>
-                ) : null}
-              </div>
-              <div className="pp-market-detail__stat">
-                <span className="pp-micro">Volume</span>
-                <span className="pp-market-detail__stat-value pp-tabular">
-                  ${formatUsdt(market.volume ?? "0")}
-                </span>
-              </div>
-              <div className="pp-market-detail__stat">
-                <span className="pp-micro">Status</span>
-                <span className="pp-chip pp-chip--closed">
-                  <span className="pp-tabular">RESOLVED</span>
-                </span>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="pp-market-detail__stat">
-                <span className="pp-micro">Strike</span>
-                <span className="pp-market-detail__stat-value pp-tabular">{strikeLabel}</span>
-              </div>
-              <div className="pp-market-detail__stat">
-                <span className="pp-micro">Ends in</span>
-                <span className="pp-market-detail__stat-value pp-tabular">{endsIn}</span>
-              </div>
-              <div className="pp-market-detail__stat">
-                <span className="pp-micro">Volume</span>
-                <span className="pp-market-detail__stat-value pp-tabular">
-                  ${formatUsdt(market.volume ?? "0")}
-                </span>
-              </div>
-              <div className="pp-market-detail__stat">
-                <span className="pp-micro">Status</span>
-                <span className="pp-chip pp-chip--cd">
-                  <span className="pp-tabular">{market.status}</span>
-                </span>
-              </div>
-            </>
-          )}
-        </div>
         {showCancelAll ? (
           <div className="pp-market-detail__hero-actions">
             <CancelAllMarketOrders marketComposite={marketKey} />
@@ -255,10 +145,9 @@ export function MarketPageClient({ address }: { address: string }) {
             duration={market.duration}
             currentMarketAddress={market.address}
           />
-          <section className="pp-market-detail__section">
-            <h2 className="pp-market-detail__section-title">Order book</h2>
-            <OrderBookPanel marketId={marketKey} marketStatus={market.status} />
-          </section>
+          {/* Order book moved to a collapsible drawer — matches the home
+              page surface. Closed by default; click the chevron to reveal. */}
+          <OrderBookDrawer marketId={marketKey} marketStatus={market.status} />
         </div>
         <div className="pp-market-detail__right">
           <TradeForm marketAddress={marketKey} />

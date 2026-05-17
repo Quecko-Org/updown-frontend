@@ -14,7 +14,6 @@ import { Footer } from "./Footer";
 import { GeoBlockOverlay } from "./GeoBlockOverlay";
 import { Header } from "./Header";
 import { SubNav } from "./SubNav";
-import { QuickMarketsStrip } from "./QuickMarketsStrip";
 import { useAnalytics } from "@/hooks/useAnalytics";
 import { useGeoCheck } from "@/hooks/useGeoCheck";
 import { cn } from "@/lib/cn";
@@ -61,7 +60,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen flex-col bg-background">
       <Header />
       <SubNav />
-      <QuickMarketsStrip />
       <main
         className={cn(
           "mx-auto w-full flex-1 px-4 pb-12 pt-6 sm:px-6 lg:px-8",

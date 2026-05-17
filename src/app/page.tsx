@@ -21,15 +21,15 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { getMarkets, getPriceHistory, type MarketListItem } from "@/lib/api";
 import { computeImpliedProb } from "@/lib/format";
 import { normalizePriceHistoryData } from "@/lib/priceChart";
 import { LiveMarketRow } from "@/components/markets/LiveMarketRow";
 import { OpenMarketRow } from "@/components/markets/OpenMarketRow";
-import { NextMarketRow } from "@/components/markets/NextMarketRow";
 import { MarketsPageChart } from "@/components/markets/MarketsPageChart";
+import { MarketTradeDrawer } from "@/components/markets/MarketTradeDrawer";
+import { OrderBookDrawer } from "@/components/markets/OrderBookDrawer";
 import { AssetPicker, type Asset } from "@/components/markets/AssetPicker";
 import { TimeframeSegmented, type Timeframe } from "@/components/markets/TimeframeSegmented";
 import { LiveResolvedToggle, type RowsMode } from "@/components/markets/LiveResolvedToggle";
@@ -73,9 +73,11 @@ type Buckets = {
 function LiveMarketRowContainer({
   market,
   nowSec,
+  onOpen,
 }: {
   market: MarketListItem;
   nowSec: number;
+  onOpen: (addr: string) => void;
 }) {
   const { upPct, downPct } = useMarketImpliedProb({
     marketId: market.address,
@@ -84,10 +86,11 @@ function LiveMarketRowContainer({
     enabled: true,
   });
   return (
-    <Link
-      href={`/market/${market.address}`}
-      className="pp-market-row-link"
-      aria-label={`Open market detail for ${market.address}`}
+    <button
+      type="button"
+      onClick={() => onOpen(market.address)}
+      className="pp-market-row-link pp-market-row-button"
+      aria-label={`Open trade panel for ${market.address}`}
     >
       <LiveMarketRow
         market={market}
@@ -97,7 +100,7 @@ function LiveMarketRowContainer({
         upPct={upPct}
         downPct={downPct}
       />
-    </Link>
+    </button>
   );
 }
 
@@ -121,6 +124,7 @@ function MarketsPageInner() {
   const asset = clampAsset(searchParams.get("asset"));
   const timeframe = clampTimeframe(searchParams.get("timeframe"));
   const [rowsMode, setRowsMode] = useState<RowsMode>("live");
+  const [drawerMarket, setDrawerMarket] = useState<string | null>(null);
 
   // Stash {asset, timeframe} for the header logo / back-button restoration.
   useTrackLastMarketView();
@@ -232,10 +236,33 @@ function MarketsPageInner() {
           <div className="pp-row-skeleton" style={{ marginTop: 8 }} />
         </div>
       ) : rowsMode === "live" ? (
-        renderLiveBranch(buckets, nowSec, asset, timeframe, handleTimeframeChange)
+        renderLiveBranch(
+          buckets,
+          nowSec,
+          asset,
+          timeframe,
+          handleTimeframeChange,
+          setDrawerMarket,
+        )
       ) : (
-        renderResolvedBranch(buckets)
+        renderResolvedBranch(buckets, setDrawerMarket)
       )}
+
+      {/* 2026-05-17 UX redesign: order book lives in a collapsed bottom
+          drawer on the home page (Polymarket pattern — they don't expose
+          an order book in the consumer view). Anchored to the LIVE market
+          for the current pair+timeframe; nil when no live market. */}
+      <OrderBookDrawer
+        marketId={buckets.live?.address ?? null}
+        marketStatus={buckets.live?.status}
+      />
+
+      {/* In-page drawer for trading. Replaces the prior `/market/[address]`
+          navigation on row click — keeps chart + selector context behind. */}
+      <MarketTradeDrawer
+        marketAddress={drawerMarket}
+        onClose={() => setDrawerMarket(null)}
+      />
     </main>
   );
 }
@@ -246,6 +273,7 @@ function renderLiveBranch(
   asset: Asset,
   timeframe: Timeframe,
   onTimeframeChange: (t: Timeframe) => void,
+  onOpenMarket: (addr: string) => void,
 ) {
   const { live, open, next } = buckets;
   const hasAnything = live || open || next.length > 0;
@@ -289,15 +317,13 @@ function renderLiveBranch(
     );
   }
 
-  const hasUpcoming = open != null || next.length > 0;
-
   return (
     <>
       {/* 2026-05-17 home-page UX v2: "Open Now" label moved into the
           page-level rows-header (single-row layout: tf-left, label-center,
           toggle-right). Live row renders directly here. */}
       {live ? (
-        <LiveMarketRowContainer market={live} nowSec={nowSec} />
+        <LiveMarketRowContainer market={live} nowSec={nowSec} onOpen={onOpenMarket} />
       ) : (
         <div className="pp-state-card" data-testid="state-no-live">
           <p className="pp-state-card__body">
@@ -312,55 +338,43 @@ function renderLiveBranch(
         </div>
       )}
 
-      {hasUpcoming ? (
-        <h3 className="pp-section-heading">Coming up</h3>
+      {/* 2026-05-17 UX redesign: 'Opening Soon' pre-mounts the next-slot
+          market underneath the live row so the rollover at slot close is
+          visually instant. Unclickable — the trader acts on the live
+          market via the drawer. The previous trailing 'Coming up' rows
+          (3 future windows) are dropped — they were forward bloat. */}
+      {open ? (
+        <>
+          <h3 className="pp-opening-soon-heading">Opening Soon</h3>
+          <div className="pp-opening-soon">
+            {(() => {
+              const prob = computeImpliedProb(open.upPrice, open.downPrice);
+              const upCents = prob?.upPct ?? 50;
+              const downCents = prob?.downPct ?? 50;
+              return (
+                <OpenMarketRow
+                  market={open}
+                  upSharePriceCents={upCents}
+                  downSharePriceCents={downCents}
+                  upPct={prob?.upPct ?? null}
+                  downPct={prob?.downPct ?? null}
+                  poolUsdt={Number(open.volume || "0")}
+                  traderCount={0}
+                  countdownSecondsUntilClose={Math.max(0, open.endTime - nowSec)}
+                />
+              );
+            })()}
+          </div>
+        </>
       ) : null}
-
-      {open &&
-        (() => {
-          const prob = computeImpliedProb(open.upPrice, open.downPrice);
-          // share prices fall back to 50/50 until the orderbook
-          // subscription lands (PR-5) and gives us real mid quotes.
-          const upCents = prob?.upPct ?? 50;
-          const downCents = prob?.downPct ?? 50;
-          return (
-            <OpenMarketRow
-              market={open}
-              upSharePriceCents={upCents}
-              downSharePriceCents={downCents}
-              upPct={prob?.upPct ?? null}
-              downPct={prob?.downPct ?? null}
-              poolUsdt={Number(open.volume || "0")}
-              traderCount={0}
-              countdownSecondsUntilClose={Math.max(0, open.endTime - nowSec)}
-            />
-          );
-        })()}
-
-      {next.slice(0, 3).map((m, i) => (
-        // F4-B (2026-05-14): NextMarketRow's UP/DOWN buttons are `disabled`
-        // (per NextMarketRow.tsx:53,63), so wrapping in Link doesn't conflict
-        // with internal click handlers — they're not triggerable.
-        <Link
-          key={m.address}
-          href={`/market/${m.address}`}
-          className="pp-market-row-link"
-          aria-label={`Open market detail for ${m.address}`}
-        >
-          <NextMarketRow
-            market={m}
-            upSharePriceCents={50}
-            downSharePriceCents={50}
-            secondsUntilOpen={Math.max(0, m.startTime - nowSec)}
-            depth={i as 0 | 1 | 2}
-          />
-        </Link>
-      ))}
     </>
   );
 }
 
-function renderResolvedBranch(buckets: Buckets) {
+function renderResolvedBranch(
+  buckets: Buckets,
+  onOpenMarket: (addr: string) => void,
+) {
   if (buckets.resolved.length === 0) {
     return (
       <div className="pp-state-card" data-testid="state-empty-resolved">
@@ -377,14 +391,12 @@ function renderResolvedBranch(buckets: Buckets) {
       {buckets.resolved.map((m) => {
         const prob = computeImpliedProb(m.upPrice, m.downPrice);
         return (
-          // F4-B (2026-05-14): resolved-tab rows in the main list were
-          // not navigable pre-fix — clicking did nothing. Wrap each row
-          // in a Link so the user can drill into the resolution detail.
-          <Link
+          <button
+            type="button"
             key={m.address}
-            href={`/market/${m.address}`}
-            className="pp-market-row-link"
-            aria-label={`Open market detail for ${m.address}`}
+            onClick={() => onOpenMarket(m.address)}
+            className="pp-market-row-link pp-market-row-button"
+            aria-label={`Open detail panel for ${m.address}`}
           >
             <LiveMarketRow
               market={m}
@@ -395,7 +407,7 @@ function renderResolvedBranch(buckets: Buckets) {
               downPct={prob?.downPct ?? null}
               variant="resolved"
             />
-          </Link>
+          </button>
         );
       })}
     </>
