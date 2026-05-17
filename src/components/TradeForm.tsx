@@ -863,7 +863,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   //   - insufficient balance → "Deposit" (links to Header deposit flow)
   //   - market terminal / no liquidity / insufficient depth / out of
   //     range → contextual disabled label (no tooltip; visible inline)
-  //   - happy path → "Buy More UP" / "Sell DOWN" tuned to side+orderSide
+  //   - happy path → "Buy UP" / "Sell DOWN" tuned to side+orderSide
   //
   // The label is intentionally short so the CTA never wraps at 375px.
   type CtaDescriptor = {
@@ -940,10 +940,9 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       };
     }
     const verb = orderSide === 0 ? "Buy" : "Sell";
-    const more = orderSide === 0 ? " More" : "";
     const dir = side === 1 ? "UP" : "DOWN";
     return {
-      label: `${verb}${more} ${dir} · $${stakeUsd.toFixed(2)}`,
+      label: `${verb} ${dir} · $${stakeUsd.toFixed(2)}`,
       disabled: false,
       inlineError: null,
     };

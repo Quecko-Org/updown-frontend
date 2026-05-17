@@ -201,7 +201,7 @@ test("TradeForm v2 — disconnected wallet shows WalletConnectorList (1280)", as
   await page.waitForSelector(".pp-trade-v2", { timeout: 15_000 });
   // Without a wallet the CTA is suppressed and the connect block renders
   // instead. State-adaptive CTA labels for connected-wallet flows
-  // (Deposit, Sign in, Buy More UP) are covered by the wallet-mocked
+  // (Deposit, Sign in, Buy UP) are covered by the wallet-mocked
   // phase-4d ladder spec — wiring a mock wallet here would duplicate
   // that harness for no visual gain.
   await expect(page.locator(".pp-trade-v2__connect")).toBeVisible();
