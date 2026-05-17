@@ -117,8 +117,8 @@ export function MarketClosedPanel({ market }: { market: MarketListItem }) {
 
         <Link
           href={liveHref}
-          className="pp-btn pp-btn--primary pp-btn--lg pp-trade__cta"
-          style={{ marginTop: 14 }}
+          className="pp-btn pp-btn--primary pp-btn--lg"
+          style={{ marginTop: 14, width: "100%" }}
         >
           {activeMarket
             ? `Go to live ${pairBase}/USD ${tfLabel} market`

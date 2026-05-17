@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import type { MarketListItem } from "@/lib/api";
 import { formatStrikeUsd } from "@/lib/format";
+import { marketPathFromAddress } from "@/lib/marketKey";
 
 export type OpenMarketRowProps = {
   market: MarketListItem;
@@ -14,7 +16,6 @@ export type OpenMarketRowProps = {
   poolUsdt: number;
   traderCount: number;
   countdownSecondsUntilClose: number;
-  onSelectSide: (side: "up" | "down") => void;
 };
 
 function formatTimeRange(startSec: number, endSec: number): string {
@@ -46,11 +47,22 @@ export function OpenMarketRow({
   poolUsdt,
   traderCount,
   countdownSecondsUntilClose,
-  onSelectSide,
 }: OpenMarketRowProps) {
   void countdownSecondsUntilClose;
+  const marketHref = marketPathFromAddress(market.address);
+  // 2026-05-16 BUG A redesign: clicking UP/DOWN navigates to the market
+  // detail page with the side pre-selected via `?side=up|down`. The
+  // legacy `TradeDrawer` slide-in (which only logged its submit) is
+  // removed; the right-column `TradeForm` on the detail page is now the
+  // single trade UI surface. Mirrors LiveMarketRowContainer's Link
+  // pattern so the whole row + buttons share one nav target.
   return (
     <div className="pp-market-row pp-market-row--open">
+      <Link
+        href={marketHref}
+        className="pp-market-row__cover-link"
+        aria-label={`Open market detail for ${market.address}`}
+      />
       <div>
         <div className="pp-market-row__time">
           {formatTimeRange(market.startTime, market.endTime)}
@@ -60,24 +72,22 @@ export function OpenMarketRow({
 
       <div>
         <div className="pp-market-row__buy-buttons">
-          <button
-            type="button"
-            className="pp-btn pp-btn--up pp-btn--lg"
-            onClick={() => onSelectSide("up")}
+          <Link
+            href={`${marketHref}?side=up`}
+            className="pp-btn pp-btn--up pp-btn--lg pp-market-row__buy-link"
           >
             <ArrowUp size={14} />
             <span>UP</span>
             <span className="pp-market-row__buy-btn-price">{upSharePriceCents}¢</span>
-          </button>
-          <button
-            type="button"
-            className="pp-btn pp-btn--down pp-btn--lg"
-            onClick={() => onSelectSide("down")}
+          </Link>
+          <Link
+            href={`${marketHref}?side=down`}
+            className="pp-btn pp-btn--down pp-btn--lg pp-market-row__buy-link"
           >
             <ArrowDown size={14} />
             <span>DOWN</span>
             <span className="pp-market-row__buy-btn-price">{downSharePriceCents}¢</span>
-          </button>
+          </Link>
         </div>
 
         {upPct != null && downPct != null && (

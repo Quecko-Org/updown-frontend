@@ -96,7 +96,6 @@ export default function MarketRowsDevPreview() {
             poolUsdt={184.5}
             traderCount={7}
             countdownSecondsUntilClose={134}
-            onSelectSide={() => {}}
           />
 
           <NextMarketRow

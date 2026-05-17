@@ -105,6 +105,19 @@ export function Header() {
   const connectRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // 2026-05-16 BUG A redesign: TradeForm's state-adaptive CTA includes
+  // a "Deposit" label when the user is short on balance. Clicking it
+  // fires a `pp:open-deposit` CustomEvent which Header picks up here.
+  // Keeps the Deposit modal owned by Header (single source of truth)
+  // while letting any consumer trigger it without prop-drilling.
+  useEffect(() => {
+    function handler() {
+      setDepositOpen(true);
+    }
+    window.addEventListener("pp:open-deposit", handler);
+    return () => window.removeEventListener("pp:open-deposit", handler);
+  }, []);
+
   // Outside-click dismiss: only attach the listener while the corresponding
   // popover is open, and listen for `mousedown` instead of `click`.
   // The previous "always-on click + stopPropagation" pattern was fragile —

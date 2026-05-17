@@ -33,7 +33,6 @@ import { MarketsPageChart } from "@/components/markets/MarketsPageChart";
 import { AssetPicker, type Asset } from "@/components/markets/AssetPicker";
 import { TimeframeSegmented, type Timeframe } from "@/components/markets/TimeframeSegmented";
 import { LiveResolvedToggle, type RowsMode } from "@/components/markets/LiveResolvedToggle";
-import { TradeDrawer, type TradeSide } from "@/components/markets/TradeDrawer";
 import { useTrackLastMarketView } from "@/hooks/useLastMarketView";
 import { useMarketImpliedProb } from "@/hooks/useMarketImpliedProb";
 
@@ -122,7 +121,6 @@ function MarketsPageInner() {
   const asset = clampAsset(searchParams.get("asset"));
   const timeframe = clampTimeframe(searchParams.get("timeframe"));
   const [rowsMode, setRowsMode] = useState<RowsMode>("live");
-  const [drawer, setDrawer] = useState<{ side: TradeSide; market: MarketListItem } | null>(null);
 
   // Stash {asset, timeframe} for the header logo / back-button restoration.
   useTrackLastMarketView();
@@ -176,20 +174,6 @@ function MarketsPageInner() {
   const handleAssetChange = (next: Asset) => setQueryParam("asset", next);
   const handleTimeframeChange = (next: Timeframe) => setQueryParam("timeframe", next);
 
-  const handleSelectSide = (side: "up" | "down") => {
-    if (!buckets.open) return;
-    setDrawer({ side, market: buckets.open });
-  };
-
-  const handleDrawerSubmit = ({ side, stakeUsd }: { side: TradeSide; stakeUsd: number }) => {
-    // PR-3 leaves trade submission as a follow-up. Log the intent so the
-    // UI flow is exercised end-to-end during the visual sweep + so the
-    // path is obvious for PR-4's wiring.
-    // eslint-disable-next-line no-console
-    console.info("[trade-drawer] submit", { side, stakeUsd, market: drawer?.market?.address });
-    setDrawer(null);
-  };
-
   return (
     <main className="pp-markets-page">
       <div className="pp-markets-page__controls">
@@ -242,19 +226,9 @@ function MarketsPageInner() {
           <div className="pp-row-skeleton" style={{ marginTop: 8 }} />
         </div>
       ) : rowsMode === "live" ? (
-        renderLiveBranch(buckets, nowSec, handleSelectSide, asset, timeframe, handleTimeframeChange)
+        renderLiveBranch(buckets, nowSec, asset, timeframe, handleTimeframeChange)
       ) : (
         renderResolvedBranch(buckets)
-      )}
-
-      {drawer && (
-        <TradeDrawer
-          market={drawer.market}
-          initialSide={drawer.side}
-          asset={asset}
-          onClose={() => setDrawer(null)}
-          onSubmit={handleDrawerSubmit}
-        />
       )}
     </main>
   );
@@ -263,7 +237,6 @@ function MarketsPageInner() {
 function renderLiveBranch(
   buckets: Buckets,
   nowSec: number,
-  onSelectSide: (side: "up" | "down") => void,
   asset: Asset,
   timeframe: Timeframe,
   onTimeframeChange: (t: Timeframe) => void,
@@ -345,7 +318,6 @@ function renderLiveBranch(
               poolUsdt={Number(open.volume || "0")}
               traderCount={0}
               countdownSecondsUntilClose={Math.max(0, open.endTime - nowSec)}
-              onSelectSide={onSelectSide}
             />
           );
         })()}
