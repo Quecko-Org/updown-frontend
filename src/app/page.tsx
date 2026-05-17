@@ -198,17 +198,16 @@ function MarketsPageInner() {
         liveMarket={buckets.live ?? buckets.resolved[0] ?? null}
       />
 
+      {/* 2026-05-17 home-page UX v2: single 3-column row below the chart —
+          timeframe selector left, "Open Now" / "Resolved" center label,
+          Live/Resolved toggle right. The redundant "BTC · 5M" h2 is gone
+          (AssetPicker + chart header already communicate the pair). */}
       <div className="pp-markets-page__rows-header">
-        <h2 className="pp-section-label">
-          {asset.toUpperCase()} · {timeframe.toUpperCase()}
+        <TimeframeSegmented selected={timeframe} onChange={handleTimeframeChange} />
+        <h2 className="pp-markets-page__rows-center-label">
+          {rowsMode === "live" ? "Open Now" : "Resolved"}
         </h2>
         <LiveResolvedToggle value={rowsMode} onChange={setRowsMode} />
-      </div>
-
-      {/* Timeframe selector. Sits directly above the trading rows so it
-          reads as the "pick which market to trade" affordance. */}
-      <div className="pp-markets-page__tf-row">
-        <TimeframeSegmented selected={timeframe} onChange={handleTimeframeChange} />
       </div>
 
       {isError ? (
@@ -294,9 +293,9 @@ function renderLiveBranch(
 
   return (
     <>
-      {/* 2026-05-17 home-page UX: explicit "Open Now" section header so
-          users know what they're looking at. Polymarket-parity language. */}
-      <h3 className="pp-section-heading">Open Now</h3>
+      {/* 2026-05-17 home-page UX v2: "Open Now" label moved into the
+          page-level rows-header (single-row layout: tf-left, label-center,
+          toggle-right). Live row renders directly here. */}
       {live ? (
         <LiveMarketRowContainer market={live} nowSec={nowSec} />
       ) : (

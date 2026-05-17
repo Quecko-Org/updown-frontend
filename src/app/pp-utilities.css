@@ -1815,29 +1815,52 @@
   flex-wrap: wrap;
 }
 
+/* 2026-05-17 home-page UX v2: single 3-column row below the chart —
+   timeframe selector left, "Open Now" / "Resolved" center label, Live/
+   Resolved toggle right. Replaces the previous split rows-header + tf-row
+   stack so the trading controls live on one visual band. */
 .pp-markets-page__rows-header {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
+  gap: 16px;
   padding-top: 8px;
 }
+.pp-markets-page__rows-header > :first-child { justify-self: start; }
+.pp-markets-page__rows-header > :last-child { justify-self: end; }
 
-/* 2026-05-17 home-page UX: timeframe selector row, sits directly above
-   the live trading rows so it reads as "pick which market to trade". */
-.pp-markets-page__tf-row {
-  display: flex;
-  justify-content: flex-start;
-  margin-top: 4px;
+.pp-markets-page__rows-center-label {
+  justify-self: center;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg-0);
+  margin: 0;
+  text-align: center;
 }
 
-/* Section heading above each row group ("Open Now" / "Coming up").
-   Polymarket-parity wording — disambiguates current vs upcoming windows. */
+/* "Coming up" sub-heading inside the live-mode branch — sits between the
+   live row and the open + next rows. */
 .pp-section-heading {
   font-family: var(--font-sans);
   font-size: 14px;
   font-weight: 600;
   color: var(--fg-0);
   margin: 8px 0 0;
+}
+
+/* Mobile: stack the three columns vertically so each control gets full
+   width and the center label sits on its own line. */
+@media (max-width: 640px) {
+  .pp-markets-page__rows-header {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 8px;
+  }
+  .pp-markets-page__rows-header > :first-child,
+  .pp-markets-page__rows-header > :last-child {
+    justify-self: center;
+  }
 }
 
 .pp-section-label {
