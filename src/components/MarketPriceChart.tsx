@@ -77,15 +77,18 @@ function fmtTick(secEpoch: number, windowSec: number): string {
  */
 function useStableYRange(seriesKey: string, rawMin: number, rawMax: number, padFactor = 0.12) {
   const stateRef = useRef<{ key: string; min: number; max: number } | null>(null);
-  // The absolute pad floor (`$1` minimum) was dominating tight Y-ranges
-  // (a $3 ETH spread × 4% spot-fit padFactor = $0.12 → floored to $1,
-  // collapsing the spot-fit / strike-fit visual differential). Scale the
-  // floor with padFactor so tight ranges in spot-fit get a proportionally
-  // tighter absolute floor (~$0.33 at 4% vs $1 at 12%). The relative
-  // floor (`rawMax * 0.0005` ≈ 0.05% of price) still guards against
-  // degenerate sub-cent ranges.
-  const absPadFloor = padFactor >= 0.10 ? 1 : padFactor * (1 / 0.12);
-  const pad = Math.max((rawMax - rawMin) * padFactor, rawMax * 0.0005, absPadFloor);
+  // Both pad floors scale with padFactor so spot-fit (low padFactor) can
+  // actually produce a tighter frame than strike-fit. Previously:
+  //   - abs floor `$1` dominated tight ETH ranges
+  //   - relative floor `rawMax * 0.0005` (≈ $1.10 for $2200 ETH)
+  //     dominated once abs was beaten
+  // → both modes converged on identical frames. Scaling both floors keeps
+  // the degenerate-range guard intact while letting spot-fit's tighter
+  // intent express. Strike-fit retains the historical 12%/0.05%/$1 ratios.
+  const padScale = padFactor / 0.12;
+  const relPadFloor = rawMax * 0.0005 * padScale;
+  const absPadFloor = padScale;
+  const pad = Math.max((rawMax - rawMin) * padFactor, relPadFloor, absPadFloor);
   const target = { min: rawMin - pad, max: rawMax + pad };
 
   const prev = stateRef.current;
