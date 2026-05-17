@@ -47,7 +47,7 @@
   font-family: var(--font-sans); font-weight: 500; cursor: pointer;
   border: 1px solid transparent; border-radius: var(--r-md);
   white-space: nowrap;
-  transition: background var(--dur-micro) var(--ease), border-color var(--dur-micro) var(--ease), color var(--dur-micro) var(--ease);
+  transition: background var(--dur-micro) var(--ease), border-color var(--dur-micro) var(--ease), color var(--dur-micro) var(--ease), transform var(--dur-micro) var(--ease), box-shadow var(--dur-micro) var(--ease), filter var(--dur-micro) var(--ease);
 }
 .pp-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .pp-btn--sm { font-size: 12px; padding: 6px 10px; }
@@ -59,10 +59,34 @@
 .pp-btn--secondary:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--border-1); }
 .pp-btn--ghost { background: transparent; color: var(--fg-1); }
 .pp-btn--ghost:hover:not(:disabled) { background: var(--bg-1); color: var(--fg-0); }
+/* 2026-05-17 home-page UX redesign: directional BUY UP / BUY DOWN action
+   states. Hover saturates + lifts via box-shadow; active deepens color
+   + presses via scale(0.98) so the buttons read as click targets, not
+   info labels. Cursor:pointer set on the base .pp-btn rule. */
 .pp-btn--up { background: var(--up); color: var(--bg-0); font-weight: 600; }
-.pp-btn--up:hover:not(:disabled) { background: var(--up-dim); }
+.pp-btn--up:hover:not(:disabled) {
+  background: var(--up);
+  filter: brightness(1.08) saturate(1.1);
+  box-shadow: 0 2px 8px color-mix(in oklch, var(--up) 35%, transparent);
+  transform: translateY(-1px);
+}
+.pp-btn--up:active:not(:disabled) {
+  filter: brightness(0.92);
+  transform: translateY(0) scale(0.98);
+  box-shadow: 0 0 0 transparent;
+}
 .pp-btn--down { background: var(--down); color: var(--bg-0); font-weight: 600; }
-.pp-btn--down:hover:not(:disabled) { background: var(--down-dim); }
+.pp-btn--down:hover:not(:disabled) {
+  background: var(--down);
+  filter: brightness(1.08) saturate(1.1);
+  box-shadow: 0 2px 8px color-mix(in oklch, var(--down) 35%, transparent);
+  transform: translateY(-1px);
+}
+.pp-btn--down:active:not(:disabled) {
+  filter: brightness(0.92);
+  transform: translateY(0) scale(0.98);
+  box-shadow: 0 0 0 transparent;
+}
 
 /* ---------- shiny CTA (funnel-critical onboarding gates only) ----------
    Reserved for Deposit and Connect Wallet. Using this class anywhere else
@@ -814,29 +838,47 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  transition: background var(--dur-micro) var(--ease), color var(--dur-micro) var(--ease);
+  transition: background var(--dur-micro) var(--ease), color var(--dur-micro) var(--ease),
+              transform var(--dur-micro) var(--ease), box-shadow var(--dur-micro) var(--ease),
+              filter var(--dur-micro) var(--ease);
+}
+.pp-trade-v2__direction-btn:active {
+  transform: scale(0.98);
+  filter: brightness(0.92);
 }
 .pp-trade-v2__direction-btn--up {
   border-color: color-mix(in oklch, var(--up) 70%, transparent);
   color: var(--up);
 }
 .pp-trade-v2__direction-btn--up:hover {
-  background: color-mix(in oklch, var(--up) 10%, transparent);
+  background: color-mix(in oklch, var(--up) 14%, transparent);
+  border-color: var(--up);
 }
 .pp-trade-v2__direction-btn--up.pp-trade-v2__direction-btn--on {
   background: var(--up);
   color: var(--bg-0);
+}
+.pp-trade-v2__direction-btn--up.pp-trade-v2__direction-btn--on:hover {
+  filter: brightness(1.06);
+  box-shadow: 0 2px 8px color-mix(in oklch, var(--up) 35%, transparent);
+  transform: translateY(-1px);
 }
 .pp-trade-v2__direction-btn--down {
   border-color: color-mix(in oklch, var(--down) 70%, transparent);
   color: var(--down);
 }
 .pp-trade-v2__direction-btn--down:hover {
-  background: color-mix(in oklch, var(--down) 10%, transparent);
+  background: color-mix(in oklch, var(--down) 14%, transparent);
+  border-color: var(--down);
 }
 .pp-trade-v2__direction-btn--down.pp-trade-v2__direction-btn--on {
   background: var(--down);
   color: var(--bg-0);
+}
+.pp-trade-v2__direction-btn--down.pp-trade-v2__direction-btn--on:hover {
+  filter: brightness(1.06);
+  box-shadow: 0 2px 8px color-mix(in oklch, var(--down) 35%, transparent);
+  transform: translateY(-1px);
 }
 .pp-trade-v2__direction-cents { font-size: 16px; font-weight: 600; }
 
@@ -1778,6 +1820,24 @@
   align-items: center;
   justify-content: space-between;
   padding-top: 8px;
+}
+
+/* 2026-05-17 home-page UX: timeframe selector row, sits directly above
+   the live trading rows so it reads as "pick which market to trade". */
+.pp-markets-page__tf-row {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 4px;
+}
+
+/* Section heading above each row group ("Open Now" / "Coming up").
+   Polymarket-parity wording — disambiguates current vs upcoming windows. */
+.pp-section-heading {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg-0);
+  margin: 8px 0 0;
 }
 
 .pp-section-label {

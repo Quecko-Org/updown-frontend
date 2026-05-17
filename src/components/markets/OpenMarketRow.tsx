@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowDown, ArrowUp } from "lucide-react";
 import type { MarketListItem } from "@/lib/api";
 import { formatStrikeUsd } from "@/lib/format";
 import { marketPathFromAddress } from "@/lib/marketKey";
@@ -76,16 +75,14 @@ export function OpenMarketRow({
             href={`${marketHref}?side=up`}
             className="pp-btn pp-btn--up pp-btn--lg pp-market-row__buy-link"
           >
-            <ArrowUp size={14} />
-            <span>UP</span>
+            <span>BUY UP</span>
             <span className="pp-market-row__buy-btn-price">{upSharePriceCents}¢</span>
           </Link>
           <Link
             href={`${marketHref}?side=down`}
             className="pp-btn pp-btn--down pp-btn--lg pp-market-row__buy-link"
           >
-            <ArrowDown size={14} />
-            <span>DOWN</span>
+            <span>BUY DOWN</span>
             <span className="pp-market-row__buy-btn-price">{downSharePriceCents}¢</span>
           </Link>
         </div>
