@@ -77,7 +77,15 @@ function fmtTick(secEpoch: number, windowSec: number): string {
  */
 function useStableYRange(seriesKey: string, rawMin: number, rawMax: number, padFactor = 0.12) {
   const stateRef = useRef<{ key: string; min: number; max: number } | null>(null);
-  const pad = Math.max((rawMax - rawMin) * padFactor, rawMax * 0.0005, 1);
+  // The absolute pad floor (`$1` minimum) was dominating tight Y-ranges
+  // (a $3 ETH spread × 4% spot-fit padFactor = $0.12 → floored to $1,
+  // collapsing the spot-fit / strike-fit visual differential). Scale the
+  // floor with padFactor so tight ranges in spot-fit get a proportionally
+  // tighter absolute floor (~$0.33 at 4% vs $1 at 12%). The relative
+  // floor (`rawMax * 0.0005` ≈ 0.05% of price) still guards against
+  // degenerate sub-cent ranges.
+  const absPadFloor = padFactor >= 0.10 ? 1 : padFactor * (1 / 0.12);
+  const pad = Math.max((rawMax - rawMin) * padFactor, rawMax * 0.0005, absPadFloor);
   const target = { min: rawMin - pad, max: rawMax + pad };
 
   const prev = stateRef.current;
