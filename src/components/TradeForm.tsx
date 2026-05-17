@@ -1084,7 +1084,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             if (!isConnected) scrollToConnect();
           }}
         >
-          <span>▲ Up</span>
+          <span>BUY UP</span>
           <span className="pp-trade-v2__direction-cents pp-tabular">
             {Math.round(upMidCents)}¢
           </span>
@@ -1102,7 +1102,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             if (!isConnected) scrollToConnect();
           }}
         >
-          <span>▼ Down</span>
+          <span>BUY DOWN</span>
           <span className="pp-trade-v2__direction-cents pp-tabular">
             {Math.round(downMidCents)}¢
           </span>

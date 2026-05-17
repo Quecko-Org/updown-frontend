@@ -176,6 +176,10 @@ function MarketsPageInner() {
 
   return (
     <main className="pp-markets-page">
+      {/* 2026-05-17 home-page UX redesign: AssetPicker stays as the global
+          "which pair" control. TimeframeSegmented moves down to be the
+          immediate context for the trading rows below — it's a
+          "pick which market to trade" selector, not a chart-zoom control. */}
       <div className="pp-markets-page__controls">
         <AssetPicker
           selected={asset}
@@ -183,14 +187,11 @@ function MarketsPageInner() {
           ethSpotUsd={ethSpot ?? null}
           onChange={handleAssetChange}
         />
-        <TimeframeSegmented selected={timeframe} onChange={handleTimeframeChange} />
       </div>
 
       {/* Chart anchor: live market when present, otherwise fall back to the
           most-recently-resolved market for this pair+timeframe so the chart
-          stays populated through cycler pauses. PR-3 left this as a blank
-          fallback ("chart will populate when next market opens"); PR-4
-          rewires it to read the resolved history. */}
+          stays populated through cycler pauses. */}
       <MarketsPageChart
         asset={asset}
         timeframe={timeframe}
@@ -202,6 +203,12 @@ function MarketsPageInner() {
           {asset.toUpperCase()} · {timeframe.toUpperCase()}
         </h2>
         <LiveResolvedToggle value={rowsMode} onChange={setRowsMode} />
+      </div>
+
+      {/* Timeframe selector. Sits directly above the trading rows so it
+          reads as the "pick which market to trade" affordance. */}
+      <div className="pp-markets-page__tf-row">
+        <TimeframeSegmented selected={timeframe} onChange={handleTimeframeChange} />
       </div>
 
       {isError ? (
@@ -283,8 +290,13 @@ function renderLiveBranch(
     );
   }
 
+  const hasUpcoming = open != null || next.length > 0;
+
   return (
     <>
+      {/* 2026-05-17 home-page UX: explicit "Open Now" section header so
+          users know what they're looking at. Polymarket-parity language. */}
+      <h3 className="pp-section-heading">Open Now</h3>
       {live ? (
         <LiveMarketRowContainer market={live} nowSec={nowSec} />
       ) : (
@@ -300,6 +312,10 @@ function renderLiveBranch(
           </p>
         </div>
       )}
+
+      {hasUpcoming ? (
+        <h3 className="pp-section-heading">Coming up</h3>
+      ) : null}
 
       {open &&
         (() => {
