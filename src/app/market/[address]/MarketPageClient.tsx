@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { useAccount } from "wagmi";
 import { getMarket, getPositions, getDmmStatus } from "@/lib/api";
-import { formatStrikeUsd, marketDurationLabel, parseStrikeUsdNumber } from "@/lib/format";
+import { formatStrikeUsd, marketDurationLabel } from "@/lib/format";
 import { parseCompositeMarketKey } from "@/lib/marketKey";
 import {
   formatMarketWindow,
@@ -23,6 +23,7 @@ import { CancelAllMarketOrders } from "@/components/CancelAllMarketOrders";
 import { MarketHeaderActions } from "@/components/MarketHeaderActions";
 import { TimeRangeStrip } from "@/components/TimeRangeStrip";
 import { formatUsdt } from "@/lib/format";
+import { cn } from "@/lib/cn";
 import { userSmartAccount } from "@/store/atoms";
 
 function useEndsInCountdown(endTimeSec: number) {
@@ -90,7 +91,7 @@ export function MarketPageClient({ address }: { address: string }) {
 
   if (!parsed) {
     return (
-      <div className="space-y-4">
+      <div className="pp-market-detail pp-market-detail--empty">
         <Link href="/" className="pp-back">
           ← Markets
         </Link>
@@ -104,18 +105,10 @@ export function MarketPageClient({ address }: { address: string }) {
   }
 
   if (isLoading || !market) {
-    return (
-      <div
-        className="flex min-h-[30vh] items-center justify-center rounded-[var(--r-lg)] border border-dashed pp-caption"
-        style={{ borderColor: "var(--border-0)" }}
-      >
-        Loading…
-      </div>
-    );
+    return <div className="pp-market-detail__loading pp-caption">Loading…</div>;
   }
 
   const strikeLabel = formatStrikeUsd(market.strikePrice, market.strikeDecimals);
-  const strikeNum = parseStrikeUsdNumber(market.strikePrice, market.strikeDecimals);
   const pairBase = (market.pairSymbol ?? market.pairId).split("-")[0] ?? "BTC";
   const pairLabel = `${pairBase}/USD`;
   const tfLabel = marketDurationLabel(market.duration);
@@ -143,117 +136,102 @@ export function MarketPageClient({ address }: { address: string }) {
     !!eoa && dmmStatus?.isDmm && !isTerminalMarketStatus(market.status);
 
   return (
-    <div>
-      <div className="flex items-center justify-between gap-3">
+    <div className="pp-market-detail">
+      {/* Top bar: ← Markets, header-actions cluster. Mirrors the home page
+          subnav pattern. */}
+      <div className="pp-market-detail__topbar">
         <Link href="/" className="pp-back">
           ← Markets
         </Link>
-        <MarketHeaderActions marketKey={marketKey} />
+        <MarketHeaderActions marketKey={marketKey} marketAddress={market.address} />
       </div>
 
-      {/* Phase2-B header redesign: two-tier Polymarket-parity layout for
-          RESOLVED markets — "Price To Beat" + "Settled Price ▼/▲ Δ$ value".
-          Active markets keep the existing Strike/Ends in/Currently/Status
-          layout until Phase2-C redesigns the live state. */}
-      <header
-        className="flex flex-wrap items-start justify-between gap-4 border-b pb-4"
-        style={{ borderColor: "var(--border-0)" }}
-      >
-        <div className="min-w-0 flex-1">
-          <h1 className="pp-h1">{heroTitle}</h1>
+      {/* Hero: pair · timeframe heading + per-metric tile row (Strike / Ends in
+          / Volume / Status). Mirrors the home-page `pp-tile` visual language
+          so the surface reads as the same product as the markets list. */}
+      <header className="pp-market-detail__hero">
+        <h1 className="pp-market-detail__hero-title">{heroTitle}</h1>
+        <div className="pp-market-detail__stats">
           {isResolvedView ? (
-            <div className="mt-3 flex flex-wrap items-baseline gap-x-10 gap-y-3">
-              <span className="flex flex-col gap-1">
+            <>
+              <div className="pp-market-detail__stat">
                 <span className="pp-micro">Price To Beat</span>
-                <span className="pp-price-md pp-tabular">{strikeLabel}</span>
-              </span>
-              <span className="flex flex-col gap-1">
+                <span className="pp-market-detail__stat-value pp-tabular">{strikeLabel}</span>
+              </div>
+              <div className="pp-market-detail__stat">
                 <span className="pp-micro">Settled Price</span>
                 <span
-                  className="pp-price-md pp-tabular"
-                  style={{
-                    color:
-                      resolution.winnerSide === 1
-                        ? "var(--up)"
-                        : resolution.winnerSide === 2
-                          ? "var(--down)"
-                          : "var(--fg-1)",
-                  }}
+                  className={cn(
+                    "pp-market-detail__stat-value pp-tabular",
+                    resolution.winnerSide === 1 && "pp-market-detail__stat-value--up",
+                    resolution.winnerSide === 2 && "pp-market-detail__stat-value--down",
+                  )}
                 >
-                  {resolution.winnerSide === 1
-                    ? "▲ "
-                    : resolution.winnerSide === 2
-                      ? "▼ "
-                      : ""}
+                  {resolution.winnerSide === 1 ? "▲ " : resolution.winnerSide === 2 ? "▼ " : ""}
                   {settledLabel ?? "—"}
-                  {resolution.deltaStr ? (
-                    <span
-                      className="pp-caption pp-tabular"
-                      style={{ color: "var(--fg-2)", marginLeft: 8, fontWeight: 400 }}
-                      title={
-                        resolution.deltaUsedFinePrecision
-                          ? "Sub-cent gap — extra precision shown so the result is unambiguous"
-                          : undefined
-                      }
-                    >
-                      ({resolution.deltaStr})
-                    </span>
-                  ) : null}
                 </span>
-              </span>
-              <span className="flex flex-col gap-1">
+                {resolution.deltaStr ? (
+                  <span
+                    className="pp-market-detail__stat-sub pp-tabular"
+                    title={
+                      resolution.deltaUsedFinePrecision
+                        ? "Sub-cent gap — extra precision shown so the result is unambiguous"
+                        : undefined
+                    }
+                  >
+                    {resolution.deltaStr}
+                  </span>
+                ) : null}
+              </div>
+              <div className="pp-market-detail__stat">
                 <span className="pp-micro">Volume</span>
-                <span className="pp-price-md pp-tabular">
+                <span className="pp-market-detail__stat-value pp-tabular">
                   ${formatUsdt(market.volume ?? "0")}
                 </span>
-              </span>
-              <span className="flex flex-col gap-1">
+              </div>
+              <div className="pp-market-detail__stat">
                 <span className="pp-micro">Status</span>
                 <span className="pp-chip pp-chip--closed">
                   <span className="pp-tabular">RESOLVED</span>
                 </span>
-              </span>
-            </div>
+              </div>
+            </>
           ) : (
-            <div className="mt-3 flex flex-wrap items-baseline gap-x-6 gap-y-2">
-              <span className="flex flex-col gap-1">
+            <>
+              <div className="pp-market-detail__stat">
                 <span className="pp-micro">Strike</span>
-                <span className="pp-price-md">{strikeLabel}</span>
-              </span>
-              <span className="flex flex-col gap-1">
+                <span className="pp-market-detail__stat-value pp-tabular">{strikeLabel}</span>
+              </div>
+              <div className="pp-market-detail__stat">
                 <span className="pp-micro">Ends in</span>
-                <span className="pp-price-md">{endsIn}</span>
-              </span>
-              <span className="flex flex-col gap-1">
+                <span className="pp-market-detail__stat-value pp-tabular">{endsIn}</span>
+              </div>
+              <div className="pp-market-detail__stat">
                 <span className="pp-micro">Volume</span>
-                <span className="pp-price-md pp-tabular">
+                <span className="pp-market-detail__stat-value pp-tabular">
                   ${formatUsdt(market.volume ?? "0")}
                 </span>
-              </span>
-              <span className="flex flex-col gap-1">
+              </div>
+              <div className="pp-market-detail__stat">
                 <span className="pp-micro">Status</span>
                 <span className="pp-chip pp-chip--cd">
                   <span className="pp-tabular">{market.status}</span>
                 </span>
-              </span>
-            </div>
+              </div>
+            </>
           )}
         </div>
-        {showCancelAll ? <CancelAllMarketOrders marketComposite={marketKey} /> : null}
+        {showCancelAll ? (
+          <div className="pp-market-detail__hero-actions">
+            <CancelAllMarketOrders marketComposite={marketKey} />
+          </div>
+        ) : null}
       </header>
 
-      {/* Contract hash */}
-      <details className="mt-2">
-        <summary className="pp-hash cursor-pointer select-none" style={{ color: "var(--fg-2)" }}>
-          Contract
-        </summary>
-        <p className="pp-hash mt-1 break-all" style={{ color: "var(--fg-2)" }}>
-          {market.address}
-        </p>
-      </details>
-
-      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_minmax(300px,380px)] lg:items-start">
-        <div className="min-w-0 space-y-3">
+      {/* Body: left = chart + prob strip + time range + order book; right =
+          sticky TradeForm v2. Mobile collapses to a single column stack. */}
+      <div className="pp-market-detail__body">
+        <div className="pp-market-detail__left">
           <MarketPriceChart
             symbol={chartSymbol}
             marketAddress={market.address}
@@ -277,12 +255,12 @@ export function MarketPageClient({ address }: { address: string }) {
             duration={market.duration}
             currentMarketAddress={market.address}
           />
-          <section>
-            <h2 className="pp-micro mb-2">Order book</h2>
+          <section className="pp-market-detail__section">
+            <h2 className="pp-market-detail__section-title">Order book</h2>
             <OrderBookPanel marketId={marketKey} marketStatus={market.status} />
           </section>
         </div>
-        <div className="lg:sticky lg:top-20">
+        <div className="pp-market-detail__right">
           <TradeForm marketAddress={marketKey} />
         </div>
       </div>

@@ -1,8 +1,15 @@
 "use client";
 
 /**
- * Unified ladder (product layout): UP asks on top, spread divider, DOWN bids below.
- * Does not list UP bids or DOWN asks — intentional UI, not full book depth.
+ * Side-by-side ladder (Polymarket-parity layout):
+ *   UP bids on the LEFT, DOWN asks on the RIGHT, vertical divider between.
+ *   Inside each side, asks render top-down + bids render top-down, with a
+ *   thin spread-marker between them. Restyled 2026-05-17 detail-page
+ *   redesign — previous single-column unified ladder lives in git history.
+ *
+ *   Only the directional asks (UP) / bids (DOWN) that PulsePairs treats as
+ *   the prediction-market sides are listed; we don't include the
+ *   counterparty-leg bids/asks, intentional product UI.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -24,17 +31,14 @@ function depthNumber(depth: string): number {
   }
 }
 
-type Row =
-  | { kind: "up-ask"; price: number; depth: string; count: number; depthVal: number }
-  | { kind: "down-bid"; price: number; depth: string; count: number; depthVal: number };
+type Side = "up" | "down";
+type Level = { price: number; depth: string; count: number; depthVal: number };
 
 export function OrderBookPanel({
   marketId,
   marketStatus,
 }: {
   marketId: string;
-  /** Optional. When the market is terminal, the book is dimmed + labelled
-   *  closed so a stale snapshot can't be misread as live depth. */
   marketStatus?: string;
 }) {
   const wsConnected = useAtomValue(wsConnectedAtom);
@@ -65,131 +69,113 @@ export function OrderBookPanel({
         ? "Live feed disconnected — falling back to snapshots."
         : null;
 
-  const { upRows, downRows, maxDepth, spreadCents } = useMemo(() => {
-    if (!data) return { upRows: [], downRows: [], maxDepth: 1, spreadCents: null as number | null };
-    const upAsks = [...data.up.asks].reverse().slice(0, 12);
-    const downBids = data.down.bids.slice(0, 12);
-    const uRows: Array<Row & { kind: "up-ask" }> = upAsks.map((l) => ({
-      kind: "up-ask",
+  const { upLevels, downLevels, maxDepth } = useMemo(() => {
+    if (!data) return { upLevels: [] as Level[], downLevels: [] as Level[], maxDepth: 1 };
+    // Show up to 8 levels per side — tighter than the old 12 because the
+    // side-by-side layout halves the horizontal width per column.
+    const ups = data.up.asks.slice(0, 8).map<Level>((l) => ({
       price: l.price,
       depth: l.depth,
       count: l.count,
       depthVal: depthNumber(l.depth),
     }));
-    const dRows: Array<Row & { kind: "down-bid" }> = downBids.map((l) => ({
-      kind: "down-bid",
+    const downs = data.down.asks.slice(0, 8).map<Level>((l) => ({
       price: l.price,
       depth: l.depth,
       count: l.count,
       depthVal: depthNumber(l.depth),
     }));
-    const md = Math.max(1, ...uRows.map((r) => r.depthVal), ...dRows.map((r) => r.depthVal));
-    const bestUpAsk = uRows[uRows.length - 1]?.price;
-    const bestDownBid = dRows[0]?.price;
-    const spread =
-      bestUpAsk != null && bestDownBid != null ? Math.max(0, Math.round((bestUpAsk - bestDownBid) / 100)) : null;
-    return { upRows: uRows, downRows: dRows, maxDepth: md, spreadCents: spread };
+    const md = Math.max(1, ...ups.map((r) => r.depthVal), ...downs.map((r) => r.depthVal));
+    return { upLevels: ups, downLevels: downs, maxDepth: md };
   }, [data]);
 
-  const hasOrders = data != null && (data.up.asks.length > 0 || data.down.bids.length > 0);
+  const hasOrders =
+    data != null && (data.up.asks.length > 0 || data.down.asks.length > 0);
 
   if (isLoading || !data) {
-    return <div className="pp-panel pp-caption text-center">Loading order book…</div>;
+    return <div className="pp-book__shell pp-caption">Loading order book…</div>;
   }
 
   if (isClosed) {
     return (
-      <div className="pp-panel">
-        <p className="pp-caption text-center" style={{ color: "var(--fg-2)" }}>
-          Order book closed — market resolved.
-        </p>
+      <div className="pp-book__shell">
+        <p className="pp-caption pp-book__closed">Order book closed — market resolved.</p>
       </div>
     );
   }
 
   if (!hasOrders) {
     return (
-      <div className="space-y-2">
+      <div className="pp-book__wrap">
         {staleHint ? <StaleHint text={staleHint} /> : null}
-        <div className="pp-panel">
-          <p className="pp-caption text-center">—</p>
+        <div className="pp-book__shell">
+          <p className="pp-caption pp-book__closed">—</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-2">
+    <div className="pp-book__wrap">
       {staleHint ? <StaleHint text={staleHint} /> : null}
-      <div className="pp-panel" style={{ padding: 0 }}>
-        <div className="pp-book">
-          <div className="pp-book__hd">
-            <span className="pp-micro">Side</span>
-            <span className="pp-micro">Price</span>
-            <span className="pp-micro" style={{ textAlign: "right" }}>
-              Depth
-            </span>
-            <span className="pp-micro" style={{ textAlign: "right" }}>
-              Orders
-            </span>
-          </div>
-
-          {upRows.map((r, i) => (
-            <BookRow key={`u-${i}`} row={r} maxDepth={maxDepth} />
-          ))}
-
-          <div className="pp-book__spread">
-            <span className="pp-micro">
-              Spread {spreadCents != null ? `· ${spreadCents}¢` : ""}
-            </span>
-          </div>
-
-          {downRows.map((r, i) => (
-            <BookRow key={`d-${i}`} row={r} maxDepth={maxDepth} />
-          ))}
-        </div>
+      <div className="pp-book__split">
+        <BookColumn side="up" levels={upLevels} maxDepth={maxDepth} />
+        <BookColumn side="down" levels={downLevels} maxDepth={maxDepth} />
       </div>
     </div>
   );
 }
 
-function StaleHint({ text }: { text: string }) {
+function BookColumn({
+  side,
+  levels,
+  maxDepth,
+}: {
+  side: Side;
+  levels: Level[];
+  maxDepth: number;
+}) {
+  const label = side === "up" ? "UP" : "DOWN";
   return (
-    <p
-      className="pp-caption rounded-[var(--r-sm)] border px-2 py-1"
-      style={{
-        background: "var(--warn-bg)",
-        borderColor: "oklch(80% 0.15 85 / 0.4)",
-        color: "var(--warn)",
-      }}
-    >
-      {text}
-    </p>
+    <div className={cn("pp-book__col", side === "up" ? "pp-book__col--up" : "pp-book__col--down")}>
+      <div className="pp-book__col-hd">
+        <span className={cn("pp-book__col-side", side === "up" ? "pp-up" : "pp-down")}>{label}</span>
+        <span className="pp-micro pp-book__col-price">Price</span>
+        <span className="pp-micro pp-book__col-depth">Depth</span>
+      </div>
+      {levels.length === 0 ? (
+        <div className="pp-book__col-empty pp-caption">no orders</div>
+      ) : (
+        levels.map((l, i) => (
+          <BookRow key={`${side}-${i}`} side={side} level={l} maxDepth={maxDepth} />
+        ))
+      )}
+    </div>
   );
 }
 
-function BookRow({ row, maxDepth }: { row: Row; maxDepth: number }) {
-  const pct = maxDepth > 0 ? Math.min(100, (row.depthVal / maxDepth) * 100) : 0;
-  const isUp = row.kind === "up-ask";
+function StaleHint({ text }: { text: string }) {
+  return <p className="pp-book__stale-hint">{text}</p>;
+}
+
+function BookRow({
+  side,
+  level,
+  maxDepth,
+}: {
+  side: Side;
+  level: Level;
+  maxDepth: number;
+}) {
+  const pct = maxDepth > 0 ? Math.min(100, (level.depthVal / maxDepth) * 100) : 0;
   return (
-    <div className="pp-book__row">
+    <div className={cn("pp-book__col-row", side === "up" ? "pp-book__col-row--up" : "pp-book__col-row--down")}>
       <div
-        className="pp-book__bar"
-        style={{
-          width: `${pct}%`,
-          background: isUp ? "var(--up)" : "var(--down)",
-        }}
+        className={cn("pp-book__col-bar", side === "up" ? "pp-book__col-bar--up" : "pp-book__col-bar--down")}
+        style={{ width: `${pct}%` }}
       />
-      <span className={cn("pp-book__side", isUp ? "pp-up" : "pp-down")}>
-        {isUp ? "UP" : "DOWN"}
-      </span>
-      <span className="pp-tabular">{(row.price / 100).toFixed(2)}¢</span>
-      <span className="pp-tabular" style={{ textAlign: "right" }}>
-        ${row.depth}
-      </span>
-      <span className="pp-tabular" style={{ textAlign: "right" }}>
-        {row.count}
-      </span>
+      <span className="pp-book__col-price-val pp-tabular">{(level.price / 100).toFixed(0)}¢</span>
+      <span className="pp-book__col-depth-val pp-tabular">${level.depth}</span>
     </div>
   );
 }

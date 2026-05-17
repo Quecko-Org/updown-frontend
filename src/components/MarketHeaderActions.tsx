@@ -1,7 +1,7 @@
 "use client";
 
-import { Bookmark, Code2, Share2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Bookmark, Code2, MoreHorizontal, Share2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { isBookmarked, toggleBookmark } from "@/lib/bookmarks";
 import { cn } from "@/lib/cn";
@@ -17,13 +17,44 @@ import { cn } from "@/lib/cn";
  *  - Bookmark: localStorage-only MVP. Toggles a per-market flag with
  *    immediate visual feedback. The bookmarks list isn't surfaced
  *    elsewhere yet (future phase: header dropdown).
+ *
+ * 2026-05-17 detail-page redesign: added the overflow "⋯" menu that
+ * hosts the "Copy contract address" action. The standalone <details>
+ * block under the hero is gone — page chrome stays clean, advanced ops
+ * live in the menu.
  */
-export function MarketHeaderActions({ marketKey }: { marketKey: string }) {
+export function MarketHeaderActions({
+  marketKey,
+  marketAddress,
+}: {
+  marketKey: string;
+  /** Composite on-chain key (`0x{settlement}-{marketId}`). Surfaced via the
+   *  overflow menu's "Copy contract address" action. Optional so existing
+   *  callers without the data don't break — the menu item is hidden when
+   *  unset. */
+  marketAddress?: string;
+}) {
   const [bookmarked, setBookmarked] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
   // Hydrate bookmark state on mount — localStorage isn't available during SSR.
   useEffect(() => {
     setBookmarked(isBookmarked(marketKey));
   }, [marketKey]);
+
+  // Outside-click dismiss for the overflow menu. Mirrors the Header /
+  // TradeForm long-press menu pattern.
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onDoc(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [menuOpen]);
 
   async function handleShare() {
     if (typeof window === "undefined") return;
@@ -32,9 +63,6 @@ export function MarketHeaderActions({ marketKey }: { marketKey: string }) {
       await navigator.clipboard.writeText(url);
       toast.success("Link copied to clipboard");
     } catch {
-      // Clipboard API unavailable (insecure context, perms denied) — fall
-      // back to a prompt-style copy by selecting the URL bar isn't viable
-      // programmatically, so just surface the URL in the toast.
       toast.info(`Copy this link: ${url}`);
     }
   }
@@ -50,6 +78,17 @@ export function MarketHeaderActions({ marketKey }: { marketKey: string }) {
     const next = toggleBookmark(marketKey);
     setBookmarked(next);
     toast.success(next ? "Bookmarked" : "Bookmark removed");
+  }
+
+  async function handleCopyContract() {
+    if (!marketAddress || typeof window === "undefined") return;
+    try {
+      await navigator.clipboard.writeText(marketAddress);
+      toast.success("Contract address copied");
+    } catch {
+      toast.info(`Contract: ${marketAddress}`);
+    }
+    setMenuOpen(false);
   }
 
   return (
@@ -89,6 +128,36 @@ export function MarketHeaderActions({ marketKey }: { marketKey: string }) {
           fill={bookmarked ? "currentColor" : "none"}
         />
       </button>
+      <div ref={menuRef} className="pp-mhdr-actions__menu-wrap">
+        <button
+          type="button"
+          className="pp-mhdr-actions__btn"
+          onClick={() => setMenuOpen((v) => !v)}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          aria-label="More market actions"
+          title="More"
+        >
+          <MoreHorizontal size={16} strokeWidth={1.5} />
+        </button>
+        {menuOpen ? (
+          <div className="pp-mhdr-actions__menu" role="menu">
+            {marketAddress ? (
+              <button
+                type="button"
+                role="menuitem"
+                className="pp-mhdr-actions__menu-item"
+                onClick={handleCopyContract}
+              >
+                <span>Copy contract address</span>
+                <span className="pp-mhdr-actions__menu-hint pp-hash">
+                  {marketAddress.slice(0, 10)}…{marketAddress.slice(-6)}
+                </span>
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

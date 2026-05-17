@@ -559,25 +559,113 @@
 .pp-book-drawer__chev { color: var(--fg-2); font-size: 12px; width: 14px; text-align: center; }
 .pp-book-drawer__body { padding: 0 12px 12px; border-top: 1px solid var(--border-0); }
 
-/* ---------- order book ---------- */
-.pp-book { display: flex; flex-direction: column; }
-.pp-book__hd, .pp-book__row {
-  display: grid; grid-template-columns: 60px 1fr 1fr 50px;
-  gap: 8px; padding: 4px 8px;
-  font-family: var(--font-mono); font-size: 11px; font-variant-numeric: tabular-nums;
-  position: relative; align-items: center;
+/* ---------- order book (pp-book — 2026-05-17 detail-page redesign) ----------
+   Polymarket-parity side-by-side layout: UP buy-side prices on the left,
+   DOWN buy-side prices on the right, vertical divider between. Replaces
+   the previous single-column stacked ladder (UP asks → spread → DOWN bids).
+   Each column shows up to 8 price levels with a depth-bar visualization. */
+.pp-book__wrap { display: flex; flex-direction: column; gap: 8px; }
+.pp-book__shell {
+  background: var(--bg-1);
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-lg);
+  padding: 14px;
+  text-align: center;
 }
-.pp-book__hd { border-bottom: 1px solid var(--border-0); }
-.pp-book__row { border-bottom: 1px solid var(--border-0); }
-.pp-book__row > * { position: relative; z-index: 1; }
-/* Orderbook depth-bar visualization indicator. NOT a tier element —
-   preserved at 2px per PR-1 consumer-layer rules exception (sibling of
-   the circle exceptions). Do not migrate to a radius token. */
-.pp-book__bar { position: absolute; top: 2px; bottom: 2px; left: 0; border-radius: 2px; opacity: 0.2; z-index: 0; }
-.pp-book__side { font-family: var(--font-sans); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
-.pp-book__spread {
-  text-align: center; padding: 5px; border-top: 1px solid var(--border-0); border-bottom: 1px solid var(--border-0);
-  background: var(--bg-2);
+.pp-book__closed { color: var(--fg-2); margin: 0; }
+.pp-book__stale-hint {
+  background: var(--warn-bg, oklch(40% 0.10 70 / 0.18));
+  border: 1px solid oklch(80% 0.15 85 / 0.4);
+  color: var(--warn, oklch(80% 0.15 85));
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  margin: 0;
+}
+.pp-book__split {
+  display: grid;
+  grid-template-columns: 1fr 1px 1fr;
+  background: var(--bg-1);
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+.pp-book__split::before {
+  content: "";
+  grid-column: 2;
+  grid-row: 1 / -1;
+  background: var(--border-0);
+}
+.pp-book__col {
+  display: flex;
+  flex-direction: column;
+}
+.pp-book__col--up { grid-column: 1; }
+.pp-book__col--down { grid-column: 3; }
+.pp-book__col-hd {
+  display: grid;
+  grid-template-columns: 48px 1fr 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-0);
+}
+.pp-book__col-side {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.pp-book__col-price,
+.pp-book__col-depth { text-align: right; }
+.pp-book__col-row {
+  display: grid;
+  grid-template-columns: 48px 1fr 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 12px;
+  position: relative;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.pp-book__col-row > * { position: relative; z-index: 1; }
+/* Depth-bar visualization. 2px-radius preserved per PR-1 consumer-layer
+   rules exception (do not migrate to a radius token). */
+.pp-book__col-bar {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  border-radius: 2px;
+  opacity: 0.18;
+  z-index: 0;
+}
+.pp-book__col-bar--up { left: 0; background: var(--up); }
+.pp-book__col-bar--down { left: 0; background: var(--down); }
+.pp-book__col-price-val { text-align: right; color: var(--fg-0); grid-column: 2; }
+.pp-book__col-depth-val { text-align: right; color: var(--fg-1); grid-column: 3; }
+.pp-book__col-empty {
+  padding: 16px 12px;
+  text-align: center;
+  color: var(--fg-2);
+}
+
+/* Mobile collapse: switch the side-by-side split into a stacked layout
+   so each column gets the full width and depth bars remain readable. */
+@media (max-width: 640px) {
+  .pp-book__split {
+    grid-template-columns: 1fr;
+  }
+  .pp-book__split::before {
+    grid-column: 1;
+    grid-row: auto;
+    height: 1px;
+    background: var(--border-0);
+  }
+  .pp-book__col--up { grid-column: 1; }
+  .pp-book__col--down { grid-column: 1; }
 }
 
 /* ---------- trade form (pp-trade-v2 — 2026-05-16 BUG A redesign) ----------
@@ -1205,44 +1293,9 @@
   .pp-trade-v2__chips { flex-wrap: wrap; }
 }
 
-/* ---------- Phase2-B time-range outcome strip ---------- */
-.pp-tr-strip {
-  width: 100%;
-  overflow-x: auto;
-  background: var(--bg-1);
-  border: 1px solid var(--border-0);
-  border-radius: var(--r-lg);
-  padding: 8px;
-}
-.pp-tr-strip__inner {
-  display: flex; align-items: center; gap: 6px;
-  min-width: max-content;
-}
-.pp-tr-strip__slot {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 10px; border-radius: var(--r-md);
-  font-family: var(--font-mono); font-size: 11px;
-  text-decoration: none;
-  white-space: nowrap;
-  border: 1px solid transparent;
-  transition: background var(--dur-micro) var(--ease), border-color var(--dur-micro) var(--ease);
-}
-.pp-tr-strip__slot--past { color: var(--fg-1); }
-.pp-tr-strip__slot--past:hover { background: var(--bg-hover); border-color: var(--border-1); }
-.pp-tr-strip__slot--current { background: var(--fg-0); color: var(--bg-0); font-weight: 600; }
-.pp-tr-strip__slot--future { color: var(--fg-2); cursor: default; }
-.pp-tr-strip__dot {
-  display: inline-block; width: 12px; height: 12px;
-  border-radius: 50%;
-  text-align: center; line-height: 12px;
-  font-size: 9px; font-weight: 700;
-  background: var(--bg-2); color: var(--fg-2);
-}
-.pp-tr-strip__dot--up { background: var(--up-bg); color: var(--up); }
-.pp-tr-strip__dot--down { background: var(--down-bg); color: var(--down); }
-.pp-tr-strip__dot--current { background: var(--bg-0); width: 8px; height: 8px; }
-.pp-tr-strip__dot--future { background: transparent; border: 1px dashed var(--border-1); }
-.pp-tr-strip__label { font-variant-numeric: tabular-nums; }
+/* 2026-05-17 detail-page redesign: pp-tr-strip block moved to the end of
+   this file. Old block deleted — refer to the canonical block alongside
+   pp-market-detail / pp-prob-strip / pp-your-activity. */
 
 /* ---------- Phase2-B cross-promo cards ---------- */
 .pp-xpromo {
@@ -1372,6 +1425,46 @@
 .pp-mhdr-actions__btn:hover { border-color: var(--border-1); color: var(--fg-0); }
 .pp-mhdr-actions__btn--on { color: var(--up); border-color: var(--up); }
 .pp-mhdr-actions__btn--on:hover { color: var(--up); border-color: var(--up); }
+
+/* Overflow menu (2026-05-17 detail-page redesign). Hosts the
+   "Copy contract address" item that previously lived in a standalone
+   <details> block under the hero. */
+.pp-mhdr-actions__menu-wrap { position: relative; }
+.pp-mhdr-actions__menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  background: var(--bg-1);
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-md);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 20;
+  min-width: 240px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+}
+.pp-mhdr-actions__menu-item {
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-sm);
+  padding: 8px 10px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--fg-1);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+}
+.pp-mhdr-actions__menu-item:hover { background: var(--bg-2); color: var(--fg-0); }
+.pp-mhdr-actions__menu-hint {
+  font-size: 10px;
+  color: var(--fg-3);
+}
 
 /* ============================================================================
    PR-2: pp-market-row family — Live / Open / Next consumer row components
@@ -1834,3 +1927,350 @@
    `.pp-drawer-overlay`, and the `pp-fade-in` / `pp-drawer-in` /
    `pp-drawer-up` keyframes were dropped — there are no remaining
    references in `src/`. */
+
+/* ============================================================================
+   pp-market-detail — 2026-05-17 detail-page redesign
+   ----------------------------------------------------------------------------
+   Consumer layer for `/market/[address]`. Mirrors the home-page `pp-tile`
+   visual language so the surface reads as the same product across all
+   routes. Per-metric stat tiles in the hero, two-column body (chart-anchor
+   left, TradeForm v2 right sticky), single-column stack below 1024px.
+   Replaces the raw Tailwind grid + `<header>` chrome the page shipped with.
+   ============================================================================ */
+
+.pp-market-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.pp-market-detail--empty {
+  gap: 16px;
+}
+.pp-market-detail__loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30vh;
+  border: 1px dashed var(--border-0);
+  border-radius: var(--r-lg);
+  color: var(--fg-2);
+}
+
+.pp-market-detail__topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Hero block: title + per-metric tile row. Tiles share the home-page
+   `pp-tile` palette (bg-1 + border-0 + r-lg) so visual language is
+   consistent. */
+.pp-market-detail__hero {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-lg);
+}
+.pp-market-detail__hero-title {
+  font-family: var(--font-sans);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--fg-0);
+  margin: 0;
+}
+.pp-market-detail__hero-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.pp-market-detail__stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.pp-market-detail__stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-md);
+  min-width: 0;
+}
+.pp-market-detail__stat-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--fg-0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pp-market-detail__stat-value--up { color: var(--up); }
+.pp-market-detail__stat-value--down { color: var(--down); }
+.pp-market-detail__stat-sub {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--fg-2);
+}
+
+/* Body: chart + sub-strips left, TradeForm v2 right (sticky). */
+.pp-market-detail__body {
+  display: grid;
+  grid-template-columns: 1fr minmax(300px, 380px);
+  gap: 16px;
+  align-items: start;
+}
+.pp-market-detail__left {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pp-market-detail__right {
+  position: sticky;
+  top: 80px;
+}
+.pp-market-detail__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pp-market-detail__section-title {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+  margin: 0;
+}
+
+/* Mobile: single-column stack. TradeForm renders inline below the
+   chart-anchor stack. Drops sticky positioning so the form scrolls with
+   the content rather than pinning. */
+@media (max-width: 1023px) {
+  .pp-market-detail__body {
+    grid-template-columns: 1fr;
+  }
+  .pp-market-detail__right {
+    position: static;
+  }
+  .pp-market-detail__stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 480px) {
+  .pp-market-detail__stats {
+    grid-template-columns: 1fr 1fr;
+  }
+  .pp-market-detail__hero-title {
+    font-size: 18px;
+  }
+}
+
+/* ============================================================================
+   pp-prob-strip — implied probability bar (under chart). Migrated from
+   raw Tailwind + inline styles to a token-driven block.
+   ============================================================================ */
+.pp-prob-strip {
+  background: var(--bg-1);
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-lg);
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pp-prob-strip__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.pp-prob-strip__live-mid { color: var(--fg-2); }
+.pp-prob-strip__body {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.pp-prob-strip__side {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+}
+.pp-prob-strip__label { font-weight: 600; }
+.pp-prob-strip__cents {
+  color: var(--fg-0);
+  font-weight: 600;
+}
+.pp-prob-strip__indicative { color: var(--fg-2); }
+.pp-prob-strip__track {
+  flex: 1;
+  position: relative;
+  height: 8px;
+  background: var(--bg-0);
+  border: 1px solid var(--border-0);
+  border-radius: 999px;
+  overflow: hidden;
+  display: flex;
+}
+.pp-prob-strip__fill {
+  height: 100%;
+  opacity: 0.85;
+}
+.pp-prob-strip__fill--up { background: var(--up); }
+.pp-prob-strip__fill--down { background: var(--down); }
+.pp-prob-strip__fill--indicative { opacity: 0.5; }
+
+@media (max-width: 480px) {
+  .pp-prob-strip__body { flex-wrap: wrap; }
+  .pp-prob-strip__track { order: 3; flex-basis: 100%; }
+}
+
+/* ============================================================================
+   pp-your-activity — orders + positions table panel under the body.
+   Migrated from inline-styled Tailwind to a self-contained token block.
+   ============================================================================ */
+.pp-your-activity {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+.pp-your-activity__title {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--fg-0);
+  margin: 0;
+}
+.pp-your-activity__empty {
+  min-height: 0;
+  padding: 24px;
+  margin-top: 8px;
+}
+.pp-your-activity__connect-list {
+  width: 100%;
+  max-width: 320px;
+}
+.pp-your-activity__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pp-your-activity__section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pp-your-activity__section-title {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-1);
+  margin: 0;
+}
+.pp-your-activity__window-label { color: var(--fg-2); }
+.pp-your-activity__table-wrap {
+  overflow: hidden;
+  overflow-x: auto;
+  background: var(--bg-1);
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-lg);
+}
+.pp-your-activity__table { min-width: 100%; }
+.pp-your-activity__cell-strong { color: var(--fg-0); }
+.pp-your-activity__cell-muted { color: var(--fg-2); }
+
+/* ============================================================================
+   pp-tr-strip refresh — 2026-05-17 detail-page redesign
+   Visual treatment update only (no JSX changes). Past dots get clearer
+   token-driven colors, current slot gets the new hero-tile background,
+   future slots use a dashed border so the temporal direction reads at a
+   glance. UX preserved: dots stay clickable when past, decorative when
+   future.
+   ============================================================================ */
+.pp-tr-strip {
+  border: 1px solid var(--border-0);
+  border-radius: var(--r-lg);
+  background: var(--bg-1);
+  padding: 8px 12px;
+}
+.pp-tr-strip__inner {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  overflow-x: auto;
+}
+.pp-tr-strip__slot {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-radius: var(--r-md);
+  border: 1px solid transparent;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  text-decoration: none;
+  transition: border-color var(--dur-micro) var(--ease),
+              background var(--dur-micro) var(--ease);
+  min-width: 56px;
+}
+.pp-tr-strip__slot--past { color: var(--fg-1); }
+.pp-tr-strip__slot--past:hover {
+  background: var(--bg-2);
+  border-color: var(--border-1);
+}
+.pp-tr-strip__slot--current {
+  background: var(--fg-0);
+  color: var(--bg-0);
+  font-weight: 600;
+}
+.pp-tr-strip__slot--future {
+  color: var(--fg-3);
+  cursor: default;
+}
+.pp-tr-strip__slot--up { color: var(--up); }
+.pp-tr-strip__slot--down { color: var(--down); }
+.pp-tr-strip__dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  background: var(--bg-2);
+  color: var(--fg-2);
+}
+.pp-tr-strip__dot--up {
+  background: color-mix(in oklch, var(--up) 18%, transparent);
+  color: var(--up);
+}
+.pp-tr-strip__dot--down {
+  background: color-mix(in oklch, var(--down) 18%, transparent);
+  color: var(--down);
+}
+.pp-tr-strip__dot--current {
+  background: var(--bg-0);
+  width: 10px;
+  height: 10px;
+}
+.pp-tr-strip__dot--future {
+  background: transparent;
+  border: 1px dashed var(--border-1);
+}
+.pp-tr-strip__label {
+  font-variant-numeric: tabular-nums;
+}
