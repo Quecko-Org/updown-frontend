@@ -12,8 +12,8 @@ import { WalletConnectorList } from "@/components/WalletConnectorList";
 /**
  * Phase2-A: combines what used to be MyOrdersOnMarket + the inline "Your
  * positions" table on the market detail page into a single panel with two
- * sub-sections. Reduces split-rendering inconsistency by giving the user one
- * place to look for "everything I have on this market".
+ * sub-sections. 2026-05-17 detail-page redesign: layout migrated from
+ * raw Tailwind to the `pp-your-activity*` token block in pp-utilities.css.
  *
  * Visibility rules:
  *   - Wallet disconnected → prompt to connect
@@ -30,23 +30,10 @@ export function YourActivityOnMarket({
   marketComposite: string;
   smartAccount: string | null | undefined;
   positions: PositionRow[];
-  /** F3: human-readable trading window label, e.g. "BTC 5min · Apr 28 14:30–14:35".
-   *  Rendered as caption above Filled positions so users disambiguate which
-   *  market a position belongs to when scanning the portfolio + jumping
-   *  between detail pages. */
   marketWindowLabel?: string | null;
-  /** Parent market's lifecycle status. Used to hide the per-row Cancel
-   *  button once trading has stopped — backend rejects the cancel anyway
-   *  (see DELETE /orders/:id market-status guard), so the button being
-   *  visible would just imply reversibility that doesn't exist. */
   marketStatus?: string | null;
 }) {
   const { isConnected } = useAccount();
-  // Phase 4 PR-A (2026-05-16): orders are keyed by order.maker = TW address
-  // post-Phase-4. Querying by EOA returns empty. The `smartAccount` prop
-  // is already the TW (parent MarketPageClient reads userSmartAccount atom
-  // and passes it). Path-1 fallback: atom (= prop) is set to EOA when no
-  // factory deployed, so this still resolves.
   const addrLower = smartAccount?.toLowerCase() ?? "";
   const mKey = marketComposite.toLowerCase();
 
@@ -63,15 +50,15 @@ export function YourActivityOnMarket({
 
   if (!isConnected || !smartAccount) {
     return (
-      <section className="mt-6">
-        <h2 className="pp-h2">Your activity in this market</h2>
+      <section className="pp-your-activity">
+        <h2 className="pp-your-activity__title">Your activity in this market</h2>
         <EmptyState
           icon="wallet"
           title="Connect wallet"
           subtitle="Connect a wallet to see your orders and positions for this market."
-          className="min-h-0 py-6 mt-3"
+          className="pp-your-activity__empty"
         >
-          <WalletConnectorList className="w-full max-w-xs" />
+          <WalletConnectorList className="pp-your-activity__connect-list" />
         </EmptyState>
       </section>
     );
@@ -79,38 +66,35 @@ export function YourActivityOnMarket({
 
   if (openOrders.length === 0 && positions.length === 0) {
     return (
-      <section className="mt-6">
-        <h2 className="pp-h2">Your activity in this market</h2>
+      <section className="pp-your-activity">
+        <h2 className="pp-your-activity__title">Your activity in this market</h2>
         <EmptyState
           icon="trade"
           title="Nothing yet"
           subtitle="Your open orders and filled positions for this market show here."
-          className="min-h-0 py-6 mt-3"
+          className="pp-your-activity__empty"
         />
       </section>
     );
   }
 
   return (
-    <section className="mt-6 space-y-5">
-      <h2 className="pp-h2">Your activity in this market</h2>
+    <section className="pp-your-activity">
+      <h2 className="pp-your-activity__title">Your activity in this market</h2>
 
       {openOrders.length > 0 ? (
-        <div className="space-y-2">
-          <h3 className="pp-h3">Open orders</h3>
+        <div className="pp-your-activity__section">
+          <h3 className="pp-your-activity__section-title">Open orders</h3>
           <OrdersSubtable rows={openOrders} marketStatus={marketStatus ?? null} />
         </div>
       ) : null}
 
       {positions.length > 0 ? (
-        <div className="space-y-2">
-          <div className="flex items-baseline justify-between gap-2 flex-wrap">
-            <h3 className="pp-h3">Filled positions</h3>
+        <div className="pp-your-activity__section">
+          <div className="pp-your-activity__section-head">
+            <h3 className="pp-your-activity__section-title">Filled positions</h3>
             {marketWindowLabel ? (
-              <span
-                className="pp-caption pp-tabular"
-                style={{ color: "var(--fg-2)" }}
-              >
+              <span className="pp-your-activity__window-label pp-tabular">
                 {marketWindowLabel}
               </span>
             ) : null}
@@ -130,11 +114,8 @@ function OrdersSubtable({
   marketStatus: string | null;
 }) {
   return (
-    <div
-      className="overflow-hidden overflow-x-auto rounded-[var(--r-lg)] border"
-      style={{ borderColor: "var(--border-0)", background: "var(--bg-1)" }}
-    >
-      <table className="pp-table min-w-full">
+    <div className="pp-your-activity__table-wrap">
+      <table className="pp-table pp-your-activity__table">
         <thead>
           <tr>
             <th>Dir</th>
@@ -155,17 +136,17 @@ function OrdersSubtable({
                 </span>
               </td>
               <td>
-                <span className="pp-micro" style={{ color: "var(--fg-0)" }}>
+                <span className="pp-your-activity__cell-strong">
                   {o.side === 0 ? "BUY" : "SELL"}
                 </span>
               </td>
-              <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
+              <td className="r pp-tabular pp-your-activity__cell-strong">
                 {o.type === 1 ? "MKT" : `${(o.price / 100).toFixed(0)}¢`}
               </td>
-              <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
+              <td className="r pp-tabular pp-your-activity__cell-strong">
                 ${formatUsdt(o.amount)}
               </td>
-              <td className="r pp-tabular" style={{ color: "var(--fg-2)" }}>
+              <td className="r pp-tabular pp-your-activity__cell-muted">
                 ${formatUsdt(o.filledAmount)}
               </td>
               <td>
@@ -194,11 +175,8 @@ function OrdersSubtable({
 
 function PositionsSubtable({ rows }: { rows: PositionRow[] }) {
   return (
-    <div
-      className="overflow-hidden overflow-x-auto rounded-[var(--r-lg)] border"
-      style={{ borderColor: "var(--border-0)", background: "var(--bg-1)" }}
-    >
-      <table className="pp-table min-w-full">
+    <div className="pp-your-activity__table-wrap">
+      <table className="pp-table pp-your-activity__table">
         <thead>
           <tr>
             <th>Side</th>
@@ -215,10 +193,10 @@ function PositionsSubtable({ rows }: { rows: PositionRow[] }) {
                   {p.optionLabel}
                 </span>
               </td>
-              <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
+              <td className="r pp-tabular pp-your-activity__cell-strong">
                 ${formatUsdt(p.shares)}
               </td>
-              <td className="r pp-tabular" style={{ color: "var(--fg-2)" }}>
+              <td className="r pp-tabular pp-your-activity__cell-muted">
                 {p.avgPrice} bps
               </td>
               <td>

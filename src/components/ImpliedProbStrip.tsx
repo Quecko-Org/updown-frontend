@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { cn } from "@/lib/cn";
 import type { MarketDetail } from "@/lib/api";
 import { sharePriceBpsFromOrderBookMid } from "@/lib/feeEstimate";
 
@@ -19,6 +20,9 @@ import { sharePriceBpsFromOrderBookMid } from "@/lib/feeEstimate";
  * `sharePriceBpsFromOrderBookMid` returns 5000 (50¢) so the bar still
  * renders meaningfully — labeled "indicative" so the user knows the
  * book on that side is empty.
+ *
+ * 2026-05-17 detail-page redesign: layout migrated from raw Tailwind +
+ * inline styles to the `pp-prob-strip*` token block.
  */
 export function ImpliedProbStrip({ market }: { market: MarketDetail }) {
   const { upCents, downCents, upIndicative, downIndicative } = useMemo(() => {
@@ -35,80 +39,47 @@ export function ImpliedProbStrip({ market }: { market: MarketDetail }) {
     };
   }, [market.orderBook]);
 
-  // Stacked bar: UP cents on the left, DOWN cents on the right. Cents sum
-  // to ~100 in a healthy book; we render proportionally either way so the
-  // bar is visually correct even when the book is one-sided.
   const total = Math.max(1, upCents + downCents);
   const upPct = (upCents / total) * 100;
   const downPct = (downCents / total) * 100;
 
   return (
-    <div
-      className="rounded-[var(--r-lg)] border px-3 py-2"
-      style={{ background: "var(--bg-1)", borderColor: "var(--border-0)" }}
-      role="group"
-      aria-label="Implied probability"
-    >
-      <div className="mb-1.5 flex items-baseline justify-between gap-3">
-        <span className="pp-micro" style={{ color: "var(--fg-2)" }}>
-          Implied probability
-        </span>
-        <span className="pp-caption" style={{ color: "var(--fg-2)" }}>
-          live mid
-        </span>
+    <div className="pp-prob-strip" role="group" aria-label="Implied probability">
+      <div className="pp-prob-strip__head">
+        <span className="pp-micro">Implied probability</span>
+        <span className="pp-caption pp-prob-strip__live-mid">live mid</span>
       </div>
-      <div className="flex items-center gap-3">
-        <div className="flex items-baseline gap-1.5">
-          <span className="pp-up" style={{ fontWeight: 600 }}>
-            ▲ Up
-          </span>
-          <span
-            className="pp-tabular"
-            style={{ color: "var(--fg-0)", fontWeight: 600 }}
-          >
-            {upCents.toFixed(0)}¢
-          </span>
+      <div className="pp-prob-strip__body">
+        <div className="pp-prob-strip__side pp-prob-strip__side--up">
+          <span className="pp-prob-strip__label pp-up">▲ Up</span>
+          <span className="pp-prob-strip__cents pp-tabular">{upCents.toFixed(0)}¢</span>
           {upIndicative ? (
-            <span className="pp-caption" style={{ color: "var(--fg-2)" }}>
-              indicative
-            </span>
+            <span className="pp-prob-strip__indicative pp-caption">indicative</span>
           ) : null}
         </div>
-        <div
-          className="relative h-2 flex-1 overflow-hidden rounded-full"
-          style={{ background: "var(--bg-0)", border: "1px solid var(--border-0)" }}
-        >
+        <div className="pp-prob-strip__track">
           <div
-            className="absolute left-0 top-0 h-full"
-            style={{
-              width: `${upPct}%`,
-              background: "var(--up)",
-              opacity: upIndicative ? 0.5 : 0.85,
-            }}
+            className={cn(
+              "pp-prob-strip__fill",
+              "pp-prob-strip__fill--up",
+              upIndicative && "pp-prob-strip__fill--indicative",
+            )}
+            style={{ width: `${upPct}%` }}
           />
           <div
-            className="absolute right-0 top-0 h-full"
-            style={{
-              width: `${downPct}%`,
-              background: "var(--down)",
-              opacity: downIndicative ? 0.5 : 0.85,
-            }}
+            className={cn(
+              "pp-prob-strip__fill",
+              "pp-prob-strip__fill--down",
+              downIndicative && "pp-prob-strip__fill--indicative",
+            )}
+            style={{ width: `${downPct}%` }}
           />
         </div>
-        <div className="flex items-baseline gap-1.5">
-          <span
-            className="pp-tabular"
-            style={{ color: "var(--fg-0)", fontWeight: 600 }}
-          >
-            {downCents.toFixed(0)}¢
-          </span>
-          <span className="pp-down" style={{ fontWeight: 600 }}>
-            Down ▼
-          </span>
+        <div className="pp-prob-strip__side pp-prob-strip__side--down">
+          <span className="pp-prob-strip__cents pp-tabular">{downCents.toFixed(0)}¢</span>
+          <span className="pp-prob-strip__label pp-down">Down ▼</span>
           {downIndicative ? (
-            <span className="pp-caption" style={{ color: "var(--fg-2)" }}>
-              indicative
-            </span>
+            <span className="pp-prob-strip__indicative pp-caption">indicative</span>
           ) : null}
         </div>
       </div>
