@@ -1,9 +1,8 @@
 # UpDown HTTP + WebSocket API Reference
 
 > **Audience:** integrators (DMM bots, custody, analytics, frontend clients).
-> **Status:** Phase 4 architecture — per-user ThinWallet smart accounts, ERC-1271 signature recovery, relayer-broadcast meta-tx execution. Anything older than 2026-05-13 in archived docs refers to a superseded model and does not apply.
-
-> **Placeholders.** `{{LIKE_THIS}}` strings in code blocks are filled in by `scripts/inject-config-into-docs.mjs` at content-build, sourced from `GET /config` against the target deployment. Read [§Placeholder injection](#placeholder-injection) for the source-of-truth pattern.
+> **Architecture:** per-user ThinWallet smart accounts, ERC-1271 signature recovery, relayer-broadcast meta-tx execution.
+> **Live values.** All chain-bound values shown below (addresses, chain ID, token symbol) are resolved from `GET /config` against the target deployment. Always treat `/config` as your source of truth.
 
 ---
 
@@ -55,7 +54,7 @@ L1 routes are not header-authenticated and accept the request from any IP — re
 
 ### L2 — HMAC API key
 
-Long-lived API-key-style credentials for high-throughput integrators (DMM bots, analytics dashboards, automation pipelines) where signing every request would add latency. Phase 3 Gate 1 (post-audit) shipped this layer.
+Long-lived API-key-style credentials for high-throughput integrators (DMM bots, analytics dashboards, automation pipelines) where signing every request would add latency.
 
 ```
 x-pulsepairs-api-key:   <16-byte hex key id>
@@ -135,7 +134,7 @@ Returns:
 
 Status codes: `200` (success / already deployed), `400` (bad signature / invalid EOA), `503` (factory not configured on this chain).
 
-Not rate-limited — idempotency + CREATE2 collision protection + in-process per-EOA lock are the protection. Prior 1-per-EOA-per-5min limit broke legitimate refresh patterns for returning users (the user opens a fresh tab, the hook tries to provision again, gets blocked → flagged as a bug, removed in PR-A).
+Not rate-limited — idempotency + CREATE2 collision protection + in-process per-EOA lock provide the safety guarantees instead.
 
 ### Meta-tx broadcast — POST /thin-wallet/execute-with-sig
 
@@ -212,13 +211,9 @@ EIP-712 domain binding via `verifyingContract = twAddress` ensures a signature v
 
 ## Chainlink Data Streams
 
-Streams ([Chainlink Data Streams](https://docs.chain.link/data-streams)) is the production price-feed source for resolution. The dev cycle ran through three gates:
+Resolution prices come from [Chainlink Data Streams](https://docs.chain.link/data-streams), with a fallback to Chainlink's standard AggregatorV3 feed if a Streams report is unavailable. Reports include an off-chain timestamp plus a Verifier proof; the on-chain Resolver verifies the proof before accepting the price, and rejects any report older than the configured stale-data threshold.
 
-- **Gate 1 — testnet wiring.** Resolver consumes Streams reports for BTC/USD + ETH/USD on Arbitrum Sepolia. Reports include an off-chain timestamp + a Verifier proof; the Resolver verifies the proof on-chain via the `Verifier` contract from Chainlink before accepting the price.
-- **Gate 2 — fallback ladder.** When a Streams report is unavailable (verifier rate-limit, off-chain feed downtime), the Resolver falls back to Chainlink's standard AggregatorV3 feed at the same pair. Both code paths are deployed; the switch is in `Resolver._priceAt(...)`.
-- **Gate 3 — stale-data guards.** Reports older than the configured `MAX_PRICE_AGE_SEC` are rejected with `StalePrice` (revert custom error). Resolution waits one upkeep tick before retrying.
-
-The Settlement contract does not consume Streams directly. The Resolver fetches the report, verifies it, sets the strike/settlement prices on the Settlement contract. Frontend integrations don't need to know about Streams — `GET /markets/:address` returns the resolved prices as plain numbers, regardless of source feed.
+The Settlement contract does not consume Streams directly. The Resolver fetches the report, verifies it, and writes the strike + settlement prices to Settlement. Frontend integrations don't need to know about Streams — `GET /markets/:address` returns the resolved prices as plain numbers, regardless of source feed.
 
 ---
 
@@ -446,7 +441,7 @@ Returns `201 { id, status, market, option, side, type, price, amount, createdAt 
 
 #### EIP-712 typed data
 
-Sign with the **domain matching the market's settlement** (`pairs[i].eip712.domain` where `pairs[i].settlementAddress === parseComposite(market).settlementAddress`). For ThinWallet makers (the common case under Phase 4), wrap the order digest in a `WalletAuth` envelope against the TW's domain — see [§ThinWallet signing flows](#signing-flows).
+Sign with the **domain matching the market's settlement** (`pairs[i].eip712.domain` where `pairs[i].settlementAddress === parseComposite(market).settlementAddress`). For ThinWallet makers (the default), wrap the order digest in a `WalletAuth` envelope against the TW's domain — see [§ThinWallet signing flows](#signing-flows).
 
 ```ts
 const domain = {
@@ -474,7 +469,7 @@ const primaryType = "Order";
 
 The message field `market` is the **uint256 marketId** (the suffix after the `-` in the composite key), not the composite string. The composite goes in the request body's `market` field for routing; the signed message's `market` is the bare number.
 
-Signature recovery: backend calls `viem.verifyTypedData(domain, types, "Order", orderMessage, signature, order.maker)`. When `order.maker` is a contract (the Phase 4 default), viem auto-dispatches to ERC-1271 via `SignatureChecker.isValidSignatureNow` — no caller branching.
+Signature recovery: backend calls `viem.verifyTypedData(domain, types, "Order", orderMessage, signature, order.maker)`. When `order.maker` is a contract (the default for ThinWallet flows), viem auto-dispatches to ERC-1271 via `SignatureChecker.isValidSignatureNow` — no caller branching.
 
 #### Order types
 
@@ -491,7 +486,7 @@ Orders must satisfy `$5 ≤ stake ≤ $500` {{USDT_SYMBOL}} (= `5_000_000 ≤ am
 
 ### `DELETE /orders/:orderId` — L1 or L2
 
-Cancel an order. L1 body: `{ "maker": "0xdef...", "signature": "0x...", "nonce": "<uint256>", "expiry": <unixSec> }` where the signature is EIP-712 over a `Cancel` message wrapped in `WalletAuth` (for ThinWallet makers). PR-13 (P1-4) added `nonce` + `expiry` to the signed payload so a captured cancel sig can't be replayed forever; mirrors Polymarket's clob-client cancel typed-data shape.
+Cancel an order. L1 body: `{ "maker": "0xdef...", "signature": "0x...", "nonce": "<uint256>", "expiry": <unixSec> }` where the signature is EIP-712 over a `Cancel` message wrapped in `WalletAuth` (for ThinWallet makers). The `nonce` + `expiry` fields are part of the signed payload so a captured cancel signature cannot be replayed indefinitely.
 
 ```ts
 const types = {
@@ -556,7 +551,7 @@ Operational endpoints. `/admin` is gated by `x-updown-admin-key`.
 
 ### `POST /test/devmint` — L0, dev-only
 
-**Available only when `NODE_ENV !== 'production'`.** Mints `{{USDT_SYMBOL}}` to any address on the active testnet via the backend relayer. Used by the Phase 4d Playwright ladder to fund freshly-deployed ThinWallets without needing the deployer's private key in CI.
+**Available only on testnet deployments.** Mints `{{USDT_SYMBOL}}` to any address on the active testnet via the relayer. Useful for funding freshly-deployed ThinWallets in integration tests without holding the deployer's private key.
 
 Body:
 
@@ -582,7 +577,7 @@ Server responds `{ "type": "subscribed", "channels": [...] }`. Each channel's ev
 
 ### Authenticated subscribe (required for `orders:*` and `balance:*`)
 
-PR-19 (P0-18) added a signed handshake that gates per-wallet channels. Without it the server silently never delivers `orders:<wallet>` or `balance:<wallet>` events even after a `subscribed` ack — anonymous clients used to be able to read any wallet's events, which was the bug PR-19 closed.
+A signed handshake gates per-wallet channels. Without it the server never delivers `orders:<wallet>` or `balance:<wallet>` events even after a `subscribed` ack — only the wallet that proves control of the address can subscribe to its private streams.
 
 **Step 1 — sign EIP-712 `WsAuth` typed-data.** Distinct domain from order signing (so an order signature can never be replayed as a WS-auth signature):
 
@@ -754,13 +749,13 @@ At 50¢: `weight = 1`, fee = 1.5%. At 90¢: `weight ≈ 0.36`, fee ≈ 0.54%. Re
 
 `429 Too Many Requests` with JSON `{ "error": "..." }`. Back off exponentially.
 
-A per-wallet REST rate limit is on the Phase 6b backlog.
+A per-wallet REST rate limit is on the roadmap.
 
 ---
 
 ## Errors
 
-All errors are `4xx` or `5xx` JSON: `{ "error": "<short message>" }`. Frontend maps a curated set of these to user-facing strings via `formatUserFacingError` — see `updown-frontend/src/lib/errors.ts` for the canonical mapping. Notable strings (do **not** rename without a migration):
+All errors are `4xx` or `5xx` JSON: `{ "error": "<short message>" }`. Notable strings (stable — clients can match on them):
 
 - `Insufficient balance` → "Insufficient {{USDT_SYMBOL}} balance."
 - `Market not active` → "This market has ended. Open the live market and try again."
@@ -769,39 +764,12 @@ All errors are `4xx` or `5xx` JSON: `{ "error": "<short message>" }`. Frontend m
 
 ---
 
-## Multi-pair routing checklist
+## Multi-pair routing
 
-When adding a third pair (or running a second instance against a different settlement), audit every callsite that uses `pairs[0]` as a stand-in for "the only pair":
-
-- Frontend: `/config`'s legacy top-level `settlementAddress` is the FIRST pair — multi-pair clients must read `pairs[]`.
-- Backend: every per-market operation (signature verify, settlement, claim, fee withdraw, DMM rebate) routes by the market's `settlementAddress`, looked up via `findPairBySettlement(...)`. Order-flow tests in `src/services/*.test.ts` cover the boundary.
-
----
-
-## Placeholder injection
-
-This doc uses `{{PLACEHOLDER}}` strings for every chain-bound value (addresses, chain ID, native symbol, token symbol). The strings are not literally what gets served — `scripts/inject-config-into-docs.mjs` reads `GET /config` against the target deployment at content-build time, substitutes every placeholder with the live value, and writes the result to `docs/api.generated.md`. The published docs site serves the generated file.
-
-**Placeholder ↔ source mapping:**
-
-| Placeholder | Source | Example (testnet) | Example (mainnet) |
-|---|---|---|---|
-| `{{CHAIN_ID}}` | `/config.chainId` | `421614` | `42161` |
-| `{{CHAIN_NAME}}` | derived from chainId | `Arbitrum Sepolia` | `Arbitrum One` |
-| `{{NATIVE_SYMBOL}}` | derived from chainId | `ETH` | `ETH` |
-| `{{USDT_SYMBOL}}` | derived from chainId | `USDTM` | `USDT` |
-| `{{USDT_ADDRESS}}` | `/config.usdtAddress` | `0xC6322AF66F88f2Fd64F4484566Fdf7Dd21247502` | (mainnet USDT) |
-| `{{SETTLEMENT_ADDRESS}}` | `/config.pairs[0].settlementAddress` | `0x25496611A0A4B990CaD331aE31775A07521EE95C` | (mainnet) |
-| `{{AUTOCYCLER_ADDRESS}}` | `/config.pairs[0].autocyclerAddress` | `0x0A0aA3A4E533Ab9e74c6c7ed6a18Be8F815E6E64` | (mainnet) |
-| `{{RESOLVER_ADDRESS}}` | (env-bound — separate read) | `0x7bD5d7b6087E42762Af54B5a1780bd8A11380857` | (mainnet) |
-| `{{THIN_WALLET_FACTORY_ADDRESS}}` | `/config.thinWalletFactoryAddress` | `0x2dCE78dff34D717883769d1B718AD43AE007b474` | (mainnet) |
-| `{{RELAYER_ADDRESS}}` | `/config.relayerAddress` | `0x52E7b54261c147B994Cc1C62F4CD501be82086a0` | (mainnet) |
-| `{{COMMIT}}` / `{{BOOTED_AT}}` / `{{ENV}}` | `/version` | from `git rev-parse HEAD` | from CI deploy |
-
-To preview the generated doc locally: `npm run docs:build` (defined in `package.json` — runs `scripts/inject-config-into-docs.mjs` with `PHASE4D_API_BASE` defaulted to dev). The generated file lives in `docs/api.generated.md` and is gitignored — only the placeholder template is checked in.
+`/config` returns a `pairs[]` array; each entry has its own `settlementAddress` and `autocyclerAddress`. The top-level `settlementAddress` / `autocyclerAddress` fields are kept for backward compatibility and always point to `pairs[0]`. Multi-pair integrations should always read `pairs[]`. Per-market operations (signature verify, settlement, claim, fee withdraw, DMM rebate) route by the market's `settlementAddress`.
 
 ---
 
 ## Versioning
 
-Breaking changes get a single release cycle of overlap. The deprecated top-level `/config` fields will be removed when (a) all internal frontends + SDKs read from `pairs[]` AND (b) at least 30 days have passed since the deprecation note shipped.
+Breaking changes get a single release cycle of overlap. The deprecated top-level `/config` fields will be removed once SDK clients have migrated to reading from `pairs[]` and a 30-day deprecation window has elapsed since the deprecation note shipped.
