@@ -58,13 +58,15 @@ function formatPool(volume: string): string {
 export function LiveMarketRow({
   market,
   countdownSeconds,
-  upTraderCount,
-  downTraderCount,
+  upTraderCount: _upTraderCount,
+  downTraderCount: _downTraderCount,
   upPct,
   downPct,
   variant = "live",
 }: LiveMarketRowProps) {
-  const traders = upTraderCount + downTraderCount;
+  // 2026-05-18: `traders` aggregate was the source of the bottom-right "0
+  // traders" text. With the chip + footer changes above, neither
+  // upTraderCount nor downTraderCount has a render consumer anymore.
   const isResolved = variant === "resolved";
   const winnerLabel =
     market.winner === 1 ? "UP won" : market.winner === 2 ? "DOWN won" : null;
@@ -119,9 +121,15 @@ export function LiveMarketRow({
           </div>
         ) : (
           <>
+            {/* 2026-05-18: replaced the hardcoded `upTraderCount` /
+                `downTraderCount` zero displays (caller passed literal 0;
+                we had no trader-count signal to show). Chip now renders
+                the per-side cents value derived from the implied prob —
+                Polymarket-parity "UP 51¢" / "49¢ DOWN" style — when the
+                book has signal. Pre-trade markets fall back to dashes. */}
             <span className="pp-market-row__count-chip pp-market-row__count-chip--up">
               <span>UP</span>
-              <span>{upTraderCount}</span>
+              <span>{upPct == null ? '—' : `${upPct}¢`}</span>
             </span>
 
             <div className="pp-market-row__pct-bar">
@@ -129,7 +137,7 @@ export function LiveMarketRow({
                 <div className="pp-market-row__pct-bar-row">
                   <span className="pp-up">—</span>
                   <span className="pp-market-row__pct-label" style={{ marginTop: 0 }}>
-                    no trades yet
+                    no quotes yet
                   </span>
                   <span className="pp-down">—</span>
                 </div>
@@ -143,13 +151,13 @@ export function LiveMarketRow({
                     </div>
                     <span className="pp-down">{downPct}%</span>
                   </div>
-                  <div className="pp-market-row__pct-label">Counting</div>
+                  <div className="pp-market-row__pct-label">Implied</div>
                 </>
               )}
             </div>
 
             <span className="pp-market-row__count-chip pp-market-row__count-chip--down">
-              <span>{downTraderCount}</span>
+              <span>{downPct == null ? '—' : `${downPct}¢`}</span>
               <span>DOWN</span>
             </span>
           </>
@@ -158,8 +166,12 @@ export function LiveMarketRow({
 
       <div>
         <div className="pp-market-row__pool">{formatPool(market.volume)}</div>
+        {/* 2026-05-18: dropped the "{N} traders" line — the underlying
+            `traders` was always 0 because the home page hardcoded
+            upTraderCount + downTraderCount. We have no trader-count
+            signal yet, so show a status word instead. */}
         <div className="pp-market-row__traders">
-          {isResolved ? "Resolved" : `${traders} traders`}
+          {isResolved ? "Resolved" : "Live"}
         </div>
       </div>
     </div>

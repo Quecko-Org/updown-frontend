@@ -2,14 +2,16 @@
 
 /**
  * Side-by-side ladder (Polymarket-parity layout):
- *   UP bids on the LEFT, DOWN asks on the RIGHT, vertical divider between.
- *   Inside each side, asks render top-down + bids render top-down, with a
- *   thin spread-marker between them. Restyled 2026-05-17 detail-page
- *   redesign — previous single-column unified ladder lives in git history.
+ *   UP column on the LEFT, DOWN column on the RIGHT, vertical divider
+ *   between. Inside each column the BID levels (current buy demand for
+ *   that outcome) render best-first; ASK levels (sell offers) render
+ *   below once anyone holds shares to sell.
  *
- *   Only the directional asks (UP) / bids (DOWN) that PulsePairs treats as
- *   the prediction-market sides are listed; we don't include the
- *   counterparty-leg bids/asks, intentional product UI.
+ * 2026-05-18 fix: the prior implementation read `data.up.asks` /
+ * `data.down.asks` exclusively, so any market whose liquidity was
+ * entirely on the BID side (the DMM bot's cold-start state — naked SELL
+ * legs revert until inventory accumulates) rendered as empty. Now reads
+ * BOTH sides per outcome; once asks land they join the same column.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -32,7 +34,7 @@ function depthNumber(depth: string): number {
 }
 
 type Side = "up" | "down";
-type Level = { price: number; depth: string; count: number; depthVal: number };
+type Level = { price: number; depth: string; count: number; depthVal: number; kind: 'bid' | 'ask' };
 
 export function OrderBookPanel({
   marketId,
@@ -71,26 +73,47 @@ export function OrderBookPanel({
 
   const { upLevels, downLevels, maxDepth } = useMemo(() => {
     if (!data) return { upLevels: [] as Level[], downLevels: [] as Level[], maxDepth: 1 };
-    // Show up to 8 levels per side — tighter than the old 12 because the
-    // side-by-side layout halves the horizontal width per column.
-    const ups = data.up.asks.slice(0, 8).map<Level>((l) => ({
-      price: l.price,
-      depth: l.depth,
-      count: l.count,
-      depthVal: depthNumber(l.depth),
-    }));
-    const downs = data.down.asks.slice(0, 8).map<Level>((l) => ({
-      price: l.price,
-      depth: l.depth,
-      count: l.count,
-      depthVal: depthNumber(l.depth),
-    }));
+    // Merge bids + asks per outcome into a single price-sorted ladder.
+    // Bids descending then asks ascending so the best bid sits at the
+    // bottom of the bid block (closest to spread) and the best ask at
+    // the top of the ask block. Tag each level with `kind` so the
+    // renderer can color-code bid (green) vs ask (red).
+    const toLevels = (
+      bids: { price: number; depth: string; count: number }[],
+      asks: { price: number; depth: string; count: number }[],
+    ): Level[] => {
+      const bidLevels = [...bids]
+        .sort((a, b) => b.price - a.price)
+        .slice(0, 8)
+        .map<Level>((l) => ({
+          price: l.price,
+          depth: l.depth,
+          count: l.count,
+          depthVal: depthNumber(l.depth),
+          kind: 'bid',
+        }));
+      const askLevels = [...asks]
+        .sort((a, b) => a.price - b.price)
+        .slice(0, 8)
+        .map<Level>((l) => ({
+          price: l.price,
+          depth: l.depth,
+          count: l.count,
+          depthVal: depthNumber(l.depth),
+          kind: 'ask',
+        }));
+      // Asks on top (lowest sell), then bids (highest buy) — standard CLOB layout.
+      return [...askLevels, ...bidLevels];
+    };
+    const ups = toLevels(data.up.bids, data.up.asks);
+    const downs = toLevels(data.down.bids, data.down.asks);
     const md = Math.max(1, ...ups.map((r) => r.depthVal), ...downs.map((r) => r.depthVal));
     return { upLevels: ups, downLevels: downs, maxDepth: md };
   }, [data]);
 
   const hasOrders =
-    data != null && (data.up.asks.length > 0 || data.down.asks.length > 0);
+    data != null &&
+    (data.up.bids.length + data.up.asks.length + data.down.bids.length + data.down.asks.length > 0);
 
   if (isLoading || !data) {
     return <div className="pp-book__shell pp-caption">Loading order book…</div>;
@@ -168,14 +191,23 @@ function BookRow({
   maxDepth: number;
 }) {
   const pct = maxDepth > 0 ? Math.min(100, (level.depthVal / maxDepth) * 100) : 0;
+  // 2026-05-18 fix: `level.depth` is the raw atomic string (USDT 6dp), e.g.
+  // "50000000" for $50. Render the human-readable USDT value, not the
+  // atomic. Use `depthVal` which already runs through `formatUnits`.
+  const depthLabel = level.depthVal.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
   return (
     <div className={cn("pp-book__col-row", side === "up" ? "pp-book__col-row--up" : "pp-book__col-row--down")}>
       <div
         className={cn("pp-book__col-bar", side === "up" ? "pp-book__col-bar--up" : "pp-book__col-bar--down")}
         style={{ width: `${pct}%` }}
       />
-      <span className="pp-book__col-price-val pp-tabular">{(level.price / 100).toFixed(0)}¢</span>
-      <span className="pp-book__col-depth-val pp-tabular">${level.depth}</span>
+      <span className="pp-book__col-price-val pp-tabular">
+        {level.kind === 'ask' ? '↑ ' : ''}{(level.price / 100).toFixed(level.price % 100 === 0 ? 0 : 1)}¢
+      </span>
+      <span className="pp-book__col-depth-val pp-tabular">${depthLabel}</span>
     </div>
   );
 }
