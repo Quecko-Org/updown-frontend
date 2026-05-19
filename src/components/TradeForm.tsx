@@ -46,6 +46,7 @@ import {
   MIN_STAKE_USDT,
   maxStakeForBalance,
 } from "@/lib/stakeBounds";
+import { computeMarketSlippagePrice } from "@/lib/orderConstants";
 import { parseCompositeMarketKey } from "@/lib/marketKey";
 import { cn } from "@/lib/cn";
 import { formatUserFacingError, isUserRejection } from "@/lib/errors";
@@ -597,6 +598,20 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     cfg?.feeModel,
   );
   const shareCentsLabel = formatShareCentsLabel(sharePriceBps);
+
+  // PR-O follow-up: for MARKET orders, the SIGNED price is the worst-case
+  // (slippage cap), not the expected fill. Surface that cap in the Details
+  // accordion so the user can see what they're agreeing to before the
+  // wallet popup. The on-chain Settlement uses this as cashPart, so the
+  // user could pay up to this much per share. The actual fill typically
+  // matches at `avgPriceUsd` (= VWAP) and the difference settles into
+  // marketRetained as protocol dust.
+  const worstCasePriceCents = useMemo(() => {
+    if (orderType !== "MARKET") return null;
+    const slipped = computeMarketSlippagePrice({ orderSide, bestPriceBps: sharePriceBps });
+    if (slipped == null) return null;
+    return slipped / 100;
+  }, [orderType, orderSide, sharePriceBps]);
   const peakFeeBps = cfg?.peakFeeBps ?? totalBps;
   const peakFeePct = (peakFeeBps / 100).toFixed(2);
 
@@ -741,7 +756,35 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             ? Math.floor(Date.now() / 1000) + 3600
             : market.endTime;
       const typeNum = ORDER_TYPE_U8[orderType];
-      const priceNum = orderType === "MARKET" ? 0 : limitPrice;
+
+      // PR-O follow-up (selector 0x6cebd3e0 = FeeBreakdownInvalid): MARKET
+      // orders must NOT be signed with `price = 0`. Pre-PR-O the contract
+      // ignored `order.price` on settlement (pulled fillAmount regardless);
+      // under PR-O Option B the contract pulls `(price * fillAmount)/10000`
+      // as the buyer's cash side, so price=0 → cashPart=0 → revert.
+      //
+      // Sign at the worst-acceptable price: best opposite-side top of book ±
+      // SLIPPAGE_BPS. Fresh API fetch right before signing so a user who
+      // lingered on the dialog doesn't sign against a stale WS-cached
+      // price. ~50ms extra latency in exchange for not silently mis-pricing.
+      //
+      // Pre-flight: if liquidity is gone by click time, reject before the
+      // wallet popup. Better to show "Insufficient liquidity" than to ask
+      // the user to sign an order that can't fill.
+      let priceNum: number;
+      if (orderType === "MARKET") {
+        const fresh = await getOrderbook(parsedKey.composite);
+        const sideBook = side === 1 ? fresh.up : fresh.down;
+        const levels = orderSide === 0 ? sideBook.asks : sideBook.bids;
+        const bestPriceBps = levels.length > 0 ? Number(levels[0].price) : null;
+        const slipped = computeMarketSlippagePrice({ orderSide, bestPriceBps });
+        if (slipped == null) {
+          throw new Error("Insufficient liquidity");
+        }
+        priceNum = slipped;
+      } else {
+        priceNum = limitPrice;
+      }
 
       // Phase 4: order maker is the user's ThinWallet (a contract). Settlement's
       // `SignatureChecker.isValidSignatureNow` routes to
@@ -779,7 +822,11 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         option: side,
         side: orderSide,
         type: typeNum,
-        price: orderType === "MARKET" ? 0 : priceNum,
+        // PR-O follow-up: ALWAYS the signed (non-zero) price; MARKET
+        // orders carry their slippage-derived cap so the on-chain
+        // Settlement reproduces the same cashPart math from the signed
+        // payload.
+        price: priceNum,
         amount: amount.toString(),
         nonce,
         expiry,
@@ -1328,6 +1375,17 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
               <span className="pp-tabular pp-up">
                 +{(rebateBps / 100).toFixed(2)}% on this fill
               </span>
+            </div>
+          ) : null}
+          {worstCasePriceCents != null ? (
+            <div className="pp-trade-v2__details-row">
+              <span>
+                Max price{" "}
+                <InfoTip
+                  text={`5% slippage cap. Market orders sign at this worst-case price so the trade can't fill above it. Typical fill is at "Avg. Price" above; any difference goes to the protocol pool.`}
+                />
+              </span>
+              <span className="pp-tabular">≤ ${worstCasePriceCents.toFixed(2)}</span>
             </div>
           ) : null}
         </div>
