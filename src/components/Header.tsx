@@ -48,7 +48,12 @@ type NavItem = {
 const NAV: NavItem[] = [
   { href: "/portfolio", label: "Portfolio", requireConnected: true },
   { href: "/how-it-works", label: "How it works" },
-  { href: "/docs", label: "Docs", requireDesktop: true },
+  // 2026-05-19: point at /docs/api directly. /docs is a server-side
+  // `redirect("/docs/api")` (src/app/docs/page.tsx) which works on a hard
+  // load but stalls Next.js's client-side router on SPA navigation —
+  // clicking the top-bar Docs link from the homepage left the URL on /
+  // and no page transition fired. Skipping the redirect hop fixes it.
+  { href: "/docs/api", label: "Docs", requireDesktop: true },
 ];
 
 // Secondary nav opens from the hamburger. Visible on all viewport sizes so
@@ -237,8 +242,11 @@ export function Header() {
   function navActive(href: string): boolean {
     if (href === "/") return pathname === "/" || pathname.startsWith("/market/");
     // /docs has subpages (/docs/api, /docs/sdk) — match the prefix so the
-    // top-nav highlight follows the user across tabs.
-    if (href === "/docs") return pathname === "/docs" || pathname.startsWith("/docs/");
+    // top-nav highlight follows the user across tabs even though the link
+    // itself now points at /docs/api directly (to skip the redirect hop
+    // that broke SPA navigation from the homepage).
+    if (href === "/docs" || href.startsWith("/docs/"))
+      return pathname === "/docs" || pathname.startsWith("/docs/");
     return pathname === href;
   }
 
