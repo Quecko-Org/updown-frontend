@@ -164,7 +164,7 @@ test.describe("Phase 4d — ThinWallet 5-state ladder", () => {
     await waitForTwOnHeader(page, wallet.address.slice(-4));
 
     // Navigate to first ACTIVE market.
-    await page.locator(".pp-market-row-link, a[href^='/market/']").first().click();
+    await page.locator(".pp-market-row-link").first().click();
     await page.waitForLoadState("networkidle", { timeout: 15_000 });
 
     // The trade panel should show some "approval needed" affordance before
@@ -203,7 +203,7 @@ test.describe("Phase 4d — ThinWallet 5-state ladder", () => {
     await connectAndAutoSign(page, wallet.address);
     await waitForTwOnHeader(page, wallet.address.slice(-4));
 
-    await page.locator(".pp-market-row-link, a[href^='/market/']").first().click();
+    await page.locator(".pp-market-row-link").first().click();
     await page.waitForLoadState("networkidle", { timeout: 15_000 });
 
     // Form should not show the approval cue anymore; it should show a
@@ -237,7 +237,7 @@ test.describe("Phase 4d — ThinWallet 5-state ladder", () => {
     await connectAndAutoSign(page, wallet.address);
     await waitForTwOnHeader(page, wallet.address.slice(-4));
 
-    await page.locator(".pp-market-row-link, a[href^='/market/']").first().click();
+    await page.locator(".pp-market-row-link").first().click();
     await page.waitForLoadState("networkidle", { timeout: 15_000 });
 
     // Place a tiny LIMIT order. Selectors intentionally lenient — these

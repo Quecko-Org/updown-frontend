@@ -161,7 +161,10 @@ export function notificationFromTerminalOrder(args: {
       kind: "market_resolved",
       title: "Position resolved",
       body: "Market settled. Open the portfolio to claim.",
-      href: `/market/${marketAddress.toLowerCase()}`,
+      // PR-R (2026-05-20): the /market/<address> deep-link route is
+      // deleted; route this notification to /portfolio so users can
+      // see the claim immediately.
+      href: `/portfolio`,
       ts,
       read: false,
     };
