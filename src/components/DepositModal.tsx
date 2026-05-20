@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import { Modal } from "./Modal";
 import { activeChain, tokenSymbolForActiveChain } from "@/config/environment";
 import { postDevmintUsdt } from "@/lib/api";
@@ -34,6 +35,7 @@ export function DepositModal({ open, onClose, depositAddress }: Props) {
   const chainName = activeChain.name;
   const isTestnet = activeChain.id === 421614;
   const [minting, setMinting] = useState(false);
+  const queryClient = useQueryClient();
 
   function copy() {
     if (!canCopy) return;
@@ -49,6 +51,12 @@ export function DepositModal({ open, onClose, depositAddress }: Props) {
         address: address as `0x${string}`,
         amount: TESTNET_MINT_AMOUNT_ATOMIC,
       });
+      // PR-AA (2026-05-20): invalidate the balance query so the UI
+      // reflects the new mint within ~one render frame instead of
+      // waiting for the 15s `refetchInterval` cycle. Pre-PR-AA the
+      // user's report: "Minted X, UI didn't show" was at minimum
+      // a 15s perceived lag.
+      await queryClient.invalidateQueries({ queryKey: ["balance"] });
       toast.success(`Minted 100 ${tokenSymbol} — tx ${result.txHash.slice(0, 10)}…`);
     } catch (e) {
       toast.error(formatUserFacingError(e));
