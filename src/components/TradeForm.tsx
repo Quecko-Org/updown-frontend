@@ -16,7 +16,6 @@ import {
   getBalance,
   getConfig,
   getMarket,
-  getDmmStatus,
   getOrderbook,
   getPositions,
   postOrder,
@@ -303,12 +302,13 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     : "";
   const isMarketTradeable = effectiveMarketStatus === "ACTIVE";
 
-  const { data: dmmStatus } = useQuery({
-    queryKey: ["dmmStatus", address?.toLowerCase() ?? ""],
-    queryFn: () => getDmmStatus(address!),
-    enabled: !!address && isConnected,
-    staleTime: 60_000,
-  });
+  // PR-Z (2026-05-20): the `dmmStatus` useQuery against `/dmm/list` was
+  // hitting a backend endpoint deleted in the 2026-05-12 rebate rebuild
+  // (404 on every mount). The per-trade "Maker rebate" details row that
+  // depended on `dmmStatus?.isDmm` is removed below — anyone making a
+  // SELL fill accrues rebates, but the per-trade preview wasn't accurate
+  // because it'd appear on BUY tickets too (BUY-side never makes a fill).
+  // Rebate accounting lives on `/rebates`.
 
   // PR-18 P0-11: available-balance gate. Pull the user's off-chain
   // available USDT (cachedBalance - inOrders) so we can disable submit
@@ -872,8 +872,6 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     return <MarketClosedPanel market={market} />;
   }
 
-  const rebateBps = dmmStatus?.isDmm ? apiConfig?.dmmRebateBps : undefined;
-
   const activeOtype = ORDER_TYPES.find((t) => t.id === orderType) ?? ORDER_TYPES[0]!;
 
   // 2026-05-16 BUG A redesign — derived render values.
@@ -1367,14 +1365,6 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             <div className="pp-trade-v2__details-row">
               <span>Net profit if {side === 1 ? "Up" : "Down"} wins</span>
               <span className="pp-tabular pp-up">+${profitIfBuyWin.toFixed(2)}</span>
-            </div>
-          ) : null}
-          {rebateBps != null && rebateBps > 0 ? (
-            <div className="pp-trade-v2__details-row pp-trade-v2__details-row--rebate">
-              <span>Maker rebate</span>
-              <span className="pp-tabular pp-up">
-                +{(rebateBps / 100).toFixed(2)}% on this fill
-              </span>
             </div>
           ) : null}
           {worstCasePriceCents != null ? (
