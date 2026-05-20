@@ -113,15 +113,68 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("userlastconnectorId");
   }, [disconnect, setSmartAccount, setSmartAccountClient, setPubClient]);
 
+  /**
+   * PR-Y (2026-05-20): chain-switch error UX fix.
+   *
+   * Pre-PR-Y the catch block surfaced EVERY error as "Signature rejected"
+   * — including `switchChainAsync` failures (the user's wallet didn't
+   * have Arbitrum Sepolia configured, so `wallet_switchEthereumChain`
+   * returned 4902). Generic toast meant users had no idea they needed
+   * to add the chain.
+   *
+   * Three failure modes distinguished:
+   *   - 4902 (chain not added): call `wallet_addEthereumChain` with
+   *     Arbitrum Sepolia params + retry switch. Single MetaMask popup
+   *     for the user to approve adding the network.
+   *   - 4001 (user rejected the popup): "You cancelled" — softer copy.
+   *   - other: surface the actual error message so the user sees what
+   *     went wrong (RPC unreachable, wallet bug, etc.).
+   */
+  const ensurePlatformChain = useCallback(async (): Promise<void> => {
+    if (connectedChainId === platform_chainId) return;
+    try {
+      await switchChainAsync({ chainId: platform_chainId });
+      return;
+    } catch (switchErr: unknown) {
+      const e = switchErr as { code?: number | string; message?: string };
+      const code = typeof e?.code === "number" ? e.code : Number(e?.code);
+      const msg = e?.message ?? "";
+      const isChainNotAdded =
+        code === 4902 ||
+        /unrecognized chain id|chain id .* not added|switchEthereumChain|wallet_switchEthereumChain/i.test(msg);
+      if (!isChainNotAdded) throw switchErr;
+
+      // Fallback: ask the wallet to add Arbitrum Sepolia, then retry switch.
+      const provider = await walletClient?.transport?.request
+        ? walletClient
+        : null;
+      if (!provider) throw switchErr;
+      const params = [{
+        chainId: `0x${platform_chainId.toString(16)}`,
+        chainName: activeChain.name,
+        nativeCurrency: activeChain.nativeCurrency,
+        rpcUrls: [ALCHEMY_RPC_URL, ...(activeChain.rpcUrls?.default?.http ?? [])].filter(Boolean),
+        blockExplorerUrls: activeChain.blockExplorers?.default?.url
+          ? [activeChain.blockExplorers.default.url]
+          : [],
+      }];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (provider as any).transport.request({
+        method: "wallet_addEthereumChain",
+        params,
+      });
+      // Retry the switch once the chain is added.
+      await switchChainAsync({ chainId: platform_chainId });
+    }
+  }, [connectedChainId, switchChainAsync, walletClient]);
+
   const performSign = useCallback(
     async (walletAddr: string) => {
       try {
         setIsLoading(true);
         setLoadingStep("Confirm signature request");
 
-        if (connectedChainId !== platform_chainId) {
-          await switchChainAsync({ chainId: platform_chainId });
-        }
+        await ensurePlatformChain();
 
         const connections = getConnections(wagmiConfig);
         const activeConnector = connections[0]?.connector;
@@ -140,16 +193,40 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         localStorage.setItem("lastAccount", walletAddr);
 
         return signData;
-      } catch (error) {
+      } catch (error: unknown) {
         setLoadingStep("");
         setIsLoading(false);
-        toast.error(SIGNATURE_REJECTED);
+
+        const e = error as { code?: number | string; message?: string };
+        const code = typeof e?.code === "number" ? e.code : Number(e?.code);
+        const msg = (e?.message ?? "").trim();
+
+        // 4001 = user rejected. Softer copy; don't disconnect (they may want to retry).
+        const isUserReject =
+          code === 4001 || /user rejected|user denied|denied by user|4001/i.test(msg);
+        // 4902 = chain not added AND wallet refused to add it (or add failed).
+        const isChainNotAdded =
+          code === 4902 ||
+          /unrecognized chain id|wallet_addEthereumChain|switchEthereumChain/i.test(msg);
+
+        if (isUserReject) {
+          toast.error("You cancelled the signature request.");
+        } else if (isChainNotAdded) {
+          toast.error(
+            `Couldn't switch to ${activeChain.name}. Please add the network manually in your wallet and try again.`,
+          );
+        } else if (msg) {
+          // Surface the actual error so the user sees what went wrong.
+          toast.error(msg);
+        } else {
+          toast.error(SIGNATURE_REJECTED);
+        }
         disconnectWallet();
         console.error("Signing failed:", error);
         return null;
       }
     },
-    [connectedChainId, switchChainAsync, disconnectWallet],
+    [ensurePlatformChain, disconnectWallet],
   );
 
   const connectWallet = useCallback(
