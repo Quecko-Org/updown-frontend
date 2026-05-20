@@ -240,7 +240,7 @@ export function Header() {
   const depositAddress = tradingIdentity;
 
   function navActive(href: string): boolean {
-    if (href === "/") return pathname === "/" || pathname.startsWith("/market/");
+    if (href === "/") return pathname === "/";
     // /docs has subpages (/docs/api, /docs/sdk) — match the prefix so the
     // top-nav highlight follows the user across tabs even though the link
     // itself now points at /docs/api directly (to skip the redirect hop

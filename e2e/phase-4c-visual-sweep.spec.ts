@@ -95,10 +95,11 @@ for (const vp of viewports) {
       const watch = attachErrorWatch(page);
       await page.goto(BASE);
       await page.waitForLoadState("networkidle", { timeout: 15_000 });
-      // Wait for at least one market card to render. Cycler creates new
-      // markets every few minutes on Sepolia — if none appear, the
-      // syncer or Automation are broken (separate concern).
-      await page.waitForSelector('a[href^="/market/"]', { timeout: 15_000 });
+      // Wait for at least one market row to render. PR-R (2026-05-20)
+      // killed the per-market detail route; the home page bottom-strip
+      // drawer is the single trade UI surface. `.pp-market-row-link`
+      // is the drawer trigger.
+      await page.waitForSelector(".pp-market-row-link", { timeout: 15_000 });
       await page.screenshot({
         path: path.join(OUT, `${vp.name}-a-homepage.png`),
         fullPage: true,
@@ -136,21 +137,8 @@ for (const vp of viewports) {
       watch.expectNoErrors();
     });
 
-    test("[d] market detail — chart + trade panel skeleton", async ({ page }) => {
-      const watch = attachErrorWatch(page);
-      await page.goto(BASE);
-      await page.waitForLoadState("networkidle", { timeout: 15_000 });
-      // Click first market link → detail page.
-      const firstMarket = page.locator('a[href^="/market/"]').first();
-      await firstMarket.click();
-      await page.waitForURL(/\/market\//, { timeout: 10_000 });
-      // Chart container renders ~2s after navigation; small settle wait.
-      await page.waitForTimeout(2000);
-      await page.screenshot({
-        path: path.join(OUT, `${vp.name}-d-market-detail.png`),
-        fullPage: true,
-      });
-      watch.expectNoErrors();
-    });
+    // [d] market detail test deleted in PR-R (2026-05-20) — the
+    // /market/<address> route is gone. The home page drawer is the
+    // single trade UI surface; its rendering is covered by [a] above.
   });
 }
