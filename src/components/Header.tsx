@@ -7,7 +7,7 @@ import { usePathname } from "next/navigation";
 import { useMemo, useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
-import { getBalance, getDmmStatus, getOrders } from "@/lib/api";
+import { getBalance, getOrders } from "@/lib/api";
 import { identifyHashed, resetIdentity, track } from "@/lib/analytics";
 import { geoStateAtom, userSmartAccount } from "@/store/atoms";
 import { formatUsdt } from "@/lib/format";
@@ -169,12 +169,13 @@ export function Header() {
     retry: 1,
   });
 
-  const { data: dmmStatus } = useQuery({
-    queryKey: ["dmmStatus", tradingIdentity?.toLowerCase() ?? ""],
-    queryFn: () => getDmmStatus(tradingIdentity!),
-    enabled: !!tradingIdentity && isWalletConnected,
-    staleTime: 60_000,
-  });
+  // PR-Z (2026-05-20): the `dmmStatus` useQuery against `/dmm/list` was
+  // pinging a backend endpoint that's been gone since the 2026-05-12
+  // rebate rebuild — the docblock on `routes/dmm.ts` says "the whitelist
+  // is gone (anyone earns rebates)". The query returned 404 on every
+  // mount, spamming the console. Removed entirely: the `Rebates` nav
+  // link below is now shown to any connected wallet (since anyone can
+  // accumulate rebates as a maker).
 
   // Phase2-PRE2: "in orders" derives from the open-orders list, NOT from
   // backend `balance.inOrders`. Two reasons:
@@ -316,7 +317,7 @@ export function Header() {
                 {n.label}
               </Link>
             ))}
-            {isWalletConnected && dmmStatus?.isDmm ? (
+            {isWalletConnected ? (
               <Link
                 href="/rebates"
                 className={cn("pp-hdr__navlink", pathname === "/rebates" && "pp-hdr__navlink--on")}
@@ -479,7 +480,7 @@ export function Header() {
                         {n.label}
                       </Link>
                     ))}
-                    {isWalletConnected && dmmStatus?.isDmm ? (
+                    {isWalletConnected ? (
                       <Link
                         href="/rebates"
                         onClick={() => setMenuOpen(false)}

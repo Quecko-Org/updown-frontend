@@ -422,25 +422,14 @@ export async function postMarketClaim(marketAddress: string): Promise<{ ok: bool
   return parseJson(res);
 }
 
-export type DmmStatusResponse = {
-  isDmm: boolean;
-  rebateBps?: number;
-};
-
-type DmmListResponse = { dmms: Array<{ wallet?: string; address?: string } | string> };
-
-export async function getDmmStatus(wallet: string): Promise<DmmStatusResponse> {
-  const res = await fetch(url("/dmm/list"));
-  const data = await parseJson<DmmListResponse>(res);
-  const target = wallet.toLowerCase();
-  const list = data?.dmms ?? [];
-  const isDmm = list.some((entry) => {
-    if (typeof entry === "string") return entry.toLowerCase() === target;
-    const w = entry.wallet ?? entry.address;
-    return typeof w === "string" && w.toLowerCase() === target;
-  });
-  return { isDmm };
-}
+// PR-Z (2026-05-20): `getDmmStatus` + `DmmStatusResponse` deleted. The
+// `/dmm/list` backend endpoint was removed in the 2026-05-12 rebate
+// rebuild (docblock on `routes/dmm.ts`: "the whitelist is gone — anyone
+// earns rebates; the list / add / remove endpoints are gone with it").
+// The frontend's stale `getDmmStatus` was 404-ing on every Header +
+// TradeForm mount. The `isDmm` concept is dead — any maker can call
+// `/dmm/rebates/<wallet>` to see what's claimable. Rebate-balance APIs
+// kept; whitelist APIs removed.
 
 export type DmmRebateClaimRow = {
   amount?: string;
