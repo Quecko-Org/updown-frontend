@@ -378,6 +378,12 @@ export type PostOrderBody = {
   type: number | OrderApiType;
   price?: number;
   amount: string;
+  /**
+   * F-2026-17731: signed fee cap (atomic USDT, decimal string). Part of the EIP-712 Order
+   * payload, so it must be the exact value signed into the order digest. The backend stores it
+   * and the settlement contract caps the taker's fee at this value.
+   */
+  maxFee: string;
   nonce: number;
   expiry: number;
   signature: string;

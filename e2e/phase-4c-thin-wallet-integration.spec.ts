@@ -49,6 +49,9 @@ const ORDER_TYPES = {
     { name: "type", type: "uint8" },
     { name: "price", type: "uint256" },
     { name: "amount", type: "uint256" },
+    // F-2026-17731 (Hacken remediation V2): signed fee cap. Must mirror ORDER_TYPEHASH in
+    // UpDownSettlement.sol + the backend's EIP712_ORDER_TYPES (maxFee between amount and nonce).
+    { name: "maxFee", type: "uint256" },
     { name: "nonce", type: "uint256" },
     { name: "expiry", type: "uint256" },
   ],
@@ -216,6 +219,9 @@ test.describe("Phase 4c — ThinWallet consumer flow against dev (Sepolia)", () 
       type: 1,
       price: BigInt(0),
       amount: BigInt(5_000_000),
+      // F-2026-17731: signed fee cap. Worst-case peak (totalFeeBps=150 default) on the notional:
+      // 5_000_000 × 150 / 10000 = 75_000. Must match the value posted below and be in the digest.
+      maxFee: BigInt(75_000),
       nonce: BigInt(Math.floor(Date.now() / 1000)),
       expiry: BigInt(Math.floor(Date.now() / 1000) + 3600),
     };
@@ -246,6 +252,7 @@ test.describe("Phase 4c — ThinWallet consumer flow against dev (Sepolia)", () 
         type: 1,
         price: 0,
         amount: orderMsg.amount.toString(),
+        maxFee: orderMsg.maxFee.toString(),
         nonce: orderMsg.nonce.toString(),
         expiry: Number(orderMsg.expiry),
         signature: walletAuthSig,

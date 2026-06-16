@@ -9,6 +9,14 @@ export const ORDER_TYPES = {
     { name: "type", type: "uint8" },
     { name: "price", type: "uint256" },
     { name: "amount", type: "uint256" },
+    // F-2026-17731 (Hacken remediation V2): signed fee cap — the max total fee
+    // (platformFee + makerFee) this order will pay WHEN FILLED AS THE TAKER. The
+    // settlement contract caps the relayer-supplied fee at `takerOrder.maxFee`, so
+    // the relayer can never charge more than the user cryptographically committed to.
+    // Field order MUST match `ORDER_TYPEHASH` in UpDownSettlement.sol and the backend's
+    // `EIP712_ORDER_TYPES` exactly (maxFee between amount and nonce) — any drift makes
+    // the on-chain `SignatureChecker` reject the signature.
+    { name: "maxFee", type: "uint256" },
     { name: "nonce", type: "uint256" },
     { name: "expiry", type: "uint256" },
   ],
@@ -43,6 +51,8 @@ export type OrderSignMessage = {
   type: number;
   price: bigint;
   amount: bigint;
+  /** F-2026-17731: signed fee cap (atomic USDT). Max total fee paid when filled as taker. */
+  maxFee: bigint;
   nonce: bigint;
   expiry: bigint;
 };

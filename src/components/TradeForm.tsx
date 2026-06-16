@@ -795,6 +795,16 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       //   1. Compute Settlement-domain order digest off-chain.
       //   2. Sign a WalletAuth envelope against the TW's domain.
       const twAddress = smartAccount as `0x${string}`;
+      // F-2026-17731 (Hacken remediation V2): sign a fee cap into the order. The relayer charges
+      // a probability-weighted fee (4·p·(1−p), peak weight 1.0 at 50¢) computed at each fill's
+      // price, and a taker order can fill across multiple price levels. The only cap that
+      // provably bounds the CUMULATIVE fee for any fill distribution is the worst-case weight:
+      // amount × totalFeeBps / 10000 (≥ Σ per-fill fees, since each fill's weight ≤ 1 and the
+      // fills sum to ≤ amount). The contract enforces `platformFee + makerFee ≤ takerOrder.maxFee`
+      // cumulatively, so signing the peak means legitimate fills never revert with
+      // FeeExceedsTakerCap while still bounding the relayer to at most totalFeeBps of notional.
+      const feeBpsTotal = (cfg?.platformFeeBps ?? 70) + (cfg?.makerFeeBps ?? 80);
+      const maxFee = (amount * BigInt(feeBpsTotal)) / BigInt(10000);
       const msg = {
         maker: twAddress,
         market: parsedKey.marketId,
@@ -803,6 +813,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         type: typeNum,
         price: BigInt(priceNum),
         amount,
+        maxFee,
         nonce: BigInt(nonce),
         expiry: BigInt(expiry),
       };
@@ -828,6 +839,9 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         // payload.
         price: priceNum,
         amount: amount.toString(),
+        // F-2026-17731: the signed fee cap, sent verbatim as the value baked into the order
+        // digest above. Must equal `msg.maxFee` or the on-chain signature check would reject.
+        maxFee: maxFee.toString(),
         nonce,
         expiry,
         signature,
