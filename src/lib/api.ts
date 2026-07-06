@@ -50,11 +50,9 @@ export type ApiConfig = {
     };
   };
   /**
-   * Phase 4: ThinWalletFactory address for the active chain. Empty / missing
-   * means factory not deployed on this network → frontend falls back to
-   * Path-1 EOA-direct trading. Non-empty → frontend provisions a TW per
-   * user via POST /thin-wallet/provision and routes order signing via the
-   * ERC-1271 WalletAuth wrap.
+   * Legacy (pre-Account-Kit): ThinWalletFactory address for the active
+   * chain. The backend may still return it; the frontend no longer reads
+   * it — custody is an Alchemy SCA derived client-side (lib/accountKit).
    */
   thinWalletFactoryAddress?: string;
 };
@@ -64,61 +62,8 @@ export async function getConfig(): Promise<ApiConfig> {
   return parseJson<ApiConfig>(res);
 }
 
-// ── Phase 4: ThinWallet endpoints ───────────────────────────────────────
-
-export type ProvisionRequest = {
-  eoa: `0x${string}`;
-  signature: string;
-};
-
-export type ProvisionResponse = {
-  twAddress: `0x${string}`;
-  deployed: boolean;
-  txHash?: string;
-  deployedAtBlock?: number;
-};
-
-export async function postThinWalletProvision(req: ProvisionRequest): Promise<ProvisionResponse> {
-  const res = await fetch(url("/thin-wallet/provision"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
-  });
-  return parseJson<ProvisionResponse>(res);
-}
-
-export type SignedExecuteAuth = {
-  target: `0x${string}`;
-  data: `0x${string}`;
-  nonce: string; // stringified uint256
-  deadline: number; // unix seconds
-  signature: string;
-};
-
-export type ExecuteWithSigRequest = {
-  eoa: `0x${string}`;
-  signedAuth: SignedExecuteAuth;
-};
-
-export type ExecuteWithSigResponse = {
-  txHash: string;
-  blockNumber: number;
-  twAddress: `0x${string}`;
-};
-
-export async function postThinWalletExecuteWithSig(
-  req: ExecuteWithSigRequest,
-): Promise<ExecuteWithSigResponse> {
-  const res = await fetch(url("/thin-wallet/execute-with-sig"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
-  });
-  return parseJson<ExecuteWithSigResponse>(res);
-}
-
 /**
- * F3 (2026-05-16) — testnet faucet for self-funding ThinWallets.
+ * F3 (2026-05-16) — testnet faucet for self-funding trading accounts.
  *
  * Calls the backend's `POST /test/devmint`, which is env-gated to
  * `NODE_ENV !== 'production'`. Returns 404 on prod regardless of the

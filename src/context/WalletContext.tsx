@@ -18,47 +18,42 @@ import {
   useSwitchChain,
   type Connector,
 } from "wagmi";
-import { signMessage, getConnections } from "@wagmi/core";
+import { getConnections } from "@wagmi/core";
 import { createPublicClient, http, type PublicClient } from "viem";
-import { useAtom, useAtomValue } from "jotai";
+import { useAtom } from "jotai";
 import { toast } from "sonner";
 import { wagmiConfig } from "@/config/wagmi";
 import { platform_chainId, ALCHEMY_RPC_URL, activeChain } from "@/config/environment";
-import { LOGIN_SUCCESS, SIGNATURE_REJECTED } from "@/config/walletConstants";
+import { LOGIN_SUCCESS } from "@/config/walletConstants";
 import {
   userSmartAccount,
   userSmartAccountClient,
   userPublicClient,
-  apiConfigAtom,
 } from "@/store/atoms";
-import { useThinWallet } from "@/hooks/useThinWallet";
+import {
+  createUpDownAccountKitSigner,
+  type Eip1193Provider,
+  type UpDownAccountKitSigner,
+} from "@/lib/accountKit";
 
 /**
- * Phase 4 architecture (post 2026-05-14): the user's trading account is a
- * per-EOA ThinWallet auto-provisioned at first connect. The EOA owns the
- * TW (set as `owner` at construction) and signs orders via ERC-1271
- * WalletAuth wraps. The TW holds USDTM, approves Settlement, and is the
- * `order.maker` in all signed orders. Gas-free for the user end-to-end:
+ * Account Kit architecture (2026-07-05, replacing Phase-4 ThinWallet):
+ * the user's trading account is an Alchemy smart-contract account (SCA)
+ * derived deterministically from the owner EOA — the same derivation
+ * rain.trade's `RainAA` uses, so one EOA = one wallet across products.
  *
  *   1. wagmi connect (MetaMask / WalletConnect / Coinbase Wallet)
- *   2. Verify-wallet personal_sign — the EOA signs its own address as a
- *      one-time identity proof (stored in localStorage at key `"sign"`).
- *   3. `useThinWallet` hook POSTs `/thin-wallet/provision` with that sig.
- *      Backend's relayer fires `factory.deployWallet(eoa)`. Idempotent —
- *      no-op if the TW already exists at the predicted CREATE2 address.
- *   4. `userSmartAccount` atom is set to the TW address. All downstream
- *      consumers (TradeForm, DepositModal, balance reads) route through it.
+ *   2. `UpDownAccountKitSigner.connect()` resolves the SCA address from
+ *      the Alchemy wallet server. No signature, no backend provisioning.
+ *   3. `userSmartAccount` atom = SCA address; `userSmartAccountClient`
+ *      atom = the signer. All downstream consumers (TradeForm,
+ *      DepositModal, WS auth, balance reads) route through them.
  *
- * Path-1 fallback: when the active chain doesn't have a deployed factory
- * (`config.thinWalletFactoryAddress` empty/missing), the hook stays idle
- * and the atom is set to the EOA — restoring pre-Phase-4 behavior. No
- * branching in downstream code.
- *
- * First-approve flow: TradeForm builds an `executeWithSig` envelope for
- * `USDTM.approve(Settlement, MAX)`, the EOA signs (free, gas-less typed-
- * data popup), the request goes to `/thin-wallet/execute-with-sig`, and
- * the relayer broadcasts. User signs 2 envelopes total during onboarding
- * (verify + approve); pays zero gas.
+ * Onboarding (deploy + approve) happens lazily on the first trade — see
+ * TradeForm's `ensureSettlementAllowance`: one UserOp deploys the SCA and
+ * approves the settlement. Orders/cancels are signed by the OWNER key as
+ * bare ERC-1271 typed-data (`signTypedDataBare`); there is no WalletAuth
+ * wrap and no relayer meta-tx surface anymore.
  */
 export interface WalletContextValue {
   isWalletConnected: boolean;
@@ -70,7 +65,7 @@ export interface WalletContextValue {
   showSignModal: boolean;
   handleSign: () => void;
   closeSignModal: () => void;
-  /** No-op under Path 1; retained for back-compat with existing callers. */
+  /** No-op; retained for back-compat with existing callers. */
   reauthorizeSession: () => Promise<void>;
 }
 
@@ -85,13 +80,10 @@ export function useWalletContext(): WalletContextValue {
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [, setSmartAccount] = useAtom(userSmartAccount);
   const [, setSmartAccountClient] = useAtom(userSmartAccountClient);
-  const apiConfig = useAtomValue(apiConfigAtom);
   const [, setPubClient] = useAtom(userPublicClient);
 
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState("");
-  const [showSignModal, setShowSignModal] = useState(false);
-  const pendingSign = useRef(false);
 
   const { connectAsync } = useConnect();
   const { disconnect } = useDisconnect();
@@ -100,31 +92,31 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const connectedChainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
 
+  /** The signer instance + which EOA it was built for (rebuild on switch). */
+  const akRef = useRef<UpDownAccountKitSigner | null>(null);
+  const akOwnerRef = useRef<string | null>(null);
+  const setupInFlightRef = useRef(false);
+
   const disconnectWallet = useCallback(() => {
     disconnect();
+    akRef.current?.disconnect();
+    akRef.current = null;
+    akOwnerRef.current = null;
     setSmartAccount("");
     setSmartAccountClient(null);
     setPubClient(null);
-    pendingSign.current = false;
     localStorage.removeItem("connectorId");
     localStorage.removeItem("flag");
     localStorage.removeItem("lastAccount");
-    localStorage.removeItem("sign");
     localStorage.removeItem("userlastconnectorId");
   }, [disconnect, setSmartAccount, setSmartAccountClient, setPubClient]);
 
   /**
    * PR-Y (2026-05-20): chain-switch error UX fix.
    *
-   * Pre-PR-Y the catch block surfaced EVERY error as "Signature rejected"
-   * — including `switchChainAsync` failures (the user's wallet didn't
-   * have Arbitrum Sepolia configured, so `wallet_switchEthereumChain`
-   * returned 4902). Generic toast meant users had no idea they needed
-   * to add the chain.
-   *
    * Three failure modes distinguished:
-   *   - 4902 (chain not added): call `wallet_addEthereumChain` with
-   *     Arbitrum Sepolia params + retry switch. Single MetaMask popup
+   *   - 4902 (chain not added): call `wallet_addEthereumChain` with the
+   *     active chain params + retry switch. Single MetaMask popup
    *     for the user to approve adding the network.
    *   - 4001 (user rejected the popup): "You cancelled" — softer copy.
    *   - other: surface the actual error message so the user sees what
@@ -144,7 +136,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         /unrecognized chain id|chain id .* not added|switchEthereumChain|wallet_switchEthereumChain/i.test(msg);
       if (!isChainNotAdded) throw switchErr;
 
-      // Fallback: ask the wallet to add Arbitrum Sepolia, then retry switch.
+      // Fallback: ask the wallet to add the chain, then retry switch.
       const provider = await walletClient?.transport?.request
         ? walletClient
         : null;
@@ -168,65 +160,63 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [connectedChainId, switchChainAsync, walletClient]);
 
-  const performSign = useCallback(
-    async (walletAddr: string) => {
+  /**
+   * Build the Account Kit signer for the connected EOA and resolve the SCA.
+   * Idempotent per EOA; rebuilds when the user switches accounts. `silent`
+   * suppresses the success toast (reload-restore path).
+   */
+  const setupAccountKit = useCallback(
+    async (walletAddr: string, opts?: { silent?: boolean }) => {
+      if (setupInFlightRef.current) return;
+      if (akRef.current && akOwnerRef.current === walletAddr.toLowerCase()) return;
+      setupInFlightRef.current = true;
       try {
         setIsLoading(true);
-        setLoadingStep("Confirm signature request");
+        setLoadingStep("Setting up your account…");
 
         await ensurePlatformChain();
 
         const connections = getConnections(wagmiConfig);
         const activeConnector = connections[0]?.connector;
         if (!activeConnector) throw new Error("No connector");
+        const provider = (await activeConnector.getProvider()) as Eip1193Provider;
 
-        const signData = await signMessage(wagmiConfig, {
-          connector: activeConnector,
-          message: walletAddr.toLowerCase(),
-        });
+        const ak = createUpDownAccountKitSigner(provider);
+        const sca = await ak.connect();
 
-        const lastConnectorId = localStorage.getItem("userlastconnectorId");
-        if (lastConnectorId) {
-          localStorage.setItem("connectorId", lastConnectorId);
-        }
-        localStorage.setItem("sign", signData);
+        akRef.current = ak;
+        akOwnerRef.current = walletAddr.toLowerCase();
+        setSmartAccount(sca);
+        setSmartAccountClient(ak);
         localStorage.setItem("lastAccount", walletAddr);
-
-        return signData;
+        if (!opts?.silent) toast.success(LOGIN_SUCCESS);
       } catch (error: unknown) {
-        setLoadingStep("");
-        setIsLoading(false);
-
         const e = error as { code?: number | string; message?: string };
         const code = typeof e?.code === "number" ? e.code : Number(e?.code);
         const msg = (e?.message ?? "").trim();
-
-        // 4001 = user rejected. Softer copy; don't disconnect (they may want to retry).
         const isUserReject =
           code === 4001 || /user rejected|user denied|denied by user|4001/i.test(msg);
-        // 4902 = chain not added AND wallet refused to add it (or add failed).
         const isChainNotAdded =
           code === 4902 ||
           /unrecognized chain id|wallet_addEthereumChain|switchEthereumChain/i.test(msg);
-
         if (isUserReject) {
-          toast.error("You cancelled the signature request.");
+          toast.error("You cancelled the wallet request.");
         } else if (isChainNotAdded) {
           toast.error(
             `Couldn't switch to ${activeChain.name}. Please add the network manually in your wallet and try again.`,
           );
-        } else if (msg) {
-          // Surface the actual error so the user sees what went wrong.
-          toast.error(msg);
         } else {
-          toast.error(SIGNATURE_REJECTED);
+          toast.error(msg || "Couldn't set up your trading account. Please try again.");
         }
         disconnectWallet();
-        console.error("Signing failed:", error);
-        return null;
+        console.error("Account Kit setup failed:", error);
+      } finally {
+        setupInFlightRef.current = false;
+        setLoadingStep("");
+        setIsLoading(false);
       }
     },
-    [ensurePlatformChain, disconnectWallet],
+    [ensurePlatformChain, disconnectWallet, setSmartAccount, setSmartAccountClient],
   );
 
   const connectWallet = useCallback(
@@ -245,9 +235,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         localStorage.setItem("flag", "true");
         localStorage.setItem("userlastconnectorId", connector?.name ?? "");
 
-        if (result?.accounts?.[0]) {
-          pendingSign.current = true;
-        }
+        // The [address, walletClient] effect below picks up the fresh
+        // connection and runs the Account Kit setup.
+        void result;
       } catch (error) {
         // Bug H: failure used to be silent (only console.error), so user saw
         // button → spinner → button with no feedback. Surface clean copy via
@@ -268,129 +258,41 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     [connectAsync],
   );
 
+  // Run the Account Kit setup whenever a wallet lands (fresh connect or
+  // wagmi's reconnect-on-reload) or the user switches accounts. `silent`
+  // when restoring a previous session so reloads don't toast.
   useEffect(() => {
-    if (!pendingSign.current || !address || !walletClient) return;
-    pendingSign.current = false;
-    setIsLoading(false);
-    setLoadingStep("");
-    setShowSignModal(true);
-  }, [address, walletClient]);
-
-  // Bug G: when a user clicks Connect, we wait for [address, walletClient] to
-  // both populate before showing the sign modal. If walletClient never resolves
-  // (extension stuck, wallet disconnected mid-flow), the spinner used to hang
-  // forever. Cap at 30s, reset state, and tell the user to retry.
-  useEffect(() => {
-    if (!pendingSign.current) return;
-    const timer = setTimeout(() => {
-      if (!pendingSign.current) return;
-      pendingSign.current = false;
-      setIsLoading(false);
-      setLoadingStep("");
-      toast.error("Wallet connection timed out. Please try again.");
-      try {
-        disconnect();
-      } catch {
-        /* ignore */
-      }
-    }, 30_000);
-    return () => clearTimeout(timer);
-  }, [disconnect]);
-
-  const handleSign = useCallback(async () => {
     if (!address || !walletClient) return;
-    setShowSignModal(false);
-    setIsLoading(true);
+    if (akRef.current && akOwnerRef.current === address.toLowerCase()) return;
+    const isRestore = localStorage.getItem("lastAccount")?.toLowerCase() === address.toLowerCase();
+    void setupAccountKit(address, { silent: isRestore });
+  }, [address, walletClient, setupAccountKit]);
 
-    const signData = await performSign(address);
-    if (!signData) return;
+  // Wallet fully disconnected (extension side or programmatic) → clear state.
+  useEffect(() => {
+    if (address) return;
+    if (!akRef.current) return;
+    akRef.current.disconnect();
+    akRef.current = null;
+    akOwnerRef.current = null;
+    setSmartAccount("");
+    setSmartAccountClient(null);
+  }, [address, setSmartAccount, setSmartAccountClient]);
 
-    // F1 fix (2026-05-14): propagate the freshly-stored verify-wallet sig
-    // into local component state IMMEDIATELY. The localStorage write inside
-    // performSign() doesn't trigger Effect 1's useEffect (whose dep is
-    // `[address]` only — address hasn't changed across this sign flow). Without
-    // this set call, `storedVerifySig` stays at its previous value (null for
-    // a fresh user), `useThinWallet` never fires, and `userSmartAccount`
-    // atom never gets set to the TW address. Consumers (Header,
-    // DepositModal, TradeForm) then fall back to the EOA, breaking every
-    // user-facing Phase 4 invariant. Setting state directly here re-triggers
-    // the atom-setting Effect 2 via its `storedVerifySig` dependency.
-    setStoredVerifySig(signData);
+  /** Legacy sign-modal surface — Account Kit needs no verify signature.
+   *  `handleSign` retries the setup (kept for Header's modal wiring). */
+  const handleSign = useCallback(() => {
+    if (address) void setupAccountKit(address);
+  }, [address, setupAccountKit]);
 
-    toast.success(LOGIN_SUCCESS);
-    setLoadingStep("");
-    setIsLoading(false);
-  }, [address, walletClient, performSign]);
-
-  /** No-op under Path 1; retained so existing toast-action handlers don't break. */
+  /** No-op; retained so existing toast-action handlers don't break. */
   const reauthorizeSession = useCallback(async () => {
     /* no-op */
   }, []);
 
   const closeSignModal = useCallback(() => {
-    setShowSignModal(false);
-    disconnectWallet();
-  }, [disconnectWallet]);
-
-  // Phase 4: read the stored verify-wallet sig so `useThinWallet` can
-  // POST /thin-wallet/provision on connect (or on reload, for returning
-  // users). null until the user signs the verify-wallet message; the
-  // restore branch sets it from localStorage so reloads don't re-prompt.
-  const [storedVerifySig, setStoredVerifySig] = useState<string | null>(null);
-  useEffect(() => {
-    if (!address) {
-      setStoredVerifySig(null);
-      return;
-    }
-    if (pendingSign.current) return;
-    const sig = typeof window !== "undefined" ? localStorage.getItem("sign") : null;
-    setStoredVerifySig(sig);
-  }, [address]);
-
-  // Phase 4: TW provisioning. Enabled when the backend exposes a factory
-  // address on this chain; otherwise the hook stays idle and we fall
-  // back to writing the EOA into `userSmartAccount` (Path-1 behavior).
-  const factoryAddress = apiConfig?.thinWalletFactoryAddress;
-  const thinWalletEnabled = Boolean(factoryAddress && factoryAddress.length > 0);
-  const { twAddress, isProvisioning, error: twError } = useThinWallet({
-    eoa: address as `0x${string}` | undefined,
-    verifySignature: storedVerifySig,
-    enabled: thinWalletEnabled,
-  });
-
-  useEffect(() => {
-    if (twError) {
-      toast.error(`ThinWallet provisioning failed: ${twError.message}`);
-    }
-  }, [twError]);
-
-  // Reflect the active trading identity into `userSmartAccount`:
-  //   - Phase 4 chain (factory present) + provisioning succeeded → TW addr
-  //   - Path-1 chain (no factory) + verify-wallet sig present → EOA addr
-  //   - Otherwise → "" (consumers gate trading on non-empty)
-  useEffect(() => {
-    if (!address || !storedVerifySig) return;
-    if (thinWalletEnabled) {
-      if (twAddress) setSmartAccount(twAddress);
-    } else {
-      setSmartAccount(address);
-    }
-  }, [address, storedVerifySig, thinWalletEnabled, twAddress, setSmartAccount]);
-
-  // Loading step copy for the connect-flow spinner. Composed from the
-  // verify-wallet phase + the TW-provisioning phase so the user sees one
-  // continuous progression: "Confirm signature request" →
-  // "Setting up your account…" → trade-ready.
-  useEffect(() => {
-    if (isProvisioning) {
-      setLoadingStep("Setting up your account…");
-      setIsLoading(true);
-    } else if (isLoading && loadingStep === "Setting up your account…") {
-      setLoadingStep("");
-      setIsLoading(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isProvisioning]);
+    /* modal never opens under Account Kit */
+  }, []);
 
   useEffect(() => {
     if (address) {
@@ -411,7 +313,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     connectWallet,
     disconnectWallet,
     closeSignModal,
-    showSignModal,
+    showSignModal: false,
     handleSign,
     reauthorizeSession,
   };

@@ -3,6 +3,7 @@ import {
   slippageDecision,
   usdToShares,
   walkBookForAvgFillPrice,
+  walkBookForBudget,
   type BookLevel,
 } from "./orderBookFill";
 
@@ -136,6 +137,68 @@ describe("walkBookForAvgFillPrice", () => {
     const r = walkBookForAvgFillPrice(sparse, B(10_000_000));
     expect(r.avgPriceBps).toBe(B(5600));
     expect(r.fillableAtomic).toBe(B(10_000_000));
+  });
+});
+
+describe("walkBookForBudget (spend $X → shares; the '$10 buys $5' fix)", () => {
+  const askLevels: BookLevel[] = [
+    { price: 5000, depth: "100000000" }, // 100 shares @ 50¢
+    { price: 6000, depth: "50000000" }, //  50 shares @ 60¢
+  ];
+
+  it("REGRESSION: $10 budget @ 50¢ → 20 shares, spends exactly $10", () => {
+    // The reported bug: signing $10 as the amount bought 10 shares for $5.
+    // Correct: $10 buys 20 shares (10 / 0.50) and costs the full $10.
+    const r = walkBookForBudget(askLevels, B(10_000_000));
+    expect(r.sharesAtomic).toBe(B(20_000_000));
+    expect(r.spentAtomic).toBe(B(10_000_000));
+    expect(r.avgPriceBps).toBe(B(5000));
+    expect(r.requiresMoreDepth).toBe(false);
+  });
+
+  it("empty book → zero shares, requiresMoreDepth when budget > 0", () => {
+    const r = walkBookForBudget([], B(10_000_000));
+    expect(r.sharesAtomic).toBe(B(0));
+    expect(r.avgPriceBps).toBeNull();
+    expect(r.requiresMoreDepth).toBe(true);
+  });
+
+  it("zero budget → no shares, no requirement", () => {
+    const r = walkBookForBudget(askLevels, B(0));
+    expect(r.sharesAtomic).toBe(B(0));
+    expect(r.spentAtomic).toBe(B(0));
+    expect(r.avgPriceBps).toBeNull();
+    expect(r.requiresMoreDepth).toBe(false);
+  });
+
+  it("budget spans 2 levels — shares summed, VWAP weighted", () => {
+    // $50 at 50¢ = whole level 1 (100 shares, $50). $10 left buys
+    // 10/0.60 = 16.666… → 16_666_666 shares @ 60¢ costing 9_999_999.
+    // Total shares = 116_666_666; spent = 59_999_999; VWAP =
+    // 59_999_999 × 10000 / 116_666_666 = 5142 (floor).
+    const r = walkBookForBudget(askLevels, B(60_000_000));
+    expect(r.sharesAtomic).toBe(B(116_666_666));
+    expect(r.spentAtomic).toBe(B(59_999_999));
+    expect(r.avgPriceBps).toBe(B(5142));
+    expect(r.requiresMoreDepth).toBe(false);
+  });
+
+  it("budget exceeds total depth → buys all, requiresMoreDepth=true", () => {
+    // Depth: 100 shares @ 50¢ ($50) + 50 @ 60¢ ($30) = $80 max spend.
+    // Ask to spend $200 → buys 150 shares for $80, flags more-depth.
+    const r = walkBookForBudget(askLevels, B(200_000_000));
+    expect(r.sharesAtomic).toBe(B(150_000_000));
+    expect(r.spentAtomic).toBe(B(80_000_000));
+    expect(r.requiresMoreDepth).toBe(true);
+  });
+
+  it("cost ≤ budget always holds (dust rounds to protocol)", () => {
+    // 47.5¢ never divides $10 evenly → spent must be ≤ budget.
+    const odd: BookLevel[] = [{ price: 4750, depth: "1000000000" }];
+    const r = walkBookForBudget(odd, B(10_000_000));
+    expect(r.spentAtomic).toBeLessThanOrEqual(B(10_000_000));
+    // shares = floor(10_000_000 × 10000 / 4750) = 21_052_631
+    expect(r.sharesAtomic).toBe(B(21_052_631));
   });
 });
 

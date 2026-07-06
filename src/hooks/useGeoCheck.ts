@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useSetAtom } from "jotai";
 import { geoStateAtom } from "@/store/atoms";
-import { fetchClientCountry, isCountryRestricted } from "@/lib/geo";
+import { fetchClientCountry, isCountryRestricted, isGeoGateEnabled } from "@/lib/geo";
 
 /**
  * Resolve the visitor's country and write the result to `geoStateAtom`.
@@ -33,6 +33,15 @@ export function useGeoCheck(): void {
   const setGeo = useSetAtom(geoStateAtom);
 
   useEffect(() => {
+    // Geo gate disabled (empty restricted list, e.g.
+    // NEXT_PUBLIC_RESTRICTED_COUNTRIES="NONE"): allow immediately and skip the
+    // ipapi.co probe entirely — no network request, no CORS console noise on
+    // non-CloudFront origins where the probe would otherwise always run.
+    if (!isGeoGateEnabled()) {
+      setGeo({ status: "allowed", country: null });
+      return;
+    }
+
     const fromCookie = readCountryCookie();
     if (fromCookie) {
       setGeo({

@@ -73,7 +73,7 @@ function PortfolioInner() {
   const router = useRouter();
   const sp = useSearchParams();
   const tab = readTab(sp);
-  const { address, isConnected } = useAccount();
+  const { isConnected } = useAccount();
   const smartAccount = useAtomValue(userSmartAccount);
   const qc = useQueryClient();
 
@@ -85,11 +85,13 @@ function PortfolioInner() {
     retry: 1,
   });
 
-  const addrLower = address?.toLowerCase() ?? "";
+  // Account Kit: orders (like positions/balance) are keyed by the SCA —
+  // the trading identity the backend rows live under.
+  const saLower = smartAccount?.toLowerCase() ?? "";
   const { data: ordersResp } = useQuery({
-    queryKey: ["orders", addrLower],
-    queryFn: () => getOrders(address!, { limit: 50 }),
-    enabled: !!address && isConnected,
+    queryKey: ["orders", saLower],
+    queryFn: () => getOrders(smartAccount!, { limit: 50 }),
+    enabled: !!smartAccount && isConnected,
     retry: 1,
     staleTime: 10_000,
   });
@@ -159,9 +161,8 @@ function PortfolioInner() {
     mutationFn: (market: string) => postMarketClaim(market),
     onSuccess: () => {
       toast.success("Claim submitted");
-      const sa = smartAccount?.toLowerCase() ?? "";
-      qc.invalidateQueries({ queryKey: ["positions", sa] });
-      qc.invalidateQueries({ queryKey: ["balance", addrLower] });
+      qc.invalidateQueries({ queryKey: ["positions", saLower] });
+      qc.invalidateQueries({ queryKey: ["balance", saLower] });
     },
     onError: (e: Error) => toast.error(e.message),
   });

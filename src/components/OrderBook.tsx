@@ -25,9 +25,19 @@ import { wsConnectedAtom, wsLastEventAtAtom } from "@/store/atoms";
 const STALE_MS = 30_000;
 const USDT_DECIMALS = 6;
 
-function depthNumber(depth: string): number {
+/**
+ * Buyable / sellable DOLLAR value at a price level = shares × price.
+ * `depth` is a SHARE count in atomic USDT (6-dp); `priceBps` is 1..9999.
+ * Rendering raw shares as "$" badly overstates thin books — 25 shares at an
+ * 8.5¢ ask is $2.13 of liquidity, not "$25.00" — and made the trade form's
+ * honest "insufficient depth" look like a bug. This is the cash a taker can
+ * actually deploy against the level, matching `walkBookForBudget`.
+ */
+function depthUsd(depth: string, priceBps: number): number {
   try {
-    return Number(formatUnits(BigInt(depth || "0"), USDT_DECIMALS));
+    const shares = BigInt(depth || "0");
+    const notionalAtomic = (shares * BigInt(Math.round(priceBps))) / BigInt(10000);
+    return Number(formatUnits(notionalAtomic, USDT_DECIMALS));
   } catch {
     return 0;
   }
@@ -89,7 +99,7 @@ export function OrderBookPanel({
           price: l.price,
           depth: l.depth,
           count: l.count,
-          depthVal: depthNumber(l.depth),
+          depthVal: depthUsd(l.depth, l.price),
           kind: 'bid',
         }));
       const askLevels = [...asks]
@@ -99,7 +109,7 @@ export function OrderBookPanel({
           price: l.price,
           depth: l.depth,
           count: l.count,
-          depthVal: depthNumber(l.depth),
+          depthVal: depthUsd(l.depth, l.price),
           kind: 'ask',
         }));
       // Asks on top (lowest sell), then bids (highest buy) — standard CLOB layout.
@@ -191,9 +201,9 @@ function BookRow({
   maxDepth: number;
 }) {
   const pct = maxDepth > 0 ? Math.min(100, (level.depthVal / maxDepth) * 100) : 0;
-  // 2026-05-18 fix: `level.depth` is the raw atomic string (USDT 6dp), e.g.
-  // "50000000" for $50. Render the human-readable USDT value, not the
-  // atomic. Use `depthVal` which already runs through `formatUnits`.
+  // `depthVal` is the buyable/sellable DOLLAR value at this level
+  // (shares × price via `depthUsd`), not the raw share count — so a thin
+  // book at a skewed price reads honestly (e.g. $2.13, not "$25.00").
   const depthLabel = level.depthVal.toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,

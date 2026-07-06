@@ -1,6 +1,6 @@
 import { Clock } from "lucide-react";
 import type { MarketListItem } from "@/lib/api";
-import { formatStrikeUsd } from "@/lib/format";
+import { formatStrikeUsd, fmtUsd } from "@/lib/format";
 
 export type LiveMarketRowProps = {
   market: MarketListItem;
@@ -47,12 +47,6 @@ function formatMmSs(totalSeconds: number): string {
 function formatStrike(strikePrice: string | undefined, decimals: number | undefined): string {
   const formatted = formatStrikeUsd(strikePrice, decimals);
   return formatted === "Pending" ? "Strike —" : `Strike ${formatted}`;
-}
-
-function formatPool(volume: string): string {
-  const n = Number(volume);
-  if (!Number.isFinite(n)) return "$—";
-  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function LiveMarketRow({
@@ -165,7 +159,7 @@ export function LiveMarketRow({
       </div>
 
       <div>
-        <div className="pp-market-row__pool">{formatPool(market.volume)}</div>
+        <div className="pp-market-row__pool">{fmtUsd(market.volume)}</div>
         {/* 2026-05-18: dropped the "{N} traders" line — the underlying
             `traders` was always 0 because the home page hardcoded
             upTraderCount + downTraderCount. We have no trader-count

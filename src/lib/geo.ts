@@ -29,19 +29,40 @@ export const DEFAULT_RESTRICTED_COUNTRIES: readonly string[] = [
   "CU", // Cuba
 ];
 
-/** Override via `NEXT_PUBLIC_RESTRICTED_COUNTRIES=US,GB,IR,...` in .env. */
+/**
+ * Override via `NEXT_PUBLIC_RESTRICTED_COUNTRIES=US,GB,IR,...` in .env.
+ *
+ * Sentinel: set to `NONE` (case-insensitive) to explicitly DISABLE the geo
+ * gate — the restricted list becomes empty so every country is allowed and
+ * the client-side ipapi.co probe is skipped entirely (see `isGeoGateEnabled`
+ * + `useGeoCheck`). Used for demo / internal deploys where the region block
+ * is noise. The placeholder default below stays intact for mainnet launch.
+ */
 export function loadRestrictedCountries(): readonly string[] {
   const raw =
     typeof process !== "undefined"
       ? process.env.NEXT_PUBLIC_RESTRICTED_COUNTRIES?.trim()
       : "";
   if (raw && raw.length > 0) {
+    if (raw.toUpperCase() === "NONE") return [];
     return raw
       .split(",")
       .map((s) => s.trim().toUpperCase())
       .filter((s) => /^[A-Z]{2}$/.test(s));
   }
   return DEFAULT_RESTRICTED_COUNTRIES;
+}
+
+/**
+ * True when the geo gate is active (non-empty restricted list). When this is
+ * false — e.g. `NEXT_PUBLIC_RESTRICTED_COUNTRIES="NONE"` — `useGeoCheck`
+ * short-circuits to "allowed" and makes NO network request (no ipapi probe),
+ * and `middleware.ts` passes every request through.
+ */
+export function isGeoGateEnabled(
+  list: readonly string[] = loadRestrictedCountries(),
+): boolean {
+  return list.length > 0;
 }
 
 /** Lookup result. `country` is null when the upstream lookup failed. */

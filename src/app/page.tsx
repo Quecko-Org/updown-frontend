@@ -141,7 +141,13 @@ function MarketsPageInner() {
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["markets", ASSET_TO_PAIR[asset], TF_TO_SEC[timeframe]],
     queryFn: () => getMarkets(TF_TO_SEC[timeframe], ASSET_TO_PAIR[asset]),
-    refetchInterval: 15_000,
+    // 6s poll (was 15s): at every 5m boundary the freshly-created market is on
+    // chain within seconds but only lands in this list on a refetch. The WS
+    // `market_created` handler already prepends + invalidates as the fast path,
+    // but if the backend hasn't emitted/indexed it yet the poll is the floor on
+    // how long "No live market" can linger — 15s could stack to 30–45s. 6s
+    // caps that at one short cycle without meaningfully loading the demo API.
+    refetchInterval: 6_000,
   });
 
   // Spot price for the active asset, threaded into the asset pill.

@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useSetAtom } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { useQueryClient } from "@tanstack/react-query";
-import { useSignTypedData } from "wagmi";
 import { toast } from "sonner";
 import {
   addNotificationAtom,
+  userSmartAccountClient,
   wsConnectedAtom,
   wsLastEventAtAtom,
 } from "@/store/atoms";
@@ -69,7 +69,10 @@ export function useUpDownWebSocket(opts: {
   const setWsConnected = useSetAtom(wsConnectedAtom);
   const setWsLastEventAt = useSetAtom(wsLastEventAtAtom);
   const addNotification = useSetAtom(addNotificationAtom);
-  const { signTypedDataAsync } = useSignTypedData();
+  // Account Kit signer — signs the WsAuth handshake as the SCA (ERC-1271).
+  const ak = useAtomValue(userSmartAccountClient);
+  const akRef = useRef(ak);
+  akRef.current = ak;
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -361,6 +364,13 @@ export function useUpDownWebSocket(opts: {
     }
 
     try {
+      const signer = akRef.current;
+      if (!signer) {
+        // No Account Kit signer yet (connect still in flight) — skip; the
+        // [wallet] effect re-runs the handshake once the atom lands.
+        authInFlightRef.current = false;
+        return;
+      }
       const timestamp = BigInt(Math.floor(Date.now() / 1000));
       const sessionId = newSessionId();
       const typed = buildWsAuthTypedData({
@@ -368,7 +378,12 @@ export function useUpDownWebSocket(opts: {
         timestamp,
         sessionId,
       });
-      const signature = await signTypedDataAsync(typed);
+      // RAW signature on purpose: pre-onboarding the SCA is counterfactual
+      // and the sig comes back 6492-wrapped — the backend's off-chain viem
+      // `verifyTypedData` validates that, so private channels work before
+      // the SCA is deployed. Orders NEVER use this path (bare-only).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const signature = await signer.signTypedDataRaw(typed as any);
       // The connection might have closed while we waited for the user to
       // sign — the next onopen will retry.
       const sock = wsRef.current;

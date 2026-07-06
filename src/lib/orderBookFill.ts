@@ -126,6 +126,100 @@ export function walkBookForAvgFillPrice(
   };
 }
 
+/** Result of walking the book for a USD budget (BUY side). */
+export type BudgetWalkResult = {
+  /**
+   * Shares (atomic) the budget buys, floor-accumulated across levels.
+   * `Order.amount` on the wire is a SHARE count — the contract computes the
+   * buyer's cost as `price × amount / 10000`, so a $-budget must be converted
+   * to shares against the live asks before signing. Zero when no liquidity.
+   */
+  sharesAtomic: bigint;
+  /** Actual cash the shares cost (atomic USDT), always ≤ budgetAtomic. */
+  spentAtomic: bigint;
+  /**
+   * Volume-weighted-average fill price in bps for the shares bought.
+   * `null` only when the ask side is empty (no shares buyable).
+   */
+  avgPriceBps: bigint | null;
+  /** True when the book lacked depth to spend the whole budget. */
+  requiresMoreDepth: boolean;
+};
+
+/**
+ * Walk pre-sorted ASK levels spending a USD budget, converting it to the
+ * share count the buyer receives at the live book. This is the BUY-side
+ * dual of `walkBookForAvgFillPrice`: that one walks a SHARE quantity, this
+ * one walks a CASH budget — because a "spend $X" buy needs to know how many
+ * shares $X buys before it can put a share count in `Order.amount`.
+ *
+ * At each level (price p bps, depth d shares) the cash to take the whole
+ * level is `p × d / 10000`. We consume whole levels while the remaining
+ * budget covers them; at the marginal level we buy `remainingBudget × 10000
+ * / p` shares (floor — dust rounds toward the protocol so cost ≤ budget).
+ *
+ * Caller passes ASKS ascending (the /orderbook endpoint already does).
+ *
+ * Edge cases:
+ *   - Empty levels / budget ≤ 0: shares = 0, avgPriceBps = null.
+ *   - Budget within top-of-book: full spend at that level's price.
+ *   - Budget exceeds total depth: buys all available, requiresMoreDepth = true.
+ */
+export function walkBookForBudget(
+  levels: readonly BookLevel[],
+  budgetAtomic: bigint,
+): BudgetWalkResult {
+  if (levels.length === 0) {
+    return {
+      sharesAtomic: ZERO,
+      spentAtomic: ZERO,
+      avgPriceBps: null,
+      requiresMoreDepth: budgetAtomic > ZERO,
+    };
+  }
+  if (budgetAtomic <= ZERO) {
+    return { sharesAtomic: ZERO, spentAtomic: ZERO, avgPriceBps: null, requiresMoreDepth: false };
+  }
+  let remaining = budgetAtomic;
+  let shares = ZERO;
+  let spent = ZERO;
+  for (const level of levels) {
+    if (remaining <= ZERO) break;
+    const price = BigInt(level.price);
+    if (price <= ZERO) continue;
+    let depth: bigint;
+    try {
+      depth = BigInt(level.depth);
+    } catch {
+      continue;
+    }
+    if (depth <= ZERO) continue;
+    const levelCost = (price * depth) / TEN_K;
+    if (levelCost > ZERO && levelCost <= remaining) {
+      // Take the whole level.
+      shares += depth;
+      spent += levelCost;
+      remaining -= levelCost;
+    } else {
+      // Marginal level: buy as many shares as the leftover budget affords.
+      const affordable = (remaining * TEN_K) / price; // floor
+      if (affordable > ZERO) {
+        const partialCost = (price * affordable) / TEN_K;
+        shares += affordable;
+        spent += partialCost;
+      }
+      remaining = ZERO; // budget exhausted (sub-share dust ignored)
+      break;
+    }
+  }
+  return {
+    sharesAtomic: shares,
+    spentAtomic: spent,
+    avgPriceBps: shares === ZERO ? null : (spent * TEN_K) / shares,
+    requiresMoreDepth: remaining > ZERO,
+  };
+}
+
 /** Slippage decision states. */
 export type SlippageDecision = "silent" | "prompt";
 

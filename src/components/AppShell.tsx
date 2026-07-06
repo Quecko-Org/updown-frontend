@@ -2,10 +2,9 @@
 
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useSetAtom } from "jotai";
-import { useAccount } from "wagmi";
+import { useAtomValue, useSetAtom } from "jotai";
 import { getConfig } from "@/lib/api";
-import { apiConfigAtom } from "@/store/atoms";
+import { apiConfigAtom, userSmartAccount } from "@/store/atoms";
 import { useUpDownWebSocket } from "@/hooks/useUpDownWebSocket";
 import { useLivePriceFeed } from "@/hooks/useLivePriceFeed";
 import { CookieConsentBanner } from "./CookieConsentBanner";
@@ -19,7 +18,7 @@ import { useGeoCheck } from "@/hooks/useGeoCheck";
 const LIVE_SYMBOLS = ["BTC", "ETH"];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const { address } = useAccount();
+  const smartAccount = useAtomValue(userSmartAccount);
   const setApiConfig = useSetAtom(apiConfigAtom);
 
   const { data: cfg } = useQuery({
@@ -37,8 +36,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // subscription. Home page drawer is the single trade surface and
   // manages its own per-market subscriptions inside the drawer
   // component.
+  // Account Kit: private channels are keyed by the SCA (the trading
+  // identity backend rows live under), not the owner EOA.
   useUpDownWebSocket({
-    wallet: address ?? null,
+    wallet: smartAccount || null,
     marketAddress: null,
     enabled: true,
   });
