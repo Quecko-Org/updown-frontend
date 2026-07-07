@@ -30,6 +30,27 @@
  *   - policyId + gasToken  → user pays gas in that token (ERC-20-type
  *                            policy; the current `fed14eaa…` policy is this
  *                            type with USDC allowed).
+ *
+ * Session-key order signing (2026-07-06, PoC-validated on-chain + live API —
+ * see updown-demo/POC_SESSION_KEY_ORDERS_2026-07-06.md):
+ *   A locally-generated session key is installed on the MA-v2 SCA as a
+ *   SingleSignerValidationModule entity with `isSignatureValidation: true`
+ *   and `isUserOpValidation: false` — it can ONLY answer ERC-1271
+ *   `isValidSignature` (orders / cancels / WS-auth); it can never execute a
+ *   UserOp (no withdrawals, no transfers). The install rides the onboarding
+ *   UserOp for fresh users (still exactly ONE wallet popup ever) or a
+ *   one-time UserOp for already-onboarded SCAs; afterwards all order signing
+ *   is popup-less. NOTE this is NOT rain.trade's `grantPermissions` session
+ *   (that mechanism authorizes UserOp execution only and its signatures pack
+ *   the owner entity — verified incapable of 1271 order signing).
+ *   The key + entityId live in localStorage (`updown:oskey:<sca>`) with a
+ *   24h client-side expiry — same browser-custody trust class as rain.trade's
+ *   IndexedDB session keys, but with a strictly narrower blast radius.
+ *   Expiry is NOT enforced on-chain (needs a time-range hook module —
+ *   production follow-up); `revokeOrderSession()` drops the local key.
+ *   Kill switch: NEXT_PUBLIC_SESSION_ORDERS=0 → owner-key popup per order
+ *   (the pre-2026-07-06 behavior). Any session failure at runtime also falls
+ *   back to the owner path automatically.
  */
 import {
   decodeAbiParameters,
@@ -90,6 +111,52 @@ function writeCachedSA(eoa: string, addr: string): void {
   }
 }
 
+/* ───────────────────── order-session (session key) storage ───────────────────── */
+
+const SESSION_TTL_SEC = 24 * 60 * 60;
+
+type OrderSessionRecord = {
+  v: 1;
+  /** Session private key — browser custody, same trust class as rain.trade's session keys. */
+  privateKey: Hex;
+  /** MA-v2 validation entity id the key is installed under on the SCA. */
+  entityId: number;
+  /** Client-side expiry (unix sec). NOT enforced on-chain — see header. */
+  expirySec: number;
+};
+
+export function sessionOrdersEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_SESSION_ORDERS?.trim() !== "0";
+}
+
+function orderSessionKey(sca: string): string {
+  return `updown:oskey:${sca.toLowerCase()}`;
+}
+
+function readOrderSession(sca: string): OrderSessionRecord | null {
+  try {
+    const raw = localStorage.getItem(orderSessionKey(sca));
+    if (!raw) return null;
+    const rec = JSON.parse(raw) as OrderSessionRecord;
+    if (rec?.v !== 1 || typeof rec.privateKey !== "string" || !rec.entityId) return null;
+    if (rec.expirySec <= Math.floor(Date.now() / 1000)) {
+      localStorage.removeItem(orderSessionKey(sca));
+      return null;
+    }
+    return rec;
+  } catch {
+    return null;
+  }
+}
+
+function writeOrderSession(sca: string, rec: OrderSessionRecord): void {
+  try {
+    localStorage.setItem(orderSessionKey(sca), JSON.stringify(rec));
+  } catch {
+    /* private mode — session won't survive reload; signing still works this tab */
+  }
+}
+
 export class UpDownAccountKitSigner {
   private readonly config: UpDownAccountKitConfig;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -98,6 +165,9 @@ export class UpDownAccountKitSigner {
   private _account: any = null;
   private _address: Address | null = null;
   private _ownerEoa: Address | null = null;
+  private _session: OrderSessionRecord | null = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private _sessionClient: any = null;
 
   constructor(config: UpDownAccountKitConfig) {
     if (!config.walletClient) throw new Error("walletClient (owner EIP-1193 provider) is required");
@@ -162,11 +232,32 @@ export class UpDownAccountKitSigner {
   }
 
   /**
-   * Owner-signed EIP-712 typed data, returned RAW — possibly 6492-wrapped when
-   * the SCA is not yet deployed. ONLY for off-chain verifiers that understand
-   * 6492 (the backend's viem `verifyTypedData`, i.e. WS-auth). Never for orders.
+   * EIP-712 typed data for OFF-CHAIN verifiers (WS-auth): session-key signed
+   * (popup-less, bare — the SCA is deployed whenever a session exists) when a
+   * session is active, else owner-signed RAW — possibly 6492-wrapped when the
+   * SCA is not yet deployed. The backend's viem `verifyTypedData` accepts
+   * both. Never for orders (use `signTypedDataBare`).
    */
   async signTypedDataRaw(typedData: TypedDataDefinition): Promise<Hex> {
+    const session = await this.sessionSign(typedData);
+    if (session) return session;
+    return this.signTypedDataOwnerRaw(typedData);
+  }
+
+  /**
+   * EIP-712 typed data as a BARE ERC-1271 signature — the ONLY signing path
+   * for orders and cancels. Session-key signed (popup-less) when a session is
+   * active; owner-signed with the 6492 wrapper stripped otherwise. The SCA
+   * must be deployed (`onboard`) before the signature is used in a fill.
+   */
+  async signTypedDataBare(typedData: TypedDataDefinition): Promise<Hex> {
+    const session = await this.sessionSign(typedData);
+    if (session) return session;
+    return stripErc6492Wrapper(await this.signTypedDataOwnerRaw(typedData));
+  }
+
+  /** The owner smart-wallet-client signature (MetaMask popup). */
+  private async signTypedDataOwnerRaw(typedData: TypedDataDefinition): Promise<Hex> {
     if (!this._client || !this._address) throw new Error("Not connected. Call connect() first.");
     return (await this._client.signTypedData({
       ...typedData,
@@ -174,13 +265,160 @@ export class UpDownAccountKitSigner {
     })) as Hex;
   }
 
+  /* ─────────────── session-key signing (see header block) ─────────────── */
+
+  /** True iff an unexpired order session exists for the connected SCA. */
+  get hasOrderSession(): boolean {
+    if (!sessionOrdersEnabled() || !this._address) return false;
+    return !!(this._session ?? readOrderSession(this._address));
+  }
+
   /**
-   * Owner-signed EIP-712 typed data as a BARE ERC-1271 signature (6492
-   * stripped). The ONLY signing path for orders and cancels. The SCA must be
-   * deployed (`onboard`) before the signature is used in a fill.
+   * Sign typed data with the session key (MA-v2 entity signature, bare by
+   * construction — the packed entity locator + ERC-7739 wrap validate
+   * on-chain via `isValidSignature`). Returns null when no session is active
+   * or anything fails — callers fall back to the owner path.
    */
-  async signTypedDataBare(typedData: TypedDataDefinition): Promise<Hex> {
-    return stripErc6492Wrapper(await this.signTypedDataRaw(typedData));
+  private async sessionSign(typedData: TypedDataDefinition): Promise<Hex | null> {
+    try {
+      const account = await this.sessionAccount();
+      if (!account) return null;
+      return (await account.signTypedData(typedData)) as Hex;
+    } catch (e) {
+      console.warn("[accountKit] session signing failed — falling back to owner key", e);
+      this._sessionClient = null; // rebuild lazily; a stale client shouldn't wedge signing
+      return null;
+    }
+  }
+
+  /** Lazily build the MA-v2 client bound to the session key's entity. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async sessionAccount(): Promise<any | null> {
+    if (!sessionOrdersEnabled() || !this._address) return null;
+    const rec = this._session ?? readOrderSession(this._address);
+    if (!rec) return null;
+    if (rec.expirySec <= Math.floor(Date.now() / 1000)) {
+      this.revokeOrderSession();
+      return null;
+    }
+    this._session = rec;
+    if (!this._sessionClient) {
+      const [aaCore, scMod, infraMod] = await Promise.all([
+        import("@aa-sdk/core"),
+        import("@account-kit/smart-contracts"),
+        import("@account-kit/infra"),
+      ]);
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const { LocalAccountSigner } = aaCore as any;
+      const { createModularAccountV2Client } = scMod as any;
+      const { alchemy } = infraMod as any;
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+      this._sessionClient = await createModularAccountV2Client({
+        mode: "default",
+        chain: await this.infraChain(),
+        transport: alchemy({ apiKey: this.config.alchemyApiKey }),
+        signer: LocalAccountSigner.privateKeyToAccountSigner(this._session.privateKey),
+        accountAddress: this._address,
+        signerEntity: { entityId: this._session.entityId, isGlobalValidation: false },
+      });
+    }
+    return this._sessionClient.account;
+  }
+
+  /**
+   * Make sure an order session exists: no-op when one is active (or the
+   * feature is off), otherwise install a fresh session key via a one-time
+   * owner UserOp (one popup — fresh users get it batched into `onboard()`
+   * instead and never hit this path). Throws if the user rejects; callers
+   * treat that as non-fatal and keep owner-key signing.
+   */
+  async ensureOrderSession(): Promise<"disabled" | "active" | "installed"> {
+    if (!sessionOrdersEnabled()) return "disabled";
+    if (!this._client || !this._address) throw new Error("Not connected. Call connect() first.");
+    if (await this.sessionAccount()) return "active";
+    const { call, record } = await this.buildSessionInstallCall();
+    await this.sendCalls([call]);
+    this.persistOrderSession(record);
+    return "installed";
+  }
+
+  /** Drop the local session key (no on-chain uninstall — demo scope). */
+  revokeOrderSession(): void {
+    if (this._address) {
+      try {
+        localStorage.removeItem(orderSessionKey(this._address));
+      } catch {
+        /* best effort */
+      }
+    }
+    this._session = null;
+    this._sessionClient = null;
+  }
+
+  private persistOrderSession(record: OrderSessionRecord): void {
+    if (!this._address) return;
+    writeOrderSession(this._address, record);
+    this._session = record;
+    this._sessionClient = null; // built lazily on first sign
+  }
+
+  /**
+   * Build the `installValidation` self-call that registers a fresh session
+   * key on the SCA as a signature-validation-ONLY entity (validated flow:
+   * scripts/poc-session-key-fe-flow.mjs).
+   */
+  private async buildSessionInstallCall(): Promise<{
+    call: { to: Address; data: Hex };
+    record: OrderSessionRecord;
+  }> {
+    const [viemAccounts, expMod, viem] = await Promise.all([
+      import("viem/accounts"),
+      import("@account-kit/smart-contracts/experimental"),
+      import("viem"),
+    ]);
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    const { generatePrivateKey, privateKeyToAccount } = viemAccounts as any;
+    const {
+      getDefaultSingleSignerValidationModuleAddress,
+      SingleSignerValidationModule,
+      serializeValidationConfig,
+      semiModularAccountBytecodeAbi,
+    } = expMod as any;
+    /* eslint-enable @typescript-eslint/no-explicit-any */
+    const privateKey = generatePrivateKey() as Hex;
+    const sessionAddress = privateKeyToAccount(privateKey).address as Address;
+    // Random 4-byte entity id (≥2): 0 is the owner entity, and installing an
+    // id that already exists on the account reverts — random keeps collisions
+    // with prior sessions (lost storage, other browsers) vanishingly unlikely.
+    const entityId = 2 + Math.floor(Math.random() * 0x7ffffff0);
+    const data = viem.encodeFunctionData({
+      abi: semiModularAccountBytecodeAbi,
+      functionName: "installValidation",
+      args: [
+        serializeValidationConfig({
+          moduleAddress: getDefaultSingleSignerValidationModuleAddress(await this.infraChain()),
+          entityId,
+          isGlobal: false,
+          isSignatureValidation: true, // can answer ERC-1271…
+          isUserOpValidation: false, // …but can never execute a UserOp
+        }),
+        [],
+        SingleSignerValidationModule.encodeOnInstallData({ entityId, signer: sessionAddress }),
+        [],
+      ],
+    }) as Hex;
+    return {
+      call: { to: this.address, data },
+      record: { v: 1, privateKey, entityId, expirySec: Math.floor(Date.now() / 1000) + SESSION_TTL_SEC },
+    };
+  }
+
+  /** The @account-kit/infra chain (Alchemy RPC config baked in) for MA-v2 clients. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async infraChain(): Promise<any> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const infra = (await import("@account-kit/infra")) as any;
+    return this.config.chain.id === 421614 ? infra.arbitrumSepolia : infra.arbitrum;
   }
 
   /** True iff the SCA has bytecode on-chain (deploy-before-fill precondition). */
@@ -191,12 +429,30 @@ export class UpDownAccountKitSigner {
   }
 
   /**
-   * One-time onboarding: DEPLOY the SCA and `approve(settlement, USDT, MAX)`
-   * in a single UserOp (deployment rides the account init-code). Satisfies
-   * deploy-before-fill + the allowance `enterPosition` needs.
+   * One-time onboarding: DEPLOY the SCA, `approve(settlement, USDT, MAX)` AND
+   * install the order-session key, all in a single UserOp (deployment rides
+   * the account init-code) — still exactly one wallet popup. Satisfies
+   * deploy-before-fill + the allowance `enterPosition` needs, and makes every
+   * subsequent order signature popup-less. Session-install failures degrade
+   * to the plain deploy+approve onboarding (owner-key signing per order).
    */
   async onboard(args: { usdt: Address; settlement: Address }): Promise<Hex> {
-    return this.sendCall({ to: args.usdt, data: encodeApprove(args.settlement) });
+    const calls: { to: Address; data: Hex; value?: bigint }[] = [
+      { to: args.usdt, data: encodeApprove(args.settlement) },
+    ];
+    let record: OrderSessionRecord | null = null;
+    if (sessionOrdersEnabled() && !(await this.sessionAccount().catch(() => null))) {
+      try {
+        const built = await this.buildSessionInstallCall();
+        calls.push(built.call);
+        record = built.record;
+      } catch (e) {
+        console.warn("[accountKit] session install prep failed — onboarding without a session", e);
+      }
+    }
+    const txHash = await this.sendCalls(calls);
+    if (record) this.persistOrderSession(record);
+    return txHash;
   }
 
   /** Transfer USDT out of the SCA to `to` (UserOp). */
@@ -206,6 +462,11 @@ export class UpDownAccountKitSigner {
 
   /** Send a single call from the SCA as a UserOp; returns the tx hash. */
   async sendCall(call: { to: Address; data: Hex; value?: bigint }): Promise<Hex> {
+    return this.sendCalls([call]);
+  }
+
+  /** Send one UserOp batching `calls` in order; returns the tx hash. */
+  private async sendCalls(calls: { to: Address; data: Hex; value?: bigint }[]): Promise<Hex> {
     if (!this._client || !this._account || !this._address) {
       throw new Error("Not connected. Call connect() first.");
     }
@@ -222,7 +483,7 @@ export class UpDownAccountKitSigner {
     }
     const { id } = await this._client.sendCalls({
       from: this._address,
-      calls: [{ to: call.to, data: call.data, value: toHex(call.value ?? BigInt(0)) }],
+      calls: calls.map((c) => ({ to: c.to, data: c.data, value: toHex(c.value ?? BigInt(0)) })),
       ...(Object.keys(capabilities).length ? { capabilities } : {}),
     });
     const status = await this._client.waitForCallsStatus({ id });
@@ -236,6 +497,10 @@ export class UpDownAccountKitSigner {
     this._account = null;
     this._address = null;
     this._ownerEoa = null;
+    // Keep the persisted session key (localStorage) so reconnecting the same
+    // wallet stays popup-less; only the in-memory handles are dropped.
+    this._session = null;
+    this._sessionClient = null;
   }
 }
 

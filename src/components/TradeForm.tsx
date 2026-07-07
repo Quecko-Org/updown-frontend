@@ -48,6 +48,7 @@ import { computeMarketSlippagePrice } from "@/lib/orderConstants";
 import { parseCompositeMarketKey } from "@/lib/marketKey";
 import { cn } from "@/lib/cn";
 import { formatUserFacingError } from "@/lib/errors";
+import { sessionOrdersEnabled } from "@/lib/accountKit";
 import { track } from "@/lib/analytics";
 import { isTerminalMarketStatus } from "@/lib/derivations";
 import { EmptyState } from "@/components/EmptyState";
@@ -678,6 +679,23 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       // transferFrom; settlement only debits buyers).
       if (orderSide === 0 /* BUY */) {
         await ensureSettlementAllowance();
+      }
+
+      // Session-key grant (PoC-validated 2026-07-06): fresh users get the
+      // session installed inside the onboarding UserOp above (no extra
+      // popup); already-onboarded SCAs get a one-time install UserOp here.
+      // After this, order/cancel/WS signatures are popup-less. Non-fatal by
+      // design: rejection or failure just keeps owner-key popup signing.
+      if (ak && sessionOrdersEnabled() && !ak.hasOrderSession) {
+        try {
+          toast.info("Enabling 1-click trading… one-time setup, confirm in your wallet.");
+          const grant = await ak.ensureOrderSession();
+          if (grant === "installed") {
+            toast.success("1-click trading enabled — orders no longer need a wallet confirmation.");
+          }
+        } catch (e) {
+          console.warn("[TradeForm] session grant declined/failed — owner-key signing stays", e);
+        }
       }
 
       // Bounds are on the user's INPUT — a $ BUDGET (BUY) or a SHARE count
