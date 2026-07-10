@@ -32,9 +32,12 @@ import {
 } from "@/store/atoms";
 import {
   createUpDownAccountKitSigner,
+  readCachedSA,
   type Eip1193Provider,
   type UpDownAccountKitSigner,
 } from "@/lib/accountKit";
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /**
  * Account Kit architecture (2026-07-05, replacing Phase-4 ThinWallet):
@@ -87,7 +90,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const { connectAsync } = useConnect();
   const { disconnect } = useDisconnect();
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, status, connector } = useAccount();
   const { data: walletClient } = useWalletClient();
   const connectedChainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
@@ -162,27 +165,70 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   /**
    * Build the Account Kit signer for the connected EOA and resolve the SCA.
-   * Idempotent per EOA; rebuilds when the user switches accounts. `silent`
-   * suppresses the success toast (reload-restore path).
+   * Idempotent per EOA; rebuilds when the user switches accounts.
+   *
+   * `activeConnector` is passed in from `useAccount().connector` (atomic with
+   * `address`) rather than read from `getConnections(wagmiConfig)` — the latter
+   * can momentarily return `[]` during wagmi's reconnect-on-reload, and the old
+   * code threw "No connector" there and then WIPED custody (that was the
+   * "wallet reset on refresh" bug).
+   *
+   * `silent` suppresses the success toast (reload-restore path). `wipeOnError`
+   * gates the destructive teardown: TRUE only for an explicit user-initiated
+   * connect — a reload/restore or manual retry must NEVER wipe the wagmi
+   * connection on a transient failure (that is the whole bug). On the no-wipe
+   * path we also bounded-retry `connect()` so a brief Alchemy blip self-heals.
    */
   const setupAccountKit = useCallback(
-    async (walletAddr: string, opts?: { silent?: boolean }) => {
+    async (
+      walletAddr: string,
+      activeConnector: Connector | undefined,
+      opts?: { silent?: boolean; wipeOnError?: boolean },
+    ) => {
       if (setupInFlightRef.current) return;
       if (akRef.current && akOwnerRef.current === walletAddr.toLowerCase()) return;
       setupInFlightRef.current = true;
+      const wipeOnError = opts?.wipeOnError ?? false;
       try {
         setIsLoading(true);
         setLoadingStep("Setting up your account…");
 
-        await ensurePlatformChain();
+        // Hydrate the deterministic SCA from cache immediately so a reload never
+        // flashes a disconnected state while ak.connect() round-trips Alchemy.
+        const cachedSca = readCachedSA(walletAddr);
+        if (cachedSca) setSmartAccount(cachedSca);
 
-        const connections = getConnections(wagmiConfig);
-        const activeConnector = connections[0]?.connector;
-        if (!activeConnector) throw new Error("No connector");
-        const provider = (await activeConnector.getProvider()) as Eip1193Provider;
+        // Only force the platform chain on an explicit user connect. A silent
+        // reload-restore must not surface a chain-switch popup; the trade flow
+        // switches on demand, and SCA resolution is chain-agnostic anyway.
+        if (wipeOnError) await ensurePlatformChain();
+
+        // Race-free connector resolution (see doc comment); fall back to
+        // getConnections only if useAccount somehow handed us nothing.
+        let connectorForProvider = activeConnector;
+        if (!connectorForProvider) {
+          connectorForProvider = getConnections(wagmiConfig)[0]?.connector;
+        }
+        if (!connectorForProvider) throw new Error("No connector");
+        const provider = (await connectorForProvider.getProvider()) as Eip1193Provider;
 
         const ak = createUpDownAccountKitSigner(provider);
-        const sca = await ak.connect();
+
+        // Bounded retry on the restore/retry path so a transient Alchemy blip
+        // doesn't strand the session; the wallet stays connected throughout.
+        const maxAttempts = wipeOnError ? 1 : 4;
+        let sca: string | null = null;
+        let lastErr: unknown;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          try {
+            sca = await ak.connect();
+            break;
+          } catch (e) {
+            lastErr = e;
+            if (attempt < maxAttempts - 1) await sleep(1200 * (attempt + 1));
+          }
+        }
+        if (!sca) throw lastErr ?? new Error("Failed to resolve smart account");
 
         akRef.current = ak;
         akOwnerRef.current = walletAddr.toLowerCase();
@@ -199,17 +245,25 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         const isChainNotAdded =
           code === 4902 ||
           /unrecognized chain id|wallet_addEthereumChain|switchEthereumChain/i.test(msg);
-        if (isUserReject) {
-          toast.error("You cancelled the wallet request.");
-        } else if (isChainNotAdded) {
-          toast.error(
-            `Couldn't switch to ${activeChain.name}. Please add the network manually in your wallet and try again.`,
-          );
+        if (wipeOnError) {
+          if (isUserReject) {
+            toast.error("You cancelled the wallet request.");
+          } else if (isChainNotAdded) {
+            toast.error(
+              `Couldn't switch to ${activeChain.name}. Please add the network manually in your wallet and try again.`,
+            );
+          } else {
+            toast.error(msg || "Couldn't set up your trading account. Please try again.");
+          }
+          disconnectWallet();
+          console.error("Account Kit setup failed:", error);
         } else {
-          toast.error(msg || "Couldn't set up your trading account. Please try again.");
+          // Reload-restore / manual retry: NEVER wipe custody on a transient
+          // failure — that is exactly the "wallet reset on refresh" bug. Keep
+          // the wagmi connection (and the cached SCA address) on screen; the
+          // signer re-attaches on the next connector change or manual retry.
+          console.warn("Account Kit restore failed (wallet kept connected):", error);
         }
-        disconnectWallet();
-        console.error("Account Kit setup failed:", error);
       } finally {
         setupInFlightRef.current = false;
         setLoadingStep("");
@@ -259,31 +313,40 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   );
 
   // Run the Account Kit setup whenever a wallet lands (fresh connect or
-  // wagmi's reconnect-on-reload) or the user switches accounts. `silent`
-  // when restoring a previous session so reloads don't toast.
+  // wagmi's reconnect-on-reload) or the user switches accounts. We gate on
+  // wagmi `status` so we only fire once the connection has settled — never
+  // mid-reconnect (when `getConnections()` can be empty) — and drive the setup
+  // off `connector` (atomic with `address`), NOT `walletClient` (a lagging
+  // react-query hook). `isRestore` (this EOA matches the last one we set up)
+  // makes the reload path silent AND non-destructive on failure.
   useEffect(() => {
-    if (!address || !walletClient) return;
+    if (status === "connecting" || status === "reconnecting") return;
+    if (!address || !connector) return;
     if (akRef.current && akOwnerRef.current === address.toLowerCase()) return;
     const isRestore = localStorage.getItem("lastAccount")?.toLowerCase() === address.toLowerCase();
-    void setupAccountKit(address, { silent: isRestore });
-  }, [address, walletClient, setupAccountKit]);
+    void setupAccountKit(address, connector, { silent: isRestore, wipeOnError: !isRestore });
+  }, [status, address, connector, setupAccountKit]);
 
-  // Wallet fully disconnected (extension side or programmatic) → clear state.
+  // Wallet FULLY disconnected → clear state. Gate on the definitive
+  // `disconnected` status (not merely `!address`) so the transient address-less
+  // window during wagmi's reconnect-on-reload does NOT clear the account.
   useEffect(() => {
-    if (address) return;
-    if (!akRef.current) return;
-    akRef.current.disconnect();
+    if (status !== "disconnected") return;
+    akRef.current?.disconnect();
     akRef.current = null;
     akOwnerRef.current = null;
     setSmartAccount("");
     setSmartAccountClient(null);
-  }, [address, setSmartAccount, setSmartAccountClient]);
+    setPubClient(null);
+  }, [status, setSmartAccount, setSmartAccountClient, setPubClient]);
 
   /** Legacy sign-modal surface — Account Kit needs no verify signature.
-   *  `handleSign` retries the setup (kept for Header's modal wiring). */
+   *  `handleSign` retries the setup (kept for Header's modal wiring). Surfaces
+   *  errors (not silent) but does NOT wipe custody on failure. */
   const handleSign = useCallback(() => {
-    if (address) void setupAccountKit(address);
-  }, [address, setupAccountKit]);
+    if (address && connector)
+      void setupAccountKit(address, connector, { silent: false, wipeOnError: false });
+  }, [address, connector, setupAccountKit]);
 
   /** No-op; retained so existing toast-action handlers don't break. */
   const reauthorizeSession = useCallback(async () => {

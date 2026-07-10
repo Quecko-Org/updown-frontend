@@ -111,6 +111,22 @@ function writeCachedSA(eoa: string, addr: string): void {
   }
 }
 
+/**
+ * Read the cached (deterministic, counterfactual) SCA address for an owner EOA.
+ * The SCA is a pure function of the EOA, so on reload we can hydrate it
+ * synchronously — before the cold `connect()` RPC returns — so the UI never
+ * flashes a disconnected state. `connect()` still runs and overwrites the cache
+ * with the authoritative address. (Same contract as rain.trade's `useRain`.)
+ */
+export function readCachedSA(eoa: string): string | null {
+  try {
+    const v = localStorage.getItem(saCacheKey(eoa));
+    return v && /^0x[0-9a-fA-F]{40}$/.test(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 /* ───────────────────── order-session (session key) storage ───────────────────── */
 
 const SESSION_TTL_SEC = 24 * 60 * 60;

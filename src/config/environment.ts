@@ -11,6 +11,26 @@ export const platform_chainId = CHAIN_ID;
 export const activeChain: Chain = CHAIN_ID === 421614 ? arbitrumSepolia : arbitrum;
 
 /**
+ * Faucet ("Get 100 …") visibility.
+ *
+ * Always on for the real testnet (Sepolia). ALSO switchable on for the
+ * mock **demo** stack (Arbitrum One, whose collateral is the publicly
+ * mintable MockUSDT and whose backend runs `NODE_ENV != production`, so
+ * `POST /test/devmint` is live) via `NEXT_PUBLIC_ENABLE_FAUCET=1`. A real
+ * production build (real USDT) leaves the flag unset → button stays hidden,
+ * preserving the original Layer-1 safety property.
+ */
+export const FAUCET_ENABLED: boolean =
+  activeChain.id === 421614 ||
+  process.env.NEXT_PUBLIC_ENABLE_FAUCET === "1" ||
+  process.env.NEXT_PUBLIC_ENABLE_FAUCET === "true";
+
+/** Suffix for the faucet button label — "testnet" on Sepolia, "demo" on the
+ *  mock Arbitrum One stack, so the copy never claims "testnet" on a mainnet
+ *  chain. */
+export const FAUCET_LABEL_SUFFIX: string = activeChain.id === 421614 ? "testnet" : "demo";
+
+/**
  * USDT symbol for the active chain. Mainnet: "USDT" (the production token
  * at 0xCa4f…25F4). Sepolia: "USDTM" (our throwaway MockUSDT — public mint,
  * 6 decimals, deployed once per dev bring-up). Used everywhere the user

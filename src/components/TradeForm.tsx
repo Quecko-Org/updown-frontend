@@ -9,7 +9,13 @@ import { useAtomValue } from "jotai";
 import { useAccount } from "wagmi";
 import { erc20Abi } from "viem";
 import { createPublicClient, http } from "viem";
-import { ALCHEMY_RPC_URL, activeChain, tokenSymbolForActiveChain } from "@/config/environment";
+import {
+  ALCHEMY_RPC_URL,
+  activeChain,
+  tokenSymbolForActiveChain,
+  FAUCET_ENABLED,
+  FAUCET_LABEL_SUFFIX,
+} from "@/config/environment";
 import { postDevmintUsdt } from "@/lib/api";
 import { toast } from "sonner";
 import {
@@ -108,10 +114,9 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const ak = useAtomValue(userSmartAccountClient);
   const geo = useAtomValue(geoStateAtom);
   const geoBlocked = geo.status === "restricted";
-  // F3 (2026-05-16): testnet self-funding affordance. Visible only on
-  // Sepolia (`activeChain.id === 421614`); chain gate at render keeps the
-  // button absent on mainnet builds.
-  const isTestnet = activeChain.id === 421614;
+  // F3 (2026-05-16): self-funding affordance. Visible on Sepolia, or on the
+  // mock demo stack when NEXT_PUBLIC_ENABLE_FAUCET=1 (see FAUCET_ENABLED);
+  // absent on real production builds.
   const tokenSymbolForChain = tokenSymbolForActiveChain();
   const [mintingTestUsdt, setMintingTestUsdt] = useState(false);
   const [side, setSide] = useState<1 | 2>(1);
@@ -1513,11 +1518,12 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       )}
 
       {/* F3 (2026-05-16): inline mint CTA at the friction point.
-          Renders when: connected + on testnet + smartAccount provisioned +
-          balance is insufficient for the current stake. Single click mints
-          100 USDTM to the TW; toast confirms broadcast. Backend route is
-          env-gated (404 in production) and rate-limited (1/addr/5min). */}
-      {isConnected && isTestnet && insufficientBalance && smartAccount && (
+          Renders when: connected + FAUCET_ENABLED (testnet or demo) +
+          smartAccount provisioned + balance is insufficient for the current
+          stake. Single click mints 100 to the SCA; toast confirms broadcast.
+          Backend route is env-gated (404 in production) and rate-limited
+          (1/addr/5min). */}
+      {isConnected && FAUCET_ENABLED && insufficientBalance && smartAccount && (
         <button
           type="button"
           className="pp-trade-v2__testnet-mint"
@@ -1540,7 +1546,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             }
           }}
         >
-          {mintingTestUsdt ? "Minting…" : `Get 100 ${tokenSymbolForChain} (testnet)`}
+          {mintingTestUsdt ? "Minting…" : `Get 100 ${tokenSymbolForChain} (${FAUCET_LABEL_SUFFIX})`}
         </button>
       )}
 
