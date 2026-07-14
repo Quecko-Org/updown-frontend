@@ -8,6 +8,8 @@
 
 ## Quick start
 
+> **⚠️ ThinWallet onboarding is DEPRECATED (F-17536).** The `/thin-wallet/*` router is **retired and unmounted by default** (re-enable only with `THIN_WALLET_ROUTER_ENABLED=1`). Current deployments use **Account Kit / session-key** custody, where the smart account itself is the `order.maker` and signatures are recovered via ERC-1271 — no `provision` / `execute-with-sig` meta-tx step. The steps below that call `POST /thin-wallet/*` describe the legacy flow and will 404 on a default deployment; **only steps 4 (Trade) and 5 (Subscribe) reflect the live path.** This narrative is retained for historical integrators and pending a full rewrite.
+
 1. **Connect** a wallet (MetaMask / Coinbase / WalletConnect) to a UI that targets PulsePairs, or build directly against the API with `viem` + a private key. The first connect deploys your **ThinWallet** smart account at a deterministic address derived from your wallet via `CREATE2`. Your wallet is the owner.
 2. **Onboarding — two one-time signatures, both gasless:**
    - **Identity sign** (`personal_sign` over your lowercased wallet address) — backend uses this to deploy your ThinWallet via `POST /thin-wallet/provision`.
@@ -44,11 +46,11 @@ Read-only endpoints with no PII or wallet-scoped data: `GET /config`, `GET /vers
 
 Per-request EIP-712 signature embedded in the request body. The request *is* the auth — no header credentials. Used for:
 
-- `POST /thin-wallet/provision` (verify-wallet `personal_sign` over the lowercased EOA)
-- `POST /thin-wallet/execute-with-sig` (EIP-712 `ExecuteWithSig` envelope against the ThinWallet's domain)
 - `POST /orders` (EIP-712 `Order` against the Settlement domain — recovered via ERC-1271 dispatch when the maker is a contract)
 - `DELETE /orders/:orderId` (EIP-712 `Cancel` envelope, same domain as the original order)
+- `POST /terms/accept` (EIP-712 `TermsAcceptance` envelope, chain-bound domain — see [§Trading eligibility](#trading-eligibility--geo--terms))
 - WebSocket per-wallet channel subscriptions (EIP-712 `WsAuth` handshake)
+- **[DEPRECATED, disabled by default]** `POST /thin-wallet/provision` / `POST /thin-wallet/execute-with-sig` — the legacy ThinWallet meta-tx flow. Retired in favor of Account Kit / session-key custody; only mounted when `THIN_WALLET_ROUTER_ENABLED=1` (F-17536).
 
 L1 routes are not header-authenticated and accept the request from any IP — replay protection is the signature's `nonce` + `expiry` + (where applicable) the backend's 5-min replay cache.
 
@@ -98,7 +100,59 @@ Routes accepting L2 dispatch on `req.auth.kind === 'hmac'` and bind to the addre
 
 ---
 
+## Trading eligibility — geo + terms
+
+**F-17708.** The browser applies a geo-restriction gate and a terms-of-service
+click before it lets a user trade (`src/lib/geo.ts`). An SDK / bot / direct-API
+caller never loads the browser, so those gates are ALSO enforced at the origin —
+on **order placement only** (`POST /orders`, `POST /orders/bulk`). Cancels and
+reads are never gated: you can always exit a position and read state regardless
+of region or terms status.
+
+**Both gates default OFF.** The demo intentionally serves every region and
+requires no terms click, so with the env unset this is a pure no-op. Enabling is
+a deliberate mainnet action.
+
+### Activation (mainnet — two steps)
+
+1. **Backend env.** Set the enforcement flags:
+   - Geo: `GEO_ENFORCEMENT_ENABLED=1`, `RESTRICTED_COUNTRIES=US,GB,IR,...`
+     (ISO-3166-1 alpha-2, comma-separated; the sentinel `NONE` disables the
+     list — mirrors the frontend), `GEO_COUNTRY_HEADER=cloudfront-viewer-country`
+     (the TRUSTED header your edge/proxy stamps with the visitor country), and
+     optionally `GEO_ALLOW_UNKNOWN=1`.
+   - Terms: `TERMS_ENFORCEMENT_ENABLED=1`, `TERMS_CURRENT_VERSION=1`.
+2. **Client.** The frontend / SDK must `POST /terms/accept` a signed acceptance
+   for the current version **before** placing orders (see
+   [`POST /terms/accept`](#post-termsaccept--l1)).
+
+### Behavior when enabled
+
+- **Geo.** The middleware reads the trusted `GEO_COUNTRY_HEADER`. A country on
+  `RESTRICTED_COUNTRIES` → `451 { error: "Access restricted in your region",
+  code: "geo_restricted" }`. If the header is **absent** (the caller reached the
+  origin without passing the geo edge) the request **fails closed** →
+  `451 { code: "geo_unknown" }`, unless `GEO_ALLOW_UNKNOWN=1`. Fail-closed is
+  deliberate: a direct-to-origin client must not bypass the CloudFront region
+  block by simply omitting the header.
+- **Terms.** Every **claimed maker** in the request must have a recorded
+  acceptance of `TERMS_CURRENT_VERSION`; otherwise → `403 { error: "Terms of
+  service must be accepted", code: "terms_not_accepted", version }`. For
+  `POST /orders/bulk` this is checked for every distinct maker in the batch.
+  Checking the *claimed* maker is sufficient because the order's own EIP-712
+  signature is verified downstream and binds identity — a bot cannot borrow
+  another wallet's acceptance to place its own (differently-signed) order.
+
 ## ThinWallet — smart account auth
+
+> **⚠️ DEPRECATED / disabled by default (F-17536).** The `/thin-wallet/*` router
+> is no longer mounted unless `THIN_WALLET_ROUTER_ENABLED=1` is set in the
+> backend env. The live client retired this meta-tx flow when it migrated to
+> Alchemy **Account Kit / session-key custody**; leaving the relayer-broadcast
+> meta-tx surface mounted served no live consumer. The description below is
+> retained for historical reference and for operators who deliberately
+> re-enable the flow. With the flag unset, `POST /thin-wallet/provision` and
+> `POST /thin-wallet/execute-with-sig` return `404`.
 
 ### What it is
 
@@ -439,6 +493,8 @@ Field semantics:
 
 Returns `201 { id, status, market, option, side, type, price, amount, createdAt }`. Errors return `4xx { error: "..." }`.
 
+**Trading eligibility (F-17708).** When server-side enforcement is enabled (a mainnet action; OFF by default), placement first passes a geo + terms gate: a restricted/unverified region returns `451 { code: "geo_restricted" | "geo_unknown" }` and a maker who has not accepted the current terms version returns `403 { code: "terms_not_accepted", version }`. Accept the terms first via `POST /terms/accept`. See [§Trading eligibility](#trading-eligibility--geo--terms).
+
 #### EIP-712 typed data
 
 Sign with the **domain matching the market's settlement** (`pairs[i].eip712.domain` where `pairs[i].settlementAddress === parseComposite(market).settlementAddress`). For ThinWallet makers (the default), wrap the order digest in a `WalletAuth` envelope against the TW's domain — see [§ThinWallet signing flows](#signing-flows).
@@ -519,13 +575,31 @@ Backend rejects on:
 
 Returns `200 { id, status: "CANCEL_PENDING" }`. The matching engine releases locked collateral and emits an `order_update` with `status="CANCELLED"` once processed.
 
-### `POST /thin-wallet/provision` — L1
+### `POST /thin-wallet/provision` — L1 · **DEPRECATED, disabled by default (F-17536)**
 
-See [§ThinWallet provisioning](#provisioning--post-thin-walletprovision).
+Not mounted unless `THIN_WALLET_ROUTER_ENABLED=1`; returns `404` otherwise. See [§ThinWallet provisioning](#provisioning--post-thin-walletprovision) and the deprecation banner in [§ThinWallet](#thinwallet--smart-account-auth).
 
-### `POST /thin-wallet/execute-with-sig` — L1
+### `POST /thin-wallet/execute-with-sig` — L1 · **DEPRECATED, disabled by default (F-17536)**
 
-See [§ThinWallet meta-tx broadcast](#meta-tx-broadcast--post-thin-walletexecute-with-sig).
+Not mounted unless `THIN_WALLET_ROUTER_ENABLED=1`; returns `404` otherwise. See [§ThinWallet meta-tx broadcast](#meta-tx-broadcast--post-thin-walletexecute-with-sig).
+
+### `POST /terms/accept` — L1
+
+Record a cryptographically-signed terms-of-service acceptance. Public (no HMAC). Body:
+
+```json
+{
+  "wallet": "0xabc...",          // EOA or smart account that signs
+  "version": "1",                 // optional; defaults to the deployment's current version
+  "signature": "0x..."            // EIP-712 TermsAcceptance signature
+}
+```
+
+The signature is an EIP-712 `TermsAcceptance` envelope — domain `{ name: "UpDown Terms", version: "1", chainId }`, type `TermsAcceptance { address wallet; string version }`, message `{ wallet, version }`. It is verified EOA (ECDSA) or smart-account (ERC-1271), so a bare-address POST is rejected — a bot cannot "accept" on another wallet's behalf. Idempotent upsert per `(wallet, version)`. Returns `200 { accepted: true, version }`; a bad signature returns `401`. See [§Trading eligibility](#trading-eligibility--geo--terms).
+
+### `GET /terms/status/:wallet` — L0
+
+Returns `{ wallet, version, accepted, acceptedAt }` for the deployment's current terms version. `accepted` is `false` / `acceptedAt` is `null` when the wallet has not accepted.
 
 ### `POST /auth/credentials` — L1 (issuance) / L2 (rotation)
 
