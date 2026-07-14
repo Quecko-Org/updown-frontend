@@ -15,6 +15,7 @@ import {
   tokenSymbolForActiveChain,
   FAUCET_ENABLED,
   FAUCET_LABEL_SUFFIX,
+  SESSION_USDT_ALLOWANCE_BASE_UNITS,
 } from "@/config/environment";
 import { postDevmintUsdt } from "@/lib/api";
 import { toast } from "sonner";
@@ -30,6 +31,7 @@ import {
   type OrderBookResponse,
 } from "@/lib/api";
 import { buildOrderTypedData } from "@/lib/eip712";
+import { assertPinnedApproval } from "@/lib/pinnedAddresses";
 import { deriveEffectiveStatus, validateLimitPriceCents } from "@/lib/derivations";
 import { parseUsdtToAtomic } from "@/lib/format";
 import {
@@ -95,6 +97,24 @@ const ORDER_TYPES: { id: OrderApiType; label: string; hint?: string }[] = [
 ];
 
 const LONG_PRESS_MS = 400;
+
+/**
+ * Settlement allowance policy.
+ *
+ * `APPROVAL_AMOUNT` is what we grant; `APPROVAL_TOP_UP_THRESHOLD` is when we
+ * re-grant. It used to be an unlimited (MAX_UINT256) approval, which made the
+ * settlement address — server-supplied, see `ensureSettlementAllowance` — able
+ * to `transferFrom` the SCA's entire USDT balance forever. A finite allowance
+ * caps that at `APPROVAL_AMOUNT`, which is far above any demo-sized position and
+ * tunable per box via `NEXT_PUBLIC_SESSION_USDT_ALLOWANCE` (default 10,000 USDT).
+ *
+ * The threshold MUST stay well below the amount: they are the two ends of one
+ * loop, and setting them equal would re-approve (a UserOp, and real gas on the
+ * self-paid demo box) after every single fill. At 10% we top up once per ~9,000
+ * USDT of fills instead.
+ */
+const APPROVAL_AMOUNT = SESSION_USDT_ALLOWANCE_BASE_UNITS;
+const APPROVAL_TOP_UP_THRESHOLD = APPROVAL_AMOUNT / BigInt(10);
 
 function InfoTip({ text }: { text: string }) {
   return (
@@ -373,7 +393,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
 
   /**
    * One-time-per-wallet onboarding UserOp: DEPLOY the user's SCA (if still
-   * counterfactual) and `USDT.approve(settlement, MaxUint256)` in a single
+   * counterfactual) and `USDT.approve(settlement, APPROVAL_AMOUNT)` in a single
    * UserOp via Account Kit. Satisfies both hard rules from the change
    * design: deploy-before-fill (the on-chain ERC-1271 check needs code at
    * `maker`) and the allowance `enterPosition`'s `transferFrom` needs.
@@ -393,16 +413,19 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     const settlement = (parsedKey?.settlement ??
       cfg.eip712.domain.verifyingContract) as `0x${string}`;
     const usdt = cfg.usdtAddress as `0x${string}`;
+    // Both of the above are server-supplied (`parsedKey.settlement` is parsed
+    // out of the composite key `GET /markets` returns), and an allowance is
+    // irrevocable value: pin before granting, never after.
+    assertPinnedApproval({ settlement, usdt });
     const sca = smartAccount as `0x${string}`;
     const pub = createPublicClient({ chain: activeChain, transport: http(ALCHEMY_RPC_URL) });
-    const THRESHOLD = BigInt(10_000) * BigInt(10) ** BigInt(6);
     const current = (await pub.readContract({
       address: usdt,
       abi: erc20Abi,
       functionName: "allowance",
       args: [sca, settlement],
     })) as bigint;
-    if (current >= THRESHOLD) return;
+    if (current >= APPROVAL_TOP_UP_THRESHOLD) return;
     track("approve_attempted");
 
     // Self-paid mode precondition: the SCA needs ETH for its one UserOp.
@@ -418,7 +441,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     }
 
     toast.info("Setting up your trading account… one-time on-chain setup, confirm in your wallet.");
-    const txHash = await ak.onboard({ usdt, settlement });
+    const txHash = await ak.onboard({ usdt, settlement, amount: APPROVAL_AMOUNT });
     track("approve_succeeded", { txHash });
   }, [cfg, ak, smartAccount, parsedKey]);
 

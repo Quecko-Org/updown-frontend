@@ -46,8 +46,15 @@
  *   The key + entityId live in localStorage (`updown:oskey:<sca>`) with a
  *   24h client-side expiry — same browser-custody trust class as rain.trade's
  *   IndexedDB session keys, but with a strictly narrower blast radius.
- *   Expiry is NOT enforced on-chain (needs a time-range hook module —
- *   production follow-up); `revokeOrderSession()` drops the local key.
+ *   Expiry is NOT enforced on-chain, and cannot be with the stock modules:
+ *   TimeRangeModule's `preSignatureValidationHook` is declared `pure` (it
+ *   cannot read `block.timestamp`) and reverts NotImplemented, so it gates
+ *   UserOps and runtime calls only — i.e. everything EXCEPT the one path this
+ *   entity has. Clock-authoritative expiry has to come from the backend, which
+ *   already verifies every order signature. Locally, `revokeOrderSession()` and
+ *   `disconnect()` both drop the key; neither uninstalls the entity on-chain,
+ *   so an already-exfiltrated key stays valid until the entity is uninstalled
+ *   (owner-signed UserOp — production follow-up).
  *   Kill switch: NEXT_PUBLIC_SESSION_ORDERS=0 → owner-key popup per order
  *   (the pre-2026-07-06 behavior). Any session failure at runtime also falls
  *   back to the owner path automatically.
@@ -131,15 +138,31 @@ export function readCachedSA(eoa: string): string | null {
 
 const SESSION_TTL_SEC = 24 * 60 * 60;
 
-type OrderSessionRecord = {
+export type OrderSessionRecord = {
   v: 1;
   /** Session private key — browser custody, same trust class as rain.trade's session keys. */
   privateKey: Hex;
   /** MA-v2 validation entity id the key is installed under on the SCA. */
   entityId: number;
+  /** Unix sec the key was generated. Absent on records written before 2026-07-14. */
+  createdSec?: number;
   /** Client-side expiry (unix sec). NOT enforced on-chain — see header. */
   expirySec: number;
 };
+
+/**
+ * The record lives in plain localStorage, so `expirySec` is attacker-writable —
+ * anything with disk or XSS access can post-date it and keep the entity alive
+ * indefinitely. Anchor the TTL to `createdSec` and clamp `createdSec` to now, so
+ * the honoured expiry is never more than SESSION_TTL_SEC out no matter what the
+ * file says. Honest bound: this does nothing against an attacker who has already
+ * copied the key (they have it), but it makes SESSION_TTL_SEC a real ceiling
+ * rather than a value we ask the disk to respect.
+ */
+export function effectiveExpirySec(rec: OrderSessionRecord, nowSec: number): number {
+  const anchored = Math.min(rec.createdSec ?? nowSec, nowSec) + SESSION_TTL_SEC;
+  return Math.min(rec.expirySec, anchored);
+}
 
 export function sessionOrdersEnabled(): boolean {
   return process.env.NEXT_PUBLIC_SESSION_ORDERS?.trim() !== "0";
@@ -149,13 +172,14 @@ function orderSessionKey(sca: string): string {
   return `updown:oskey:${sca.toLowerCase()}`;
 }
 
-function readOrderSession(sca: string): OrderSessionRecord | null {
+export function readOrderSession(sca: string): OrderSessionRecord | null {
   try {
     const raw = localStorage.getItem(orderSessionKey(sca));
     if (!raw) return null;
     const rec = JSON.parse(raw) as OrderSessionRecord;
     if (rec?.v !== 1 || typeof rec.privateKey !== "string" || !rec.entityId) return null;
-    if (rec.expirySec <= Math.floor(Date.now() / 1000)) {
+    const now = Math.floor(Date.now() / 1000);
+    if (effectiveExpirySec(rec, now) <= now) {
       localStorage.removeItem(orderSessionKey(sca));
       return null;
     }
@@ -313,7 +337,11 @@ export class UpDownAccountKitSigner {
     if (!sessionOrdersEnabled() || !this._address) return null;
     const rec = this._session ?? readOrderSession(this._address);
     if (!rec) return null;
-    if (rec.expirySec <= Math.floor(Date.now() / 1000)) {
+    const nowSec = Math.floor(Date.now() / 1000);
+    // Re-checked here (not just in readOrderSession) because `this._session` is
+    // an in-memory cache that never re-reads the disk — a long-lived tab must
+    // still age out.
+    if (effectiveExpirySec(rec, nowSec) <= nowSec) {
       this.revokeOrderSession();
       return null;
     }
@@ -403,6 +431,7 @@ export class UpDownAccountKitSigner {
     /* eslint-enable @typescript-eslint/no-explicit-any */
     const privateKey = generatePrivateKey() as Hex;
     const sessionAddress = privateKeyToAccount(privateKey).address as Address;
+    const nowSec = Math.floor(Date.now() / 1000);
     // Random 4-byte entity id (≥2): 0 is the owner entity, and installing an
     // id that already exists on the account reverts — random keeps collisions
     // with prior sessions (lost storage, other browsers) vanishingly unlikely.
@@ -425,7 +454,13 @@ export class UpDownAccountKitSigner {
     }) as Hex;
     return {
       call: { to: this.address, data },
-      record: { v: 1, privateKey, entityId, expirySec: Math.floor(Date.now() / 1000) + SESSION_TTL_SEC },
+      record: {
+        v: 1,
+        privateKey,
+        entityId,
+        createdSec: nowSec,
+        expirySec: nowSec + SESSION_TTL_SEC,
+      },
     };
   }
 
@@ -445,16 +480,21 @@ export class UpDownAccountKitSigner {
   }
 
   /**
-   * One-time onboarding: DEPLOY the SCA, `approve(settlement, USDT, MAX)` AND
+   * One-time onboarding: DEPLOY the SCA, `approve(settlement, USDT, amount)` AND
    * install the order-session key, all in a single UserOp (deployment rides
    * the account init-code) — still exactly one wallet popup. Satisfies
    * deploy-before-fill + the allowance `enterPosition` needs, and makes every
    * subsequent order signature popup-less. Session-install failures degrade
    * to the plain deploy+approve onboarding (owner-key signing per order).
+   *
+   * `settlement` reaches here from the API (the composite market key), so the
+   * allowance it receives bounds what a compromised backend could pull out of
+   * this SCA. Callers pass a finite `amount` and top it up when it runs down;
+   * omitting it keeps the historical unlimited allowance.
    */
-  async onboard(args: { usdt: Address; settlement: Address }): Promise<Hex> {
+  async onboard(args: { usdt: Address; settlement: Address; amount?: bigint }): Promise<Hex> {
     const calls: { to: Address; data: Hex; value?: bigint }[] = [
-      { to: args.usdt, data: encodeApprove(args.settlement) },
+      { to: args.usdt, data: encodeApprove(args.settlement, args.amount ?? MAX_UINT256) },
     ];
     let record: OrderSessionRecord | null = null;
     if (sessionOrdersEnabled() && !(await this.sessionAccount().catch(() => null))) {
@@ -508,25 +548,43 @@ export class UpDownAccountKitSigner {
     return txHash;
   }
 
+  /**
+   * Tear down the connection. Clears the persisted session key: `disconnect()`
+   * is only ever reached from an EXPLICIT disconnect (the user's Disconnect
+   * button, or wagmi settling on `status === "disconnected"`), and leaving a
+   * live ERC-1271 signing key on disk after the user asked to disconnect is
+   * exactly what they asked us not to do.
+   *
+   * This does NOT cost the popup-less reload UX. The ordinary reload path never
+   * lands here: WalletContext returns early while wagmi is `connecting` /
+   * `reconnecting`, and a page load that ends `disconnected` has no signer built
+   * yet, so its `akRef.current?.disconnect()` is a no-op and the key survives to
+   * be picked up by `readOrderSession` on the next connect. One onboarding popup
+   * ever still holds for reloads — it is only "disconnect" that now means it.
+   */
   disconnect(): void {
+    this.revokeOrderSession(); // must run first — it needs `this._address`
     this._client = null;
     this._account = null;
     this._address = null;
     this._ownerEoa = null;
-    // Keep the persisted session key (localStorage) so reconnecting the same
-    // wallet stays popup-less; only the in-memory handles are dropped.
-    this._session = null;
-    this._sessionClient = null;
   }
 }
 
 /* ───────────────────────── calldata encoders ───────────────────────── */
 
-const MAX_UINT256 = (BigInt(1) << BigInt(256)) - BigInt(1);
+export const MAX_UINT256 = (BigInt(1) << BigInt(256)) - BigInt(1);
 
-function encodeApprove(spender: Address): Hex {
+/**
+ * `amount` defaults to an unlimited (MAX_UINT256) allowance for source
+ * compatibility with the SDK's `encodeApprove` (sdk/typescript/src/accountKit.ts),
+ * but callers granting an allowance to a SERVER-SUPPLIED spender should always
+ * pass a bounded amount — unlimited turns a hostile /markets response into a
+ * total-loss path via `transferFrom`. See `onboard`.
+ */
+export function encodeApprove(spender: Address, amount: bigint = MAX_UINT256): Hex {
   // approve(address,uint256) selector 0x095ea7b3
-  return ("0x095ea7b3" + pad(spender) + pad(MAX_UINT256)) as Hex;
+  return ("0x095ea7b3" + pad(spender) + pad(amount)) as Hex;
 }
 
 function encodeTransfer(to: Address, amount: bigint): Hex {

@@ -53,9 +53,11 @@ function buildAlchemyRpc(chainId: number, apiKey: string): string {
 
 export const ALCHEMY_RPC_URL = buildAlchemyRpc(CHAIN_ID, ALCHEMY_API_KEY);
 
-export function getSessionExpirySec(): number {
-  return Math.floor(Date.now() / 1000) + 60 * 60 * 48;
-}
+// NOTE: a former getSessionExpirySec() lived here returning now+48h. It was DEAD
+// CODE and disagreed with the single enforced session TTL — SESSION_TTL_SEC (24h)
+// in lib/accountKit.ts, which anchors expiry to createdSec (see effectiveExpirySec).
+// Removed rather than repurposed so there is exactly one source of truth for the
+// session ceiling; the enforced 24h behaviour is unchanged.
 
 export const SESSION_USDT_ALLOWANCE_BASE_UNITS: bigint = BigInt(
   process.env.NEXT_PUBLIC_SESSION_USDT_ALLOWANCE ?? "10000000000"

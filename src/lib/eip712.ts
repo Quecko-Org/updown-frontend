@@ -1,4 +1,5 @@
 import type { ApiConfig } from "./api";
+import { assertPinnedDomain } from "./pinnedAddresses";
 
 export const ORDER_TYPES = {
   Order: [
@@ -65,14 +66,21 @@ export type OrderSignMessage = {
 // market's settlement (`parsedKey.settlement`, lowercased) as `verifyingContract`.
 // Omitting it falls back to `cfg.eip712.domain.verifyingContract` — byte-identical
 // on single-settlement deployments (e.g. the demo, where all pairs share one).
+//
+// BOTH of those are server data (`parsedKey.settlement` is parsed out of the
+// composite market key `GET /markets` returns), so the resolved domain is pinned
+// here — the single choke point every order/cancel signature passes through.
+// `assertPinnedDomain` THROWS; there is deliberately no fall-through to signing.
 function domainWithSettlement(
   cfg: ApiConfig,
   verifyingContract?: `0x${string}`,
 ): (typeof cfg)["eip712"]["domain"] {
-  return {
+  const domain = {
     ...cfg.eip712.domain,
     verifyingContract: verifyingContract ?? cfg.eip712.domain.verifyingContract,
   } as (typeof cfg)["eip712"]["domain"];
+  assertPinnedDomain(domain);
+  return domain;
 }
 
 export function buildOrderTypedData(
@@ -133,7 +141,7 @@ export function buildWithdrawTypedData(
   nonce: bigint
 ) {
   return {
-    domain: cfg.eip712.domain as (typeof cfg)["eip712"]["domain"],
+    domain: domainWithSettlement(cfg),
     types: WITHDRAW_TYPES,
     primaryType: "Withdraw" as const,
     message: { wallet, amount, nonce },
