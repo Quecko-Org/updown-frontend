@@ -533,7 +533,7 @@ Mint or rotate an HMAC API key. L1 issuance — wallet signs `ClobAuth`, body is
 
 ### `POST /markets/:address/claim` — admin only
 
-Relayer / admin only. Headers: `x-updown-admin-key: <CLAIM_ADMIN_API_KEY>` OR body `{ "signature": "<EIP-191 sig from relayer over 'updown:claim:<address>:<chainId>'>" }`. End users do NOT call this — winnings auto-claim.
+Relayer / admin only. Header: `x-updown-admin-key: <CLAIM_ADMIN_API_KEY>` (constant-time compared). End users do NOT call this — winnings auto-claim.
 
 ### `GET /stats` — L0
 

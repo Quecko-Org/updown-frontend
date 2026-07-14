@@ -385,7 +385,13 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const ensureSettlementAllowance = useCallback(async () => {
     if (!cfg || !ak) return;
     if (!smartAccount) return; // wait for Account Kit connect to complete
-    const settlement = cfg.eip712.domain.verifyingContract as `0x${string}`;
+    // Approve THIS market's settlement, not the top-level (first-pair) one:
+    // on a multi-settlement deployment each market has its own settlement and
+    // `enterPosition`'s transferFrom pulls from that contract. `parsedKey`
+    // carries the selected market's settlement (lowercased); the demo shares a
+    // single settlement so this equals `cfg.eip712.domain.verifyingContract`.
+    const settlement = (parsedKey?.settlement ??
+      cfg.eip712.domain.verifyingContract) as `0x${string}`;
     const usdt = cfg.usdtAddress as `0x${string}`;
     const sca = smartAccount as `0x${string}`;
     const pub = createPublicClient({ chain: activeChain, transport: http(ALCHEMY_RPC_URL) });
@@ -414,7 +420,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     toast.info("Setting up your trading account… one-time on-chain setup, confirm in your wallet.");
     const txHash = await ak.onboard({ usdt, settlement });
     track("approve_succeeded", { txHash });
-  }, [cfg, ak, smartAccount]);
+  }, [cfg, ak, smartAccount, parsedKey]);
 
   const totalBps = (cfg?.platformFeeBps ?? 70) + (cfg?.makerFeeBps ?? 80);
 
@@ -867,7 +873,11 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         expiry: BigInt(expiry),
       };
 
-      const typed = buildOrderTypedData(cfg, msg);
+      // Sign against THIS market's settlement (parsedKey is non-null past the
+      // guard above). The backend rebuilds the order domain from the market's
+      // own settlement; on the single-settlement demo this equals
+      // cfg.eip712.domain.verifyingContract, so the digest is unchanged there.
+      const typed = buildOrderTypedData(cfg, msg, parsedKey.settlement);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const signature = await ak.signTypedDataBare(typed as any);
 

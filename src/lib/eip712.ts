@@ -57,9 +57,28 @@ export type OrderSignMessage = {
   expiry: bigint;
 };
 
+// The EIP-712 domain's `verifyingContract` is the settlement contract. On a
+// multi-settlement deployment each market has its OWN settlement, and the
+// backend rebuilds the order/cancel domain from THAT market's settlement — so
+// signing against the top-level (first-pair) settlement from `cfg.eip712.domain`
+// would produce a digest the backend can't verify. Callers thread the selected
+// market's settlement (`parsedKey.settlement`, lowercased) as `verifyingContract`.
+// Omitting it falls back to `cfg.eip712.domain.verifyingContract` — byte-identical
+// on single-settlement deployments (e.g. the demo, where all pairs share one).
+function domainWithSettlement(
+  cfg: ApiConfig,
+  verifyingContract?: `0x${string}`,
+): (typeof cfg)["eip712"]["domain"] {
+  return {
+    ...cfg.eip712.domain,
+    verifyingContract: verifyingContract ?? cfg.eip712.domain.verifyingContract,
+  } as (typeof cfg)["eip712"]["domain"];
+}
+
 export function buildOrderTypedData(
   cfg: ApiConfig,
-  msg: OrderSignMessage
+  msg: OrderSignMessage,
+  verifyingContract?: `0x${string}`,
 ): {
   domain: (typeof cfg)["eip712"]["domain"];
   types: typeof ORDER_TYPES;
@@ -67,7 +86,7 @@ export function buildOrderTypedData(
   message: OrderSignMessage;
 } {
   return {
-    domain: cfg.eip712.domain as (typeof cfg)["eip712"]["domain"],
+    domain: domainWithSettlement(cfg, verifyingContract),
     types: ORDER_TYPES,
     primaryType: "Order",
     message: msg,
@@ -80,9 +99,10 @@ export function buildCancelTypedData(
   orderId: string,
   nonce: bigint,
   expiry: bigint,
+  verifyingContract?: `0x${string}`,
 ) {
   return {
-    domain: cfg.eip712.domain as (typeof cfg)["eip712"]["domain"],
+    domain: domainWithSettlement(cfg, verifyingContract),
     types: CANCEL_TYPES,
     primaryType: "Cancel" as const,
     message: { maker, orderId, nonce, expiry },

@@ -634,7 +634,7 @@ function OrderTable({
               <td className="r">
                 {(o.status === "OPEN" || o.status === "PARTIALLY_FILLED") &&
                 marketStatusByAddress.get(o.market.toLowerCase()) === "ACTIVE" ? (
-                  <CancelOrderButton orderId={o.orderId} />
+                  <CancelOrderButton orderId={o.orderId} market={o.market} />
                 ) : null}
               </td>
             </tr>
