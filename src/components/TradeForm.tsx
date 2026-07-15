@@ -32,7 +32,12 @@ import {
 } from "@/lib/api";
 import { buildOrderTypedData } from "@/lib/eip712";
 import { assertPinnedApproval } from "@/lib/pinnedAddresses";
-import { deriveEffectiveStatus, validateLimitPriceCents } from "@/lib/derivations";
+import {
+  deriveEffectiveStatus,
+  formatPriceCents,
+  stepPriceBps,
+  validateLimitPriceCents,
+} from "@/lib/derivations";
 import { parseUsdtToAtomic } from "@/lib/format";
 import {
   bestEffectivePriceCents,
@@ -467,10 +472,14 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   }, [orderType, side, marketKey]);
 
   const userPriceParsed = validateLimitPriceCents(userPriceCentsInput);
-  const userOverrideActive = userPriceCentsInput !== "" && userPriceParsed.value != null;
-  const limitPrice = userOverrideActive ? (userPriceParsed.value as number) * 100 : autoLimitPrice;
-  const autoCentsDisplay = Math.round(autoLimitPrice / 100);
-  const priceInputInvalid = userPriceCentsInput !== "" && userPriceParsed.value == null;
+  const userOverrideActive = userPriceCentsInput !== "" && userPriceParsed.bps != null;
+  const limitPrice = userOverrideActive ? (userPriceParsed.bps as number) : autoLimitPrice;
+  // Show the auto price at the book's real resolution. Rounding this to whole
+  // cents made the field read "60" while the order actually signed at 5972 bps
+  // (59.72¢), so stepping down from it jumped to 59.00¢ and silently stopped
+  // crossing the ask.
+  const autoCentsDisplay = formatPriceCents(autoLimitPrice);
+  const priceInputInvalid = userPriceCentsInput !== "" && userPriceParsed.bps == null;
 
   // Phase2-C: per-side mid prices for the BIG selector buttons. Both sides
   // are computed regardless of which is selected so the user sees the live
@@ -743,7 +752,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
 
       if (orderType !== "MARKET" && userPriceCentsInput !== "") {
         const v = validateLimitPriceCents(userPriceCentsInput);
-        if (v.value == null) throw new Error(v.error ?? "Invalid price");
+        if (v.bps == null) throw new Error(v.error ?? "Invalid price");
       }
 
       // ── Derive the wire `amount` (a SHARE count) + signed price ─────────
@@ -932,7 +941,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         option: side === 1 ? "UP" : "DOWN",
         pair: market?.pairSymbol ?? "unknown",
         amountUsd: stakeUsd,
-        priceCents: orderType === "MARKET" ? null : Math.round(limitPrice / 100),
+        priceCents: orderType === "MARKET" ? null : limitPrice / 100,
       });
       // All identity-scoped caches are keyed by the SCA (the trading
       // identity the backend's `resolveOwnerEoa` rows are created under).
@@ -1044,7 +1053,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       return {
         label: "Fix limit price",
         disabled: true,
-        inlineError: userPriceParsed.error ?? "Limit price must be 1¢–99¢.",
+        inlineError: userPriceParsed.error ?? "Limit price must be 0.01¢–99.99¢.",
       };
     }
     if (stakeUsd <= 0) {
@@ -1271,11 +1280,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             <button
               type="button"
               className="pp-trade-v2__stepper"
-              onClick={() => {
-                const cur = userPriceCentsInput === "" ? autoCentsDisplay : Number(userPriceCentsInput);
-                const next = Math.max(1, (Number.isFinite(cur) ? cur : 0) - 1);
-                setUserPriceCentsInput(String(next));
-              }}
+              onClick={() => setUserPriceCentsInput(stepPriceBps(limitPrice, -100))}
               aria-label="Decrease limit price by 1¢"
             >
               −
@@ -1283,10 +1288,10 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             <input
               id="limit-price-cents"
               type="number"
-              inputMode="numeric"
-              min={1}
-              max={99}
-              step={1}
+              inputMode="decimal"
+              min={0.01}
+              max={99.99}
+              step={0.01}
               value={userPriceCentsInput === "" ? autoCentsDisplay : userPriceCentsInput}
               onChange={(e) => setUserPriceCentsInput(e.target.value)}
               onFocus={(e) => e.currentTarget.select()}
@@ -1300,11 +1305,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             <button
               type="button"
               className="pp-trade-v2__stepper"
-              onClick={() => {
-                const cur = userPriceCentsInput === "" ? autoCentsDisplay : Number(userPriceCentsInput);
-                const next = Math.min(99, (Number.isFinite(cur) ? cur : 0) + 1);
-                setUserPriceCentsInput(String(next));
-              }}
+              onClick={() => setUserPriceCentsInput(stepPriceBps(limitPrice, 100))}
               aria-label="Increase limit price by 1¢"
             >
               +
