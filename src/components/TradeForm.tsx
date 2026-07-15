@@ -86,11 +86,34 @@ const STAKE_QUICK_ADDS: StakeQuickAdd[] = [
   { kind: "max" },
 ];
 
-const EXPIRY_MODES: { id: "never" | "1h" | "close"; label: string; hint: string }[] = [
+export type ExpiryMode = "1h" | "close";
+
+/**
+ * There is no "Never" mode. UpDownSettlement reverts `OrderExpired` on
+ * `block.timestamp > order.expiry`, so an expiry of 0 is not "never expires",
+ * it is never SETTLES: the order matches, gets a Trade row, and then fails
+ * settlement forever. Every mode here must therefore produce a future
+ * timestamp, bounded by the market's own close — an order cannot usefully
+ * outlive the market it trades.
+ */
+export const EXPIRY_MODES: { id: ExpiryMode; label: string; hint: string }[] = [
   { id: "close", label: "Until close", hint: "expires when market resolves" },
   { id: "1h", label: "1 hour", hint: "expires in 60 min" },
-  { id: "never", label: "Never", hint: "never expires" },
 ];
+
+/**
+ * The unix-second expiry a mode signs into the EIP-712 order payload. Exported
+ * for the sibling test: the expiry is part of the signed digest, so this value
+ * is what the FE both signs AND posts — it is never rewritten server-side.
+ *
+ * "1h" is deliberately NOT clamped to `marketEndTime`. An expiry beyond close
+ * costs nothing (the engine sweeps the order at MARKET_ENDED regardless) and a
+ * LATER expiry is strictly safer on-chain: it is the settlement tx's inclusion
+ * time, not the match time, that the contract compares against.
+ */
+export function expiryForMode(mode: ExpiryMode, marketEndTime: number, nowMs = Date.now()): number {
+  return mode === "1h" ? Math.floor(nowMs / 1000) + 3600 : marketEndTime;
+}
 
 // Ordered so the compact pill's short-click (Market ↔ Limit) matches index 0 / 1;
 // long-press reveals the full list including POST_ONLY + IOC.
@@ -157,9 +180,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   // doesn't outlive the market window (matches the matching engine's
   // MARKET_ENDED behavior — choosing it explicitly avoids the "where did my
   // order go?" surprise from previous Until-MARKET_ENDED implicit cancels).
-  const [expiryMode, setExpiryMode] = useState<"never" | "1h" | "close">(
-    "close",
-  );
+  const [expiryMode, setExpiryMode] = useState<ExpiryMode>("close");
   const [otypeMenuOpen, setOtypeMenuOpen] = useState(false);
   // 2026-05-16 BUG A redesign: full payoff breakdown collapses behind a
   // Details ▾ accordion so the primary panel surfaces only the two
@@ -857,15 +878,10 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
 
       const nonce = Math.floor(Math.random() * 1e12);
       // Phase2-C: explicit expiry mode chosen by the user.
-      //   "never" → expiry=0 (matching engine's "no expiry" sentinel)
       //   "1h"    → now + 3600 (legacy default; kept for users who want it)
       //   "close" → market.endTime (default; expires at market close)
-      const expiry =
-        expiryMode === "never"
-          ? 0
-          : expiryMode === "1h"
-            ? Math.floor(Date.now() / 1000) + 3600
-            : market.endTime;
+      // Always a future timestamp — see `expiryForMode`.
+      const expiry = expiryForMode(expiryMode, market.endTime);
       const typeNum = ORDER_TYPE_U8[orderType];
 
       // `amount` (shares) and `priceNum` (the non-zero signed price — the
