@@ -1357,9 +1357,15 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
           </span>
         </div>
         <div className="pp-trade-v2__amount-input-wrap">
-          <span className="pp-trade-v2__amount-currency" aria-hidden>
-            $
-          </span>
+          {/* BUY takes a $ budget; SELL takes a SHARE count (1 share = $1
+              face). The affordance must track that meaning — a `$` on the
+              SELL input mislabels a share count as dollars. BUY shows a
+              leading `$`; SELL shows a trailing "shares" unit instead. */}
+          {orderSide === 0 && (
+            <span className="pp-trade-v2__amount-currency" aria-hidden>
+              $
+            </span>
+          )}
           <input
             id="trade-stake"
             type="text"
@@ -1381,6 +1387,11 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             )}
             aria-invalid={stakeOutOfRange}
           />
+          {orderSide === 1 && (
+            <span className="pp-trade-v2__amount-currency" aria-hidden>
+              shares
+            </span>
+          )}
         </div>
         <div className="pp-trade-v2__chips">
           {STAKE_QUICK_ADDS.map((qa, i) =>

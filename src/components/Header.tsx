@@ -76,6 +76,7 @@ export function Header() {
     isWalletConnected,
     isLoading,
     loadingStep,
+    isSilentRestore,
     walletAddress,
     disconnectWallet,
     showSignModal,
@@ -253,8 +254,10 @@ export function Header() {
 
   return (
     <>
-      {/* Full-screen loading overlay */}
-      {isLoading && (
+      {/* Full-screen loading overlay. Suppressed during a silent reload-restore
+          (isLoading is already left false there; the flag makes it explicit) so
+          a refresh of an already-connected user never flashes the setup curtain. */}
+      {isLoading && !isSilentRestore && (
         <div
           className="fixed inset-0 flex flex-col items-center justify-center gap-3"
           style={{

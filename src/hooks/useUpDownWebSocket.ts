@@ -256,6 +256,16 @@ export function useUpDownWebSocket(opts: {
           queryClient.setQueriesData({ queryKey: ["orders", w.toLowerCase()] }, (old) =>
             applyOrderUpdateToList(old as Parameters<typeof applyOrderUpdateToList>[0], update),
           );
+          // Fix #5-FE: a fill moves the settled on-chain balance, but the
+          // authoritative `balance_update` frame only lands at settlement
+          // CONFIRMED — seconds after the fill. Refetch the settled balance now
+          // so the header figure updates on the fill instead of waiting for the
+          // ~15s poll. Belt-and-suspenders alongside the backend's CONFIRMED
+          // balance_update emit; the `balance_update` handler above still
+          // applies the authoritative snapshot when it arrives.
+          if (update.status === "FILLED" || update.status === "PARTIALLY_FILLED") {
+            queryClient.invalidateQueries({ queryKey: ["balance", w.toLowerCase()] });
+          }
         }
         const t = buildTerminalOrderToast(update, w);
         if (t) {

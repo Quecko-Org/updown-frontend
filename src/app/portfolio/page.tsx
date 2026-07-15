@@ -12,11 +12,13 @@ import {
   getMarkets,
   getOrders,
   getPositions,
+  getTrades,
   postMarketClaim,
   type OrderRow,
   type PositionRow,
+  type TradeRow,
 } from "@/lib/api";
-import { formatUsdt } from "@/lib/format";
+import { formatShares, formatUsdt } from "@/lib/format";
 import { CancelOrderButton } from "@/components/CancelOrderButton";
 import { EmptyState } from "@/components/EmptyState";
 import { cn } from "@/lib/cn";
@@ -55,10 +57,25 @@ function statusChipClass(status: string): string {
   return "pp-chip-status pp-chip-status--open";
 }
 
-type Tab = "active" | "resolved";
+type Tab = "active" | "resolved" | "activity";
 
 function readTab(sp: URLSearchParams | null): Tab {
-  return sp?.get("tab") === "resolved" ? "resolved" : "active";
+  const t = sp?.get("tab");
+  if (t === "resolved") return "resolved";
+  if (t === "activity") return "activity";
+  return "active";
+}
+
+/** Compact "Jul 16, 2:34 PM"-style label for a trade timestamp. */
+function formatTradeTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 export default function PortfolioPage() {
@@ -155,6 +172,20 @@ function PortfolioInner() {
     return map;
   }, [resolvedMarketKeys, marketQueries]);
 
+  // #9: resolution-time sort key per resolved market. Positions carry no
+  // end time of their own, so we lift `endTime` off the per-market query
+  // (the same fetch that feeds winner/window). Used to order the Resolved
+  // tab newest-first; markets whose detail hasn't loaded yet sort to 0 and
+  // fall back to the address tiebreak below.
+  const endTimeByMarket = useMemo(() => {
+    const map = new Map<string, number>();
+    resolvedMarketKeys.forEach((m, i) => {
+      const t = marketQueries[i]?.data?.endTime;
+      if (typeof t === "number") map.set(m, t);
+    });
+    return map;
+  }, [resolvedMarketKeys, marketQueries]);
+
   const summary = useMemo(() => computeSummary(positions ?? [], winnerByMarket), [positions, winnerByMarket]);
 
   const claim = useMutation({
@@ -194,9 +225,21 @@ function PortfolioInner() {
   const activePositions = (positions ?? []).filter(
     (p) => !isTerminalMarketStatus(p.marketStatus),
   );
-  const resolvedPositions = (positions ?? []).filter((p) =>
-    isResolvedMarketStatus(p.marketStatus),
-  );
+  // #9: newest-resolved first. Sort by the per-market resolution (end) time
+  // descending; when two markets share a time — or their detail hasn't
+  // loaded yet (both key to 0) — fall back to a stable market-address
+  // descending tiebreak so ordering stays deterministic. `.filter()` returns
+  // a fresh array, so this sort never mutates the cached positions feed.
+  const resolvedPositions = (positions ?? [])
+    .filter((p) => isResolvedMarketStatus(p.marketStatus))
+    .sort((a, b) => {
+      const ta = endTimeByMarket.get(a.market.toLowerCase()) ?? 0;
+      const tb = endTimeByMarket.get(b.market.toLowerCase()) ?? 0;
+      if (tb !== ta) return tb - ta;
+      const am = a.market.toLowerCase();
+      const bm = b.market.toLowerCase();
+      return am < bm ? 1 : am > bm ? -1 : 0;
+    });
   const openOrders = orders.filter(
     (o) => o.status === "OPEN" || o.status === "PARTIALLY_FILLED",
   );
@@ -229,6 +272,15 @@ function PortfolioInner() {
         >
           Resolved
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "activity"}
+          className={cn("pp-tab__btn", tab === "activity" && "pp-tab__btn--on")}
+          onClick={() => setTab("activity")}
+        >
+          Activity
+        </button>
       </div>
 
       {tab === "active" ? (
@@ -238,7 +290,7 @@ function PortfolioInner() {
           openOrders={openOrders}
           marketStatusByAddress={marketStatusByAddress}
         />
-      ) : (
+      ) : tab === "resolved" ? (
         <ResolvedTab
           loading={positionsLoading}
           positions={resolvedPositions}
@@ -247,6 +299,8 @@ function PortfolioInner() {
           onClaim={(m) => claim.mutate(m)}
           claimPending={claim.isPending}
         />
+      ) : (
+        <ActivityTab wallet={smartAccount} />
       )}
     </div>
   );
@@ -487,7 +541,7 @@ function ResolvedTab({
                   )}
                 </td>
                 <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
-                  ${formatUsdt(p.shares)}
+                  {formatShares(p.shares)}
                 </td>
                 <td className="r pp-tabular" style={{ color: pnlColor }}>
                   {winner == null
@@ -558,10 +612,10 @@ function PositionTable({
                 </span>
               </td>
               <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
-                ${formatUsdt(p.shares)}
+                {formatShares(p.shares)}
               </td>
               <td className="r pp-tabular" style={{ color: "var(--fg-2)" }}>
-                {p.avgPrice} bps
+                {(p.avgPrice / 100).toFixed(2)}¢
               </td>
               {mode === "active" ? (
                 <td>
@@ -623,7 +677,7 @@ function OrderTable({
                 </span>
               </td>
               <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
-                ${formatUsdt(o.amount)}
+                {formatShares(o.amount)}
               </td>
               <td className="r pp-tabular hidden sm:table-cell" style={{ color: "var(--fg-0)" }}>
                 {o.type === 1 ? "MKT" : `${(o.price / 100).toFixed(0)}¢`}
@@ -639,6 +693,104 @@ function OrderTable({
               </td>
             </tr>
           ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// #7: individual-trade activity feed. The /positions feed NETS trades and
+// drops any position that closes out at 0 net shares, so a fully-sold
+// position vanishes and a sell is never itemized anywhere. This tab lists
+// the raw trades (buys AND sells) keyed by the connected SCA — the same
+// trading identity positions/orders/balance are keyed under — so sold
+// positions remain visible. Buy vs Sell is derived per row from whether the
+// SCA was the buyer or seller on that trade.
+function ActivityTab({ wallet }: { wallet: string | null | undefined }) {
+  const walletLower = wallet?.toLowerCase() ?? "";
+  const { data: trades, isLoading } = useQuery({
+    queryKey: ["trades", walletLower],
+    queryFn: () => getTrades(wallet!),
+    enabled: !!wallet,
+    refetchInterval: 20_000,
+    retry: 1,
+  });
+
+  if (!wallet || isLoading) {
+    return <div className="py-8 text-center pp-caption">Loading…</div>;
+  }
+
+  // Newest first. The endpoint's ordering isn't contractually guaranteed, so
+  // sort defensively by createdAt descending.
+  const rows: TradeRow[] = [...(trades ?? [])].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+
+  if (rows.length === 0) {
+    return (
+      <EmptyState
+        icon="list"
+        title="No trades yet"
+        subtitle="Your individual buys and sells — including fully-sold positions — show here."
+      />
+    );
+  }
+
+  return (
+    <div
+      className="overflow-hidden overflow-x-auto rounded-[var(--r-lg)] border"
+      style={{ borderColor: "var(--border-0)", background: "var(--bg-1)" }}
+    >
+      <table className="pp-table min-w-full">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Market</th>
+            <th>Dir</th>
+            <th>Side</th>
+            <th className="r">Shares</th>
+            <th className="r">Price</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((t) => {
+            const isBuy = t.buyer.toLowerCase() === walletLower;
+            return (
+              <tr key={t.tradeId}>
+                <td
+                  className="pp-tabular"
+                  style={{ color: "var(--fg-2)", fontSize: 12 }}
+                >
+                  {formatTradeTime(t.createdAt)}
+                </td>
+                <td>
+                  <Link
+                    href={marketPathFromAddress(t.market)}
+                    className="hover:underline"
+                    style={{ color: "var(--fg-0)" }}
+                  >
+                    <span className="pp-hash">{shortenMarket(t.market)}</span>
+                  </Link>
+                </td>
+                <td>
+                  <span className={t.option === 1 ? "pp-chip-up" : "pp-chip-down"}>
+                    {t.option === 1 ? "UP" : "DOWN"}
+                  </span>
+                </td>
+                <td>
+                  <span className="pp-micro" style={{ color: "var(--fg-0)" }}>
+                    {isBuy ? "BUY" : "SELL"}
+                  </span>
+                </td>
+                <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
+                  {formatShares(t.amount)}
+                </td>
+                <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
+                  {(t.price / 100).toFixed(2)}¢
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

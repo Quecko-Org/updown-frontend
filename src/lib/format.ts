@@ -12,6 +12,14 @@ export function formatUsdt(raw: string | bigint): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: 6 });
 }
 
+/** Format an atomic 6-dp SHARE count for display. Shares are atomic 6-dp and
+ *  1:1 with $1 face value, so the numeric formatting matches `formatUsdt` —
+ *  the difference is purely semantic: a share count is NOT dollars, so callers
+ *  render it with a "shares" affordance and never a `$` prefix. */
+export function formatShares(raw: string | bigint): string {
+  return formatUsdt(raw);
+}
+
 export function parseUsdtToAtomic(dollars: string): bigint {
   const normalized = dollars.trim().replace(/,/g, "");
   return parseUnits(normalized || "0", USDT_DECIMALS);

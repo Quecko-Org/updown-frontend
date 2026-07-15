@@ -62,6 +62,10 @@ export interface WalletContextValue {
   isWalletConnected: boolean;
   isLoading: boolean;
   loadingStep: string;
+  /** True while wagmi's reconnect-on-reload silently restores a cached account
+   *  (as opposed to an explicit user connect). Header uses it to keep the
+   *  full-screen setup curtain down on a silent restore. */
+  isSilentRestore: boolean;
   walletAddress: string | undefined;
   connectWallet: (connector: Connector) => Promise<void>;
   disconnectWallet: () => void;
@@ -87,6 +91,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState("");
+  // Set for the duration of a silent reload-restore so the Header curtain stays
+  // down (see `setupAccountKit`'s `silent` branch). isLoading is already left
+  // false in that path; this flag makes the Header gate explicit/defensive.
+  const [isSilentRestore, setIsSilentRestore] = useState(false);
 
   const { connectAsync } = useConnect();
   const { disconnect } = useDisconnect();
@@ -189,9 +197,20 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       if (akRef.current && akOwnerRef.current === walletAddr.toLowerCase()) return;
       setupInFlightRef.current = true;
       const wipeOnError = opts?.wipeOnError ?? false;
+      const silent = opts?.silent ?? false;
       try {
-        setIsLoading(true);
-        setLoadingStep("Setting up your account…");
+        // Silent restore (wagmi reconnect-on-reload of the cached account): do
+        // NOT raise the full-screen "Setting up your account…" curtain — it
+        // belongs only on an explicit, first-time user connect. `silent` comes
+        // from `isRestore` (lastAccount === address) in the connect effect
+        // below; an explicit reconnect clears `lastAccount` on disconnect, so
+        // it correctly reads as non-silent and still shows the curtain.
+        if (silent) {
+          setIsSilentRestore(true);
+        } else {
+          setIsLoading(true);
+          setLoadingStep("Setting up your account…");
+        }
 
         // Hydrate the deterministic SCA from cache immediately so a reload never
         // flashes a disconnected state while ak.connect() round-trips Alchemy.
@@ -268,6 +287,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         setupInFlightRef.current = false;
         setLoadingStep("");
         setIsLoading(false);
+        setIsSilentRestore(false);
       }
     },
     [ensurePlatformChain, disconnectWallet, setSmartAccount, setSmartAccountClient],
@@ -311,6 +331,20 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     },
     [connectAsync],
   );
+
+  // Eagerly hydrate the cached SCA on mount from the last-restored account,
+  // BEFORE wagmi finishes its reconnect. Without this, a silent restore paints
+  // one frame of the reconnecting EOA in the wallet chip (`smartAccount` is
+  // still empty at the first `connected` render) before setupAccountKit's own
+  // cache hydration lands. `lastAccount` is cleared on explicit disconnect, so
+  // this only fires for a genuine reload-restore; if wagmi ultimately settles
+  // disconnected, the `status === "disconnected"` effect below clears it again.
+  useEffect(() => {
+    const last = localStorage.getItem("lastAccount");
+    if (!last) return;
+    const sca = readCachedSA(last);
+    if (sca) setSmartAccount(sca);
+  }, [setSmartAccount]);
 
   // Run the Account Kit setup whenever a wallet lands (fresh connect or
   // wagmi's reconnect-on-reload) or the user switches accounts. We gate on
@@ -372,6 +406,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     isWalletConnected: isConnected && !!address,
     isLoading,
     loadingStep,
+    isSilentRestore,
     walletAddress: address,
     connectWallet,
     disconnectWallet,
