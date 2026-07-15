@@ -84,10 +84,11 @@ export function OrderBookPanel({
   const { upLevels, downLevels, maxDepth } = useMemo(() => {
     if (!data) return { upLevels: [] as Level[], downLevels: [] as Level[], maxDepth: 1 };
     // Merge bids + asks per outcome into a single price-sorted ladder.
-    // Bids descending then asks ascending so the best bid sits at the
-    // bottom of the bid block (closest to spread) and the best ask at
-    // the top of the ask block. Tag each level with `kind` so the
-    // renderer can color-code bid (green) vs ask (red).
+    // Both blocks render price-DESCENDING, so the spread sits in the
+    // middle: best ask (lowest sell) at the BOTTOM of the ask block,
+    // best bid (highest buy) at the TOP of the bid block, the two facing
+    // each other. Tag each level with `kind` so the renderer can
+    // color-code bid (green) vs ask (red).
     const toLevels = (
       bids: { price: number; depth: string; count: number }[],
       asks: { price: number; depth: string; count: number }[],
@@ -102,6 +103,8 @@ export function OrderBookPanel({
           depthVal: depthUsd(l.depth, l.price),
           kind: 'bid',
         }));
+      // Sort ASCENDING to `slice` the 8 *best* (lowest) asks, then reverse
+      // for display. Sorting descending up front would keep the 8 worst.
       const askLevels = [...asks]
         .sort((a, b) => a.price - b.price)
         .slice(0, 8)
@@ -111,8 +114,10 @@ export function OrderBookPanel({
           count: l.count,
           depthVal: depthUsd(l.depth, l.price),
           kind: 'ask',
-        }));
-      // Asks on top (lowest sell), then bids (highest buy) — standard CLOB layout.
+        }))
+        .reverse();
+      // Asks on top (best/lowest sell last, nearest the spread), then bids
+      // (best/highest buy first) — standard CLOB layout.
       return [...askLevels, ...bidLevels];
     };
     const ups = toLevels(data.up.bids, data.up.asks);
