@@ -101,6 +101,15 @@ export type UpDownAccountKitConfig = {
   alchemyApiKey: string;
   paymasterPolicyId?: string;
   gasToken?: { tokenAddress: Address };
+  /**
+   * Sponsored-transfer billing (see lib/gasFee.ts). When set alongside
+   * `paymasterPolicyId` (and WITHOUT `gasToken`), every UserOp batches a
+   * `transfer(collector, gasCostInFeeToken)` so the sponsored gas is recovered
+   * in the collateral token. Unset → sponsorship is free to the user.
+   */
+  gasFeeCollector?: Address;
+  /** Token the sponsored-transfer fee is charged in (the demo's USDTm). */
+  feeToken?: Address;
   chain: Chain;
   rpcUrl?: string;
 };
@@ -506,14 +515,14 @@ export class UpDownAccountKitSigner {
         console.warn("[accountKit] session install prep failed — onboarding without a session", e);
       }
     }
-    const txHash = await this.sendCalls(calls);
+    const txHash = await this.sendCalls(calls, args.usdt);
     if (record) this.persistOrderSession(record);
     return txHash;
   }
 
   /** Transfer USDT out of the SCA to `to` (UserOp). */
   async withdraw(args: { usdt: Address; to: Address; amount: bigint }): Promise<Hex> {
-    return this.sendCall({ to: args.usdt, data: encodeTransfer(args.to, args.amount) });
+    return this.sendCalls([{ to: args.usdt, data: encodeTransfer(args.to, args.amount) }], args.usdt);
   }
 
   /** Send a single call from the SCA as a UserOp; returns the tx hash. */
@@ -521,8 +530,18 @@ export class UpDownAccountKitSigner {
     return this.sendCalls([call]);
   }
 
-  /** Send one UserOp batching `calls` in order; returns the tx hash. */
-  private async sendCalls(calls: { to: Address; data: Hex; value?: bigint }[]): Promise<Hex> {
+  /**
+   * Send one UserOp batching `calls` in order; returns the tx hash.
+   *
+   * `feeToken` overrides the configured sponsored-transfer fee token. The
+   * collateral address is NOT hardcoded anywhere in the FE — it comes from the
+   * backend's `/config` (the demo has already redeployed it once, on the
+   * rain-token switch), so callers that hold it authoritatively pass it down.
+   */
+  private async sendCalls(
+    calls: { to: Address; data: Hex; value?: bigint }[],
+    feeToken?: Address,
+  ): Promise<Hex> {
     if (!this._client || !this._account || !this._address) {
       throw new Error("Not connected. Call connect() first.");
     }
@@ -537,9 +556,35 @@ export class UpDownAccountKitSigner {
         },
       };
     }
+
+    // SPONSORED-TRANSFER (see lib/gasFee.ts): a SPONSORSHIP policy pays the ETH,
+    // and we recover the cost as a plain ERC-20 transfer batched into THIS userOp.
+    // It goes here, at the single choke point every UserOp passes through, so
+    // onboard/withdraw/sendCall are all billed by construction — one place to get
+    // right, and none to forget. Atomic: fee and action succeed or fail together.
+    // Skipped when a gasToken is set (that's Alchemy's own ERC-20 paymaster
+    // debiting in postOp — billing it twice would double-charge).
+    const feeCollector = this.config.gasFeeCollector;
+    const tok = feeToken ?? this.config.feeToken;
+    let outCalls = calls;
+    if (this.config.paymasterPolicyId && !this.config.gasToken && feeCollector && tok) {
+      const { computeGasFeeTransfer } = await import("./gasFee");
+      const quote = await computeGasFeeTransfer({
+        client: this._client as unknown as { prepareCalls?: (a: unknown) => Promise<unknown> },
+        from: this._address,
+        policyId: this.config.paymasterPolicyId,
+        feeToken: tok,
+        actionCalls: calls,
+        onLog: (m) => console.info(m),
+      });
+      // Fee FIRST: if the account can't cover it the whole userOp reverts before
+      // the action lands, rather than doing the work and failing to bill.
+      outCalls = [quote.transfer, ...calls];
+    }
+
     const { id } = await this._client.sendCalls({
       from: this._address,
-      calls: calls.map((c) => ({ to: c.to, data: c.data, value: toHex(c.value ?? BigInt(0)) })),
+      calls: outCalls.map((c) => ({ to: c.to, data: c.data, value: toHex(c.value ?? BigInt(0)) })),
       ...(Object.keys(capabilities).length ? { capabilities } : {}),
     });
     const status = await this._client.waitForCallsStatus({ id });
@@ -601,19 +646,40 @@ function pad(v: Address | bigint): string {
 
 /**
  * Build the signer from the FE env + the connected wagmi connector's
- * EIP-1193 provider. Gas mode is env-driven:
- *   NEXT_PUBLIC_ALCHEMY_GAS_POLICY_ID unset → self-paid (demo default)
- *   …set                                    → sponsored
- *   …set + NEXT_PUBLIC_AK_GAS_TOKEN set     → ERC-20-paid (e.g. USDC)
+ * EIP-1193 provider. Gas mode is env-driven — FOUR modes now:
+ *
+ *   NEXT_PUBLIC_ALCHEMY_GAS_POLICY_ID unset → self-paid (SCA needs ETH)
+ *   …set (SPONSORSHIP policy)               → sponsored, FREE to the user
+ *   …set + NEXT_PUBLIC_GAS_FEE_COLLECTOR    → sponsored-transfer: no ETH needed,
+ *                                             gas recovered in USDTm (lib/gasFee.ts)
+ *   …set + NEXT_PUBLIC_AK_GAS_TOKEN         → Alchemy's ERC-20 paymaster debits a
+ *                                             REGISTRY token (USDC/USDT₀ — never a
+ *                                             mock; requires an ERC20-type policy)
+ *
+ * The policy TYPE must match the mode: sponsored/sponsored-transfer need a
+ * SPONSORSHIP policy; the gasToken path needs an ERC20/ERC20_MANAGED one. Alchemy
+ * rejects the mismatch outright ("Policy … is of type ERC20, but erc20 capability
+ * is missing"), so a wrong pairing fails every send, not just some.
  */
 export function createUpDownAccountKitSigner(provider: Eip1193Provider): UpDownAccountKitSigner {
   const policyId = process.env.NEXT_PUBLIC_ALCHEMY_GAS_POLICY_ID?.trim();
   const gasTokenAddr = process.env.NEXT_PUBLIC_AK_GAS_TOKEN?.trim();
+  const feeCollector = process.env.NEXT_PUBLIC_GAS_FEE_COLLECTOR?.trim();
+  const feeTokenEnv = process.env.NEXT_PUBLIC_GAS_FEE_TOKEN?.trim();
   return new UpDownAccountKitSigner({
     walletClient: provider,
     alchemyApiKey: ALCHEMY_API_KEY,
     ...(policyId ? { paymasterPolicyId: policyId } : {}),
     ...(policyId && gasTokenAddr ? { gasToken: { tokenAddress: gasTokenAddr as Address } } : {}),
+    ...(policyId && !gasTokenAddr && feeCollector
+      ? {
+          gasFeeCollector: feeCollector as Address,
+          // Optional fallback for the standalone session-install UserOp, which
+          // has no collateral address in hand. onboard()/withdraw() pass theirs
+          // from `/config` and never rely on this.
+          ...(feeTokenEnv ? { feeToken: feeTokenEnv as Address } : {}),
+        }
+      : {}),
     chain: activeChain,
     rpcUrl: ALCHEMY_RPC_URL,
   });

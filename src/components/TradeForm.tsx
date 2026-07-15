@@ -454,19 +454,25 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     if (current >= APPROVAL_TOP_UP_THRESHOLD) return;
     track("approve_attempted");
 
-    // Self-paid mode precondition: the SCA needs ETH for its one UserOp.
-    // The dev faucet (`POST /test/devmint`) seeds it alongside the USDTM
-    // mint; fail with actionable copy instead of a bundler error.
+    // Self-paid mode precondition: the SCA needs ETH for its one UserOp. With a
+    // gas policy set the UserOp is sponsored (and, in sponsored-transfer mode,
+    // billed back in USDTm) — the SCA never needs ETH, so this must NOT fire.
+    // The dev faucet (`POST /test/devmint`) seeds ETH alongside the USDTM mint;
+    // fail with actionable copy instead of a bundler error.
     if (!process.env.NEXT_PUBLIC_ALCHEMY_GAS_POLICY_ID?.trim()) {
       const ethBal = await pub.getBalance({ address: sca });
       if (ethBal === BigInt(0)) {
         throw new Error(
-          `Your smart account ${sca} needs a one-time on-chain setup but has no ETH for gas. Send a little ETH (~0.001) to that address — it's your trading account, not your MetaMask address.`,
+          // "one-time approval", not "on-chain setup": this fires when the
+          // ALLOWANCE is missing, which has nothing to do with deployment. The
+          // old wording sent people hunting for an undeployed account (an
+          // already-deployed, already-funded SCA hits this too).
+          `Your trading account ${sca} needs a one-time approval before its first trade, but has no ETH for gas. Use the "Get 100 USDT (demo)" faucet (it seeds gas too), or send ~0.001 ETH to that address — it's your trading account, not your MetaMask address.`,
         );
       }
     }
 
-    toast.info("Setting up your trading account… one-time on-chain setup, confirm in your wallet.");
+    toast.info("Setting up your trading account… one-time approval, confirm in your wallet.");
     const txHash = await ak.onboard({ usdt, settlement, amount: APPROVAL_AMOUNT });
     track("approve_succeeded", { txHash });
   }, [cfg, ak, smartAccount, parsedKey]);
