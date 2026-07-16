@@ -31,6 +31,20 @@ export const FAUCET_ENABLED: boolean =
 export const FAUCET_LABEL_SUFFIX: string = activeChain.id === 421614 ? "testnet" : "demo";
 
 /**
+ * Complementary matching (MINT / MERGE) UX. When on, the order book and the BUY
+ * quote path treat the two option books as one deep book: a DOWN bid @ q shows as a
+ * synthetic UP ask @ (10000 − q) and vice-versa, so a BUY UP can fill against DOWN
+ * buy-side demand by minting a fresh set (and symmetrically for sells). This must
+ * only be enabled against a backend + Settlement that implement `mintMatch`/
+ * `mergeMatch` (backend `COMPLEMENTARY_MATCHING_ENABLED=1`); otherwise a taker would
+ * quote against synthetic liquidity the engine can't actually cross. Default off →
+ * the book renders exactly as before (each column reads only its own bids/asks).
+ */
+export const COMPLEMENTARY_MATCHING_ENABLED: boolean =
+  process.env.NEXT_PUBLIC_COMPLEMENTARY_MATCHING === "1" ||
+  process.env.NEXT_PUBLIC_COMPLEMENTARY_MATCHING === "true";
+
+/**
  * USDT symbol for the active chain. Mainnet: "USDT" (the production token
  * at 0xCa4f…25F4). Sepolia: "USDTM" (our throwaway MockUSDT — public mint,
  * 6 decimals, deployed once per dev bring-up). Used everywhere the user

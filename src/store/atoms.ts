@@ -37,6 +37,18 @@ export const wsConnectedAtom = atom(false);
 /** Last time a WebSocket message was handled (ms since epoch); for stale UI hints. */
 export const wsLastEventAtAtom = atom<number | null>(null);
 
+/**
+ * Composite key (`settlementAddress-marketId`) of the market the user is
+ * currently looking at — the open trade drawer, else the live market whose
+ * book is shown in the bottom OrderBookDrawer. `null` when neither exists.
+ *
+ * Set by the markets page; read by AppShell, which feeds it to
+ * `useUpDownWebSocket` so the SDK client subscribes that market's public
+ * `orderbook:` / `trades:` channels (live book updates) and drops them when
+ * focus moves.
+ */
+export const focusedMarketKeyAtom = atom<string | null>(null);
+
 export const balanceSnapshotAtom = atom<BalanceResponse | null>(null);
 
 /**

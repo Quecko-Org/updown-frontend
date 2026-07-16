@@ -51,6 +51,8 @@ import {
   walkBookForAvgFillPrice,
   walkBookForBudget,
 } from "@/lib/orderBookFill";
+import { unifyOrderBook } from "@/lib/unifiedBook";
+import { COMPLEMENTARY_MATCHING_ENABLED } from "@/config/environment";
 import {
   MAX_STAKE_ATOMIC,
   MAX_STAKE_USDT,
@@ -125,6 +127,13 @@ const ORDER_TYPES: { id: OrderApiType; label: string; hint?: string }[] = [
 ];
 
 const LONG_PRESS_MS = 400;
+
+// Issue #2: how long the in-memory book must read empty CONTINUOUSLY before the
+// CTA treats it as real "no liquidity" and disables. Longer than the 2s REST
+// refetch on `fullOrderbook` so a poll always gets a chance to rehydrate a
+// genuinely-populated book before we confirm — absorbs the transient WS blanks
+// (DMM cancel-then-replace, single-option frame before the counterpart hydrates).
+const NO_LIQUIDITY_CONFIRM_MS = 2500;
 
 /**
  * Settlement allowance policy.
@@ -542,7 +551,12 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     if (orderType !== "MARKET") return null;
     if (!fullOrderbook) return null;
     if (stakeAtomicForVwap <= BigInt(0)) return null;
-    const sideBook = side === 1 ? fullOrderbook.up : fullOrderbook.down;
+    // Complementary matching: a BUY UP can also fill against DOWN buy-side demand
+    // (mint) and a SELL UP against DOWN sell-side supply (merge). The unified view
+    // folds that synthetic liquidity into this side's asks/bids so the VWAP + depth
+    // gates reflect what the engine can actually cross. Off → the raw side book.
+    const unified = unifyOrderBook(fullOrderbook, COMPLEMENTARY_MATCHING_ENABLED);
+    const sideBook = side === 1 ? unified.up : unified.down;
     if (orderSide === 0 /* BUY: walk asks by budget */) {
       const w = walkBookForBudget(sideBook.asks, stakeAtomicForVwap);
       return {
@@ -589,7 +603,17 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   );
 
   // Depth-availability flags for the disabled-button gate.
-  const noLiquidity =
+  //
+  // `noLiquidityTransient` is the INSTANTANEOUS read of the in-memory (unified)
+  // book: true the moment a MARKET order finds no crossable asks/bids. But that
+  // book blanks transiently — the DMM cancel-then-replaces a side, and a
+  // single-option WS frame can land before the counterpart rehydrates, which
+  // collapses the synthetic asks (folded from the opposite option's bids) to
+  // empty for a tick. So this instantaneous value must NOT drive the disable /
+  // click-gate on its own (Issue #2): it flickers, and a real order that a
+  // fresh fetch would fill gets wrongly blocked. See `noLiquidity` (debounced)
+  // below for the value the CTA actually gates on.
+  const noLiquidityTransient =
     orderType === "MARKET" &&
     stakeAtomicForVwap > BigInt(0) &&
     vwapResult != null &&
@@ -604,6 +628,26 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     if (!insufficientDepth || !vwapResult) return 0;
     return vwapResult.fillableUsd;
   }, [insufficientDepth, vwapResult]);
+
+  // Issue #2: debounce the "no liquidity" DISABLE decision. `noLiquidityTransient`
+  // flickers true whenever the in-memory book momentarily blanks (WS cancel-then-
+  // replace, or a single-option frame before the counterpart hydrates). Only treat
+  // it as REAL once it has held continuously for NO_LIQUIDITY_CONFIRM_MS — longer
+  // than the 2s REST refetch on `fullOrderbook`, so a poll always gets a chance to
+  // rehydrate a genuinely-populated book before we confirm. A truly empty book
+  // stays empty across polls → confirms → CTA disables; the authoritative check is
+  // still the submit-time fresh fetch + walkBook guard in `submit`, which throws a
+  // precise error, so a debounced FALSE never lets an unfillable order through.
+  // (NO_LIQUIDITY_CONFIRM_MS is module-scoped so it's stable across renders.)
+  const [noLiquidity, setNoLiquidity] = useState(false);
+  useEffect(() => {
+    if (!noLiquidityTransient) {
+      setNoLiquidity(false);
+      return;
+    }
+    const id = setTimeout(() => setNoLiquidity(true), NO_LIQUIDITY_CONFIRM_MS);
+    return () => clearTimeout(id);
+  }, [noLiquidityTransient]);
 
   // PR-18 P1-19: the $ budget the user typed. BUY only — for SELL the input
   // is a share count (see `orderAmountAtomic`). Parse tolerantly.
@@ -815,7 +859,10 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
           queryFn: () => getOrderbook(marketKey),
           staleTime: 0,
         });
-        const freshSideBook = side === 1 ? fresh.up : fresh.down;
+        // Unify the fresh book so a MARKET BUY/SELL walks complementary liquidity
+        // too (mint against DOWN bids / merge against DOWN asks). Off → raw side book.
+        const freshUnified = unifyOrderBook(fresh, COMPLEMENTARY_MATCHING_ENABLED);
+        const freshSideBook = side === 1 ? freshUnified.up : freshUnified.down;
         const freshLevels = orderSide === 0 ? freshSideBook.asks : freshSideBook.bids;
         const bestPriceBps = freshLevels.length > 0 ? Number(freshLevels[0].price) : null;
         const slipped = computeMarketSlippagePrice({ orderSide, bestPriceBps });
@@ -957,6 +1004,14 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     },
     onSuccess: () => {
       toast.success("Order submitted");
+      // Clear inputs so a post-fill positions/balance refetch can't trip the
+      // insufficient-shares / insufficient-balance gates against a stale input.
+      // A SELL leaves the sold share count in the box; once positions refetch to
+      // the reduced holdings, that stale count trips `insufficientShares` and
+      // paints a spurious red inline alert. Resetting here (the Max/Clear chips
+      // and deep-link init set the input explicitly, so they still work).
+      setStakeUsdInput("");
+      setUserPriceCentsInput("");
       track("order_placed", {
         type: orderType,
         side: orderSide === 0 ? "BUY" : "SELL",

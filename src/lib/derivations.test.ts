@@ -99,24 +99,41 @@ describe("buildTerminalOrderToast (Fix 2c + P1 hotfix relaxed maker guard)", () 
     expect(t).toBeNull();
   });
 
-  it("emits info toast with fmtUsd values for partial-fill cancellation", () => {
+  // Issue #9: the figures report transacted VALUE (shares * price / 10000), not
+  // the $1-face "To Win" count. 3 shares filled of a 10-share order at 50¢ =
+  // $1.50 of $5.00, not $3.00 of $10.00.
+  it("reports cost-based value for partial-fill cancellation (Issue #9)", () => {
     const t = buildTerminalOrderToast(
-      { id: "x", maker: wallet, status: "CANCELLED", amount: "10000000", filledAmount: "3000000" },
+      { id: "x", maker: wallet, status: "CANCELLED", price: 5000, amount: "10000000", filledAmount: "3000000" },
       wallet,
     );
     expect(t?.kind).toBe("info");
-    expect(t?.message).toContain("$3.00");
-    expect(t?.message).toContain("$10.00");
+    expect(t?.message).toContain("$1.50");
+    expect(t?.message).toContain("$5.00");
     expect(t?.message).toMatch(/remainder cancelled/);
   });
 
-  it("emits success toast on FILLED", () => {
+  // Issue #9: a filled order toasts the cost transacted, not share FACE.
+  // 25 shares at 50¢ = $12.50, not the $25.00 To-Win face value.
+  it("emits success toast with cost-based value on FILLED (Issue #9)", () => {
     const t = buildTerminalOrderToast(
-      { id: "x", maker: wallet, status: "FILLED", amount: "25000000", filledAmount: "25000000" },
+      { id: "x", maker: wallet, status: "FILLED", price: 5000, amount: "25000000", filledAmount: "25000000" },
       wallet,
     );
     expect(t?.kind).toBe("success");
-    expect(t?.message).toContain("$25.00");
+    expect(t?.message).toContain("$12.50");
+  });
+
+  // Team-lead repro: a 10-share fill (10 * 1e6 atomic) at 5000 bps (50¢) must
+  // toast the $5.00 cost, NOT the $10.00 To-Win face.
+  it("toasts $5.00 for a 10-share FILLED at 50¢ (Issue #9 repro)", () => {
+    const t = buildTerminalOrderToast(
+      { id: "x", maker: wallet, status: "FILLED", price: 5000, amount: "10000000", filledAmount: "10000000" },
+      wallet,
+    );
+    expect(t?.kind).toBe("success");
+    expect(t?.message).toBe("Order filled: $5.00.");
+    expect(t?.message).not.toContain("$10.00");
   });
 
   it("stays quiet on non-terminal PARTIALLY_FILLED (more fills may arrive)", () => {

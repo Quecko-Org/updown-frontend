@@ -187,6 +187,27 @@ export function buildTerminalOrderToast(
   const id = `${data.id ?? "order"}-terminal`;
   const filled = data.filledAmount ?? "0";
   const amount = data.amount ?? "0";
+  // Issue #9: `filled`/`amount` are atomic SHARE counts (1 share = $1 face). The
+  // dollars actually transacted = shares * price(bps) / 10000 — the cost a BUY
+  // paid or the proceeds a SELL received. Reporting fmtUsd(amount) directly
+  // printed the $1-face "To Win" value regardless of the fill price. Guarded
+  // because WS frames aren't fully trusted: a malformed price/amount degrades to
+  // $0 rather than throwing out of the toast builder (fmtUsd itself is already
+  // BigInt-safe; this keeps the multiply/divide equally safe).
+  const priceBps = (() => {
+    try {
+      return BigInt(data.price ?? 0);
+    } catch {
+      return BigInt(0);
+    }
+  })();
+  const txValue = (shares: string): bigint => {
+    try {
+      return (BigInt(shares) * priceBps) / BigInt(10000);
+    } catch {
+      return BigInt(0);
+    }
+  };
 
   if (data.status === "CANCELLED") {
     const reason = data.reason as CancelReason | undefined;
@@ -218,12 +239,12 @@ export function buildTerminalOrderToast(
     }
     return {
       kind: "info",
-      message: `Order partially filled (${fmtUsd(filled)} of ${fmtUsd(amount)}) — remainder cancelled.`,
+      message: `Order partially filled (${fmtUsd(txValue(filled))} of ${fmtUsd(txValue(amount))}) — remainder cancelled.`,
       id,
     };
   }
   if (data.status === "FILLED") {
-    return { kind: "success", message: `Order filled: ${fmtUsd(amount)}.`, id };
+    return { kind: "success", message: `Order filled: ${fmtUsd(txValue(amount))}.`, id };
   }
   return null;
 }

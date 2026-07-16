@@ -1,8 +1,11 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { useAtomValue } from "jotai";
 import { getOrderbook, type OrderBookResponse } from "@/lib/api";
 import { computeImpliedProb, type ImpliedProb } from "@/lib/format";
+import { focusedMarketKeyAtom } from "@/store/atoms";
+import { useWsLive } from "@/hooks/useWsLive";
 
 /**
  * PR-5 — replace the pool-ratio implied-prob placeholder (PR-4) with a
@@ -70,12 +73,26 @@ export function useMarketImpliedProb(
 ): UseMarketImpliedProbResult {
   const { marketId, upPool, downPool, enabled = true } = args;
 
+  // When this market is the WS-focused one and the socket is live, the
+  // `orderbook:<key>` channel pushes full snapshots into this same cache
+  // (keyed by the lowercased composite — see useUpDownWebSocket), so the 5s
+  // REST poll is redundant. Gate it: rely on the socket for the focused
+  // market, keep polling every other market (and any market while the WS is
+  // down — useWsLive flips false within a few seconds of a drop).
+  const focusedKey = useAtomValue(focusedMarketKeyAtom);
+  const wsLive = useWsLive();
+  const wsBacked =
+    wsLive &&
+    !!marketId &&
+    !!focusedKey &&
+    marketId.toLowerCase() === focusedKey.toLowerCase();
+
   const { data } = useQuery<OrderBookResponse>({
     queryKey: ["orderbook", marketId],
     queryFn: () => getOrderbook(marketId!),
     enabled: enabled && !!marketId,
     staleTime: 5_000,
-    refetchInterval: 5_000,
+    refetchInterval: wsBacked ? false : 5_000,
     retry: 1,
   });
 

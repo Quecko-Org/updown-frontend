@@ -19,8 +19,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { formatUnits } from "viem";
 import { getOrderbook } from "@/lib/api";
+import { unifyOrderBook } from "@/lib/unifiedBook";
+import { COMPLEMENTARY_MATCHING_ENABLED } from "@/config/environment";
 import { cn } from "@/lib/cn";
-import { wsConnectedAtom, wsLastEventAtAtom } from "@/store/atoms";
+import { focusedMarketKeyAtom, wsConnectedAtom, wsLastEventAtAtom } from "@/store/atoms";
+import { useWsLive } from "@/hooks/useWsLive";
 
 const STALE_MS = 30_000;
 const USDT_DECIMALS = 6;
@@ -67,10 +70,20 @@ export function OrderBookPanel({
     marketStatus === "CLAIMED" ||
     marketStatus === "TRADING_ENDED";
 
+  // The `orderbook:<key>` WS channel pushes full snapshots into this exact
+  // cache for the focused market, so drop the 20s poll while the socket is
+  // live and this is the focused book; fall back to polling otherwise (WS
+  // down, or a non-focused market). Window-focus + reconnect refetch still
+  // re-seed after any gap.
+  const focusedKey = useAtomValue(focusedMarketKeyAtom);
+  const wsLive = useWsLive();
+  const wsBacked =
+    wsLive && !!focusedKey && marketId.toLowerCase() === focusedKey.toLowerCase();
+
   const { data, isLoading } = useQuery({
     queryKey: ["orderbook", marketId.toLowerCase()],
     queryFn: () => getOrderbook(marketId),
-    refetchInterval: isClosed ? false : 20_000,
+    refetchInterval: isClosed || wsBacked ? false : 20_000,
     refetchOnWindowFocus: !isClosed,
   });
 
@@ -81,8 +94,16 @@ export function OrderBookPanel({
         ? "Live feed disconnected — falling back to snapshots."
         : null;
 
+  // Complementary matching: fold each option's book into a single deep view (a DOWN
+  // bid shows as a synthetic UP ask, etc.) so a cold-start book with only buy-side
+  // demand renders fillable liquidity. Off → the raw {up,down} book, unchanged.
+  const view = useMemo(
+    () => (data ? unifyOrderBook(data, COMPLEMENTARY_MATCHING_ENABLED) : data),
+    [data],
+  );
+
   const { upLevels, downLevels, maxDepth } = useMemo(() => {
-    if (!data) return { upLevels: [] as Level[], downLevels: [] as Level[], maxDepth: 1 };
+    if (!view) return { upLevels: [] as Level[], downLevels: [] as Level[], maxDepth: 1 };
     // Merge bids + asks per outcome into a single price-sorted ladder.
     // Both blocks render price-DESCENDING, so the spread sits in the
     // middle: best ask (lowest sell) at the BOTTOM of the ask block,
@@ -120,11 +141,11 @@ export function OrderBookPanel({
       // (best/highest buy first) — standard CLOB layout.
       return [...askLevels, ...bidLevels];
     };
-    const ups = toLevels(data.up.bids, data.up.asks);
-    const downs = toLevels(data.down.bids, data.down.asks);
+    const ups = toLevels(view.up.bids, view.up.asks);
+    const downs = toLevels(view.down.bids, view.down.asks);
     const md = Math.max(1, ...ups.map((r) => r.depthVal), ...downs.map((r) => r.depthVal));
     return { upLevels: ups, downLevels: downs, maxDepth: md };
-  }, [data]);
+  }, [view]);
 
   const hasOrders =
     data != null &&
@@ -220,7 +241,7 @@ function BookRow({
         style={{ width: `${pct}%` }}
       />
       <span className="pp-book__col-price-val pp-tabular">
-        {level.kind === 'ask' ? '↑ ' : ''}{(level.price / 100).toFixed(level.price % 100 === 0 ? 0 : 1)}¢
+        {level.kind === 'ask' ? '↑ ' : ''}{Math.round(level.price / 100)}¢
       </span>
       <span className="pp-book__col-depth-val pp-tabular">${depthLabel}</span>
     </div>

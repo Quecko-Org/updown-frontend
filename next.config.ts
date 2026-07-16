@@ -39,6 +39,10 @@ const nextConfig: NextConfig = {
     "@account-kit/infra",
     "@account-kit/signer",
     "@account-kit/smart-contracts",
+    // Our own SDK, consumed as a vendored tarball. Pre-compiled ESM, but
+    // listing it lets Turbopack/webpack treat its subpath ESM modules
+    // (`@pulsepairs/sdk/ws`, `/eip712`) uniformly with app code.
+    "@pulsepairs/sdk",
   ],
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];

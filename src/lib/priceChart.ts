@@ -2,7 +2,34 @@
  * Shared price history parsing and clipping for TradingChart, MarketPriceChart, and home mini sparklines.
  */
 
+import { formatStrikeUsd } from "./format";
+
 export type PricePoint = { t: number; p: number };
+
+/**
+ * The value the market chart header shows next to its "Settlement" label for a
+ * RESOLVED market.
+ *
+ * It reads the SAME `settlementPrice` field (through the SAME `formatStrikeUsd`)
+ * that the resolved market card reads, so the chart and the card can never show
+ * two different settlement prices for one market.
+ *
+ * Returns "—" while the on-chain settlement price is still syncing
+ * (`formatStrikeUsd` → "Pending" for an empty/zero raw). The chart header used
+ * to fall back to the last live spot tick in that window, which (a) disagreed
+ * with the card's "Settling…" / settled value and (b) mislabeled a spot price
+ * as the settlement — the demo scripts settlement to strike×1.005, so the spot
+ * and the settlement are legitimately different numbers. QA 2026-07-16:
+ * chart showed $64,733.08 (spot) while the card showed $65,033.56 (settlement)
+ * for the same market.
+ */
+export function settlementHeaderLabel(
+  settlementPriceRaw: string | undefined | null,
+  strikeDecimals?: number,
+): string {
+  const label = formatStrikeUsd(settlementPriceRaw, strikeDecimals);
+  return label === "Pending" ? "—" : label;
+}
 
 function parseTimeSec(o: Record<string, unknown>): number | null {
   const tRaw = o.time ?? o.t ?? o.ts ?? o.timestamp;
