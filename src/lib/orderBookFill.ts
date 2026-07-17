@@ -70,6 +70,40 @@ export function usdToShares(stakeAtomic: bigint, priceBps: bigint): bigint {
 }
 
 /**
+ * A BUY order's worst-case cash obligation — what the backend locks.
+ *
+ * Math: `lock = (amountAtomic × priceBps) / 10_000 + (amountAtomic ×
+ * feeBps) / 10_000` — i.e. cost + the signed fee cap.
+ *
+ * This is a byte-for-byte mirror of `buyerLock` in the backend's
+ * MatchingEngine.addOrder. On-chain `enterPosition` pulls only `cashPart =
+ * price × amount / 10000` from the buyer, and fees are pulled from the taker
+ * capped at the signed `maxFee`, so cost + maxFee bounds the obligation.
+ *
+ * NOT the face value. `amountAtomic` is a SHARE count, and at $1 face the
+ * share count IS the To-Win payout — locking it over-reserves by
+ * (1−price)×shares. The frontend gate and the backend both made that mistake
+ * once; keep this the single definition so they cannot drift apart again.
+ *
+ * `priceBps` is the price that gets SIGNED (the limit for LIMIT-family orders,
+ * the slippage cap for MARKET), not the expected fill price.
+ *
+ * Rounding: floor on each leg independently, matching the backend's two
+ * BigInt divisions exactly — do not fold them into one division.
+ */
+export function buyerLockAtomic(
+  amountAtomic: bigint,
+  priceBps: bigint,
+  feeBps: bigint,
+): bigint {
+  if (amountAtomic <= ZERO) return ZERO;
+  if (priceBps <= ZERO) return ZERO;
+  const cost = (amountAtomic * priceBps) / TEN_K;
+  const maxFee = feeBps <= ZERO ? ZERO : (amountAtomic * feeBps) / TEN_K;
+  return cost + maxFee;
+}
+
+/**
  * Walk pre-sorted levels accumulating fillable depth until `stakeAtomic`
  * is satisfied. Returns the VWAP for the filled portion.
  *

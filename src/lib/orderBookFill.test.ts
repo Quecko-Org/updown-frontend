@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buyerLockAtomic,
   slippageDecision,
   usdToShares,
   walkBookForAvgFillPrice,
@@ -42,6 +43,74 @@ describe("usdToShares", () => {
     const shares = usdToShares(B(50_000_000), B(6500));
     const reverseCost = (shares * B(6500)) / B(10_000);
     expect(reverseCost <= B(50_000_000)).toBe(true);
+  });
+});
+
+/**
+ * QA #2 (cost-vs-face): the pre-sign balance gate must lock the buyer's real
+ * cash obligation, not the To-Win payout.
+ *
+ * The share count IS the To-Win figure at $1 face, so locking `amount`
+ * over-demanded by (1−price)×shares and hard-disabled the CTA on orders the
+ * backend would happily accept. These cases pin the formula to the backend's
+ * `buyerLock` (MatchingEngine.addOrder) so the two cannot drift apart again.
+ */
+describe("buyerLockAtomic (cost + fee cap, NOT face)", () => {
+  const FEE_BPS = B(150); // 70 platform + 80 maker, the live demo config
+
+  it("the reported bug: $10 at 50¢ locks ~$10.03, not the $20 To-Win", () => {
+    // $10 budget at 50¢ → 20 shares. Face (= To-Win) = $20; cost = $10.
+    const shares = usdToShares(B(10_000_000), B(5000));
+    expect(shares).toBe(B(20_000_000));
+
+    const lock = buyerLockAtomic(shares, B(5000), FEE_BPS);
+    // cost 10_000_000 + maxFee 300_000 = 10_300_000 ($10.30)
+    expect(lock).toBe(B(10_300_000));
+    // The old gate demanded the full face — the regression this test guards.
+    expect(lock).toBeLessThan(shares);
+  });
+
+  it("over-demand grows as 1/price — the 10¢ case that demanded $100", () => {
+    // $10 at 10¢ → 100 shares. Face = $100; true cost is still ~$10.
+    const shares = usdToShares(B(10_000_000), B(1000));
+    expect(shares).toBe(B(100_000_000));
+
+    const lock = buyerLockAtomic(shares, B(1000), FEE_BPS);
+    // cost 10_000_000 + maxFee 1_500_000 = 11_500_000
+    expect(lock).toBe(B(11_500_000));
+    // Face would have demanded 100_000_000 — ~8.7× the real obligation.
+    expect(lock * B(8) < shares).toBe(true);
+  });
+
+  it("never under-locks: lock ≥ cost for every price on the book", () => {
+    // Under-locking is the OTHER failure — it passes the gate, then the
+    // backend rejects after the user has already signed.
+    for (let bps = 1; bps <= 9999; bps += 7) {
+      const shares = usdToShares(B(10_000_000), B(bps));
+      const cost = (shares * B(bps)) / B(10_000);
+      expect(buyerLockAtomic(shares, B(bps), FEE_BPS) >= cost).toBe(true);
+    }
+  });
+
+  it("matches the backend's two-division form exactly (floor per leg)", () => {
+    // A share count that floors differently if the legs are folded into one
+    // division — the backend floors each leg separately, so we must too.
+    const shares = B(76_923_076);
+    const backendForm = (shares * B(6500)) / B(10_000) + (shares * FEE_BPS) / B(10_000);
+    expect(buyerLockAtomic(shares, B(6500), FEE_BPS)).toBe(backendForm);
+  });
+
+  it("fee cap is bounded by feeBps of face, per the signed maxFee", () => {
+    const shares = B(20_000_000);
+    const noFee = buyerLockAtomic(shares, B(5000), B(0));
+    const withFee = buyerLockAtomic(shares, B(5000), FEE_BPS);
+    expect(withFee - noFee).toBe((shares * FEE_BPS) / B(10_000));
+  });
+
+  it("zero / negative inputs → zero lock (defensive, never throws)", () => {
+    expect(buyerLockAtomic(B(0), B(5000), FEE_BPS)).toBe(B(0));
+    expect(buyerLockAtomic(B(-1), B(5000), FEE_BPS)).toBe(B(0));
+    expect(buyerLockAtomic(B(20_000_000), B(0), FEE_BPS)).toBe(B(0));
   });
 });
 

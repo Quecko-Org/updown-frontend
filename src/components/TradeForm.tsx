@@ -46,6 +46,7 @@ import {
   sharePriceBpsFromOrderBookMid,
 } from "@/lib/feeEstimate";
 import {
+  buyerLockAtomic as computeBuyerLockAtomic,
   slippageDecision,
   usdToShares,
   walkBookForAvgFillPrice,
@@ -692,23 +693,57 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const stakeOutOfRange =
     stakeUsd > 0 && (stakeUsd < MIN_STAKE_USDT || stakeUsd > MAX_STAKE_USDT);
 
-  // P0-11: insufficient-balance gate. BUY only (SELL commits shares, not
-  // USDT). The backend locks the order's `amount` (a SHARE count) as USDT
-  // collateral in the off-chain inOrders ledger — a conservative over-lock
-  // that's released on fill — so the gate MUST compare against the share
-  // count, not the budget, or a trade could pass here and then be rejected
-  // by the backend with "Insufficient balance" after the user has signed.
+  // The MARKET slippage cap in bps: the price `submit` actually SIGNS for a
+  // MARKET order (the VWAP is only the expected fill). Null for LIMIT-family
+  // orders, and null when there's no book to cap against.
+  const marketSlippagePriceBps = useMemo(() => {
+    if (orderType !== "MARKET") return null;
+    return computeMarketSlippagePrice({ orderSide, bestPriceBps: sharePriceBps });
+  }, [orderType, orderSide, sharePriceBps]);
+
+  // The price the order is signed at, which is what the backend locks against:
+  // the limit for LIMIT/POST_ONLY/IOC, the slippage CAP for MARKET.
+  const signedPriceBpsForLock =
+    orderType === "MARKET" ? (marketSlippagePriceBps ?? sharePriceBps) : sharePriceBps;
+
+  // The buyer's true worst-case cash obligation (cost + signed fee cap),
+  // mirroring the backend's `buyerLock` in MatchingEngine.addOrder. Shared
+  // definition — see `buyerLockAtomic` in @/lib/orderBookFill.
+  const buyerLockAtomic = useMemo(
+    () =>
+      computeBuyerLockAtomic(
+        orderAmountAtomic,
+        BigInt(signedPriceBpsForLock),
+        BigInt(totalBps),
+      ),
+    [orderAmountAtomic, signedPriceBpsForLock, totalBps],
+  );
+
+  // P0-11 / QA #2 (cost-vs-face): insufficient-balance gate. BUY only (SELL
+  // commits shares, not USDT — see `insufficientShares` below).
+  //
+  // Gate on `buyerLockAtomic` so this mirrors what the backend actually locks.
+  // It must never sit BELOW the backend's lock, or an order passes here and is
+  // rejected with "Insufficient balance" after the user has signed; and never
+  // ABOVE it, or the CTA hard-disables on orders the backend would accept.
+  //
+  // This used to compare against `orderAmountAtomic` — the SHARE count, which
+  // at $1 face IS the To-Win payout. That over-demanded by (1−price)×shares:
+  // a $10 limit buy at 50¢ demanded $20, at 10¢ demanded $100. It mirrored the
+  // backend correctly when written (the backend locked face too), then the
+  // backend moved to cost+maxFee and this gate didn't follow. Keep them in
+  // lockstep — if `buyerLock` changes, change this with it.
   const insufficientBalance =
     orderSide === 0 &&
     orderAmountAtomic > BigInt(0) &&
     isConnected &&
     !!balanceData &&
-    availableUsdAtomic < orderAmountAtomic;
+    availableUsdAtomic < buyerLockAtomic;
   const insufficientBalanceShortfallUsd = useMemo(() => {
     if (!insufficientBalance) return 0;
-    const short = orderAmountAtomic - availableUsdAtomic;
+    const short = buyerLockAtomic - availableUsdAtomic;
     return Number(short) / 1_000_000;
-  }, [insufficientBalance, orderAmountAtomic, availableUsdAtomic]);
+  }, [insufficientBalance, buyerLockAtomic, availableUsdAtomic]);
 
   // SELL mirror of the balance gate: you can only sell shares you own.
   // `orderAmountAtomic` is the share count being sold; `ownedSharesAtomic` is
@@ -739,12 +774,8 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   // user could pay up to this much per share. The actual fill typically
   // matches at `avgPriceUsd` (= VWAP) and the difference settles into
   // marketRetained as protocol dust.
-  const worstCasePriceCents = useMemo(() => {
-    if (orderType !== "MARKET") return null;
-    const slipped = computeMarketSlippagePrice({ orderSide, bestPriceBps: sharePriceBps });
-    if (slipped == null) return null;
-    return slipped / 100;
-  }, [orderType, orderSide, sharePriceBps]);
+  const worstCasePriceCents =
+    marketSlippagePriceBps == null ? null : marketSlippagePriceBps / 100;
   const peakFeeBps = cfg?.peakFeeBps ?? totalBps;
   const peakFeePct = (peakFeeBps / 100).toFixed(2);
 
@@ -959,8 +990,9 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       // fills sum to ≤ amount). The contract enforces `platformFee + makerFee ≤ takerOrder.maxFee`
       // cumulatively, so signing the peak means legitimate fills never revert with
       // FeeExceedsTakerCap while still bounding the relayer to at most totalFeeBps of notional.
-      const feeBpsTotal = (cfg?.platformFeeBps ?? 70) + (cfg?.makerFeeBps ?? 80);
-      const maxFee = (amount * BigInt(feeBpsTotal)) / BigInt(10000);
+      // `totalBps` is the same constant the pre-sign `buyerLock` gate uses; the
+      // amount here is the fresh-book one, so recompute rather than reuse.
+      const maxFee = (amount * BigInt(totalBps)) / BigInt(10000);
       const msg = {
         maker: twAddress,
         market: parsedKey.marketId,
