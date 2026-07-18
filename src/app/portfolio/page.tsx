@@ -2,18 +2,16 @@
 
 import { Suspense, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { useAccount } from "wagmi";
 import Link from "next/link";
-import { toast } from "sonner";
 import {
   getMarket,
   getMarkets,
   getOrders,
   getPositions,
   getTrades,
-  postMarketClaim,
   type OrderRow,
   type PositionRow,
   type TradeRow,
@@ -92,7 +90,6 @@ function PortfolioInner() {
   const tab = readTab(sp);
   const { isConnected } = useAccount();
   const smartAccount = useAtomValue(userSmartAccount);
-  const qc = useQueryClient();
 
   const { data: positions, isLoading: positionsLoading } = useQuery({
     queryKey: ["positions", smartAccount?.toLowerCase() ?? ""],
@@ -187,16 +184,6 @@ function PortfolioInner() {
   }, [resolvedMarketKeys, marketQueries]);
 
   const summary = useMemo(() => computeSummary(positions ?? [], winnerByMarket), [positions, winnerByMarket]);
-
-  const claim = useMutation({
-    mutationFn: (market: string) => postMarketClaim(market),
-    onSuccess: () => {
-      toast.success("Claim submitted");
-      qc.invalidateQueries({ queryKey: ["positions", saLower] });
-      qc.invalidateQueries({ queryKey: ["balance", saLower] });
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
 
   const setTab = (t: Tab) => {
     const params = new URLSearchParams(sp?.toString() ?? "");
@@ -296,8 +283,6 @@ function PortfolioInner() {
           positions={resolvedPositions}
           winnerByMarket={winnerByMarket}
           windowByMarket={windowByMarket}
-          onClaim={(m) => claim.mutate(m)}
-          claimPending={claim.isPending}
         />
       ) : (
         <ActivityTab wallet={smartAccount} />
@@ -448,15 +433,11 @@ function ResolvedTab({
   positions,
   winnerByMarket,
   windowByMarket,
-  onClaim,
-  claimPending,
 }: {
   loading: boolean;
   positions: PositionRow[];
   winnerByMarket: Map<string, number | null>;
   windowByMarket: Map<string, string | null>;
-  onClaim: (market: string) => void;
-  claimPending: boolean;
 }) {
   if (loading) {
     return <div className="py-8 text-center pp-caption">Loading…</div>;
@@ -500,7 +481,11 @@ function ResolvedTab({
             const pnl = won ? shares - cost : lost ? -cost : BigInt(0);
             const pnlColor = pnl > BigInt(0) ? "var(--up)" : pnl < BigInt(0) ? "var(--down)" : "var(--fg-2)";
             const pnlAbs = pnl >= BigInt(0) ? pnl : -pnl;
-            const claimable = p.marketStatus === "RESOLVED" && won;
+            // Winnings are credited automatically by the relayer (trustless
+            // redeemFor); the market flips RESOLVED → CLAIMED when the payout
+            // lands. There is no user-callable claim — the manual button this
+            // replaced could only ever 401 against the admin-gated route.
+            const settling = p.marketStatus === "RESOLVED" && won;
             return (
               <tr key={`${p.market}-${p.option}`}>
                 <td>
@@ -551,16 +536,13 @@ function ResolvedTab({
                 <td className="r">
                   {p.marketStatus === "CLAIMED" ? (
                     <span className="pp-chip-status pp-chip-status--filled">Auto-claimed</span>
-                  ) : claimable ? (
-                    <button
-                      type="button"
-                      className="pp-btn pp-btn--secondary pp-btn--sm"
-                      disabled={claimPending}
-                      onClick={() => onClaim(p.market)}
-                      title="Nudge the relayer to credit winnings."
+                  ) : settling ? (
+                    <span
+                      className="pp-chip-status pp-chip-status--open"
+                      title="Winnings are credited automatically — no action needed."
                     >
-                      Claim
-                    </button>
+                      Settling…
+                    </span>
                   ) : null}
                 </td>
               </tr>
@@ -754,7 +736,19 @@ function ActivityTab({ wallet }: { wallet: string | null | undefined }) {
         </thead>
         <tbody>
           {rows.map((t) => {
-            const isBuy = t.buyer.toLowerCase() === walletLower;
+            // A complementary (MINT/MERGE) row stores the TAKER's option with
+            // the resting MAKER's price, reusing buyer/seller as taker/maker.
+            // Render THIS wallet's real leg: the taker leg executes at the
+            // complement (`takerPrice`), the maker leg at `price` but on the
+            // OPPOSITE option; a MINT is a buy on both legs, a MERGE a sell.
+            // Rendering the row literally showed a $10 DOWN buy at 32.5¢ as
+            // "30.77 @ 67.50¢" (QA round-4, 2026-07-17).
+            const inBuyerSlot = t.buyer.toLowerCase() === walletLower;
+            const complementary = t.matchType === "MINT" || t.matchType === "MERGE";
+            const isBuy = complementary ? t.matchType === "MINT" : inBuyerSlot;
+            const option = !complementary || inBuyerSlot ? t.option : t.option === 1 ? 2 : 1;
+            const price =
+              complementary && inBuyerSlot ? t.takerPrice ?? 10000 - t.price : t.price;
             return (
               <tr key={t.tradeId}>
                 <td
@@ -773,8 +767,8 @@ function ActivityTab({ wallet }: { wallet: string | null | undefined }) {
                   </Link>
                 </td>
                 <td>
-                  <span className={t.option === 1 ? "pp-chip-up" : "pp-chip-down"}>
-                    {t.option === 1 ? "UP" : "DOWN"}
+                  <span className={option === 1 ? "pp-chip-up" : "pp-chip-down"}>
+                    {option === 1 ? "UP" : "DOWN"}
                   </span>
                 </td>
                 <td>
@@ -786,7 +780,7 @@ function ActivityTab({ wallet }: { wallet: string | null | undefined }) {
                   {formatShares(t.amount)}
                 </td>
                 <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
-                  {(t.price / 100).toFixed(2)}¢
+                  {(price / 100).toFixed(2)}¢
                 </td>
               </tr>
             );

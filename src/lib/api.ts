@@ -187,6 +187,11 @@ export type TradeRow = {
   makerFee: string;
   settlementStatus: string;
   createdAt: string;
+  // Complementary rows carry the TAKER's option with the MAKER's price;
+  // `takerPrice` is the complement the aggressor actually executed at.
+  // Optional so a stale backend (fields absent) degrades, not crashes.
+  matchType?: "NORMAL" | "MINT" | "MERGE";
+  takerPrice?: number;
 };
 
 export async function getTrades(wallet: string, limit = 50, offset = 0): Promise<TradeRow[]> {
@@ -367,11 +372,9 @@ export async function cancelOrder(
 }
 
 
-export async function postMarketClaim(marketAddress: string): Promise<{ ok: boolean }> {
-  const enc = encodeURIComponent(marketAddress);
-  const res = await fetch(url(`/markets/${enc}/claim`), { method: "POST" });
-  return parseJson(res);
-}
+// QA 2026-07-17: `postMarketClaim` removed. `POST /markets/:address/claim` is
+// admin-key-gated (backend F-17386) — an end-user call can only 401. Winnings
+// are credited automatically by the relayer (RESOLVED → CLAIMED).
 
 // PR-Z (2026-05-20): `getDmmStatus` + `DmmStatusResponse` deleted. The
 // `/dmm/list` backend endpoint was removed in the 2026-05-12 rebate
@@ -402,14 +405,9 @@ export async function getDmmRebates(wallet: string): Promise<DmmRebatesResponse>
   return parseJson<DmmRebatesResponse>(res);
 }
 
-export async function postDmmClaimRebate(body: Record<string, unknown> = {}): Promise<unknown> {
-  const res = await fetch(url("/dmm/claim-rebate"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return parseJson(res);
-}
+// QA 2026-07-17: `postDmmClaimRebate` removed. `POST /dmm/claim-rebate` does
+// not exist in the backend (404) — rebate payout is on-chain-only via
+// UpDownSettlement.claimRebate().
 
 export async function deleteAllMarketOrders(marketComposite: string): Promise<unknown> {
   const enc = encodeURIComponent(marketComposite);

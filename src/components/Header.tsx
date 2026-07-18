@@ -275,14 +275,10 @@ export function Header() {
                 {n.label}
               </Link>
             ))}
-            {isWalletConnected ? (
-              <Link
-                href="/rebates"
-                className={cn("pp-hdr__navlink", pathname === "/rebates" && "pp-hdr__navlink--on")}
-              >
-                Rebates
-              </Link>
-            ) : null}
+            {/* Rebates nav removed (QA 2026-07-17): maker-rebate payouts are
+                on-chain-only (Settlement.claimRebate) — the page's Claim
+                button posted to an endpoint that no longer exists. The page
+                itself stays reachable by URL as a read-only accrual view. */}
           </nav>
 
           {/* Right: balance + actions */}
@@ -438,19 +434,6 @@ export function Header() {
                         {n.label}
                       </Link>
                     ))}
-                    {isWalletConnected ? (
-                      <Link
-                        href="/rebates"
-                        onClick={() => setMenuOpen(false)}
-                        className={cn(
-                          "pp-menu__item",
-                          pathname === "/rebates" && "pp-menu__item--on",
-                        )}
-                        role="menuitem"
-                      >
-                        Rebates
-                      </Link>
-                    ) : null}
                     <div className="pp-menu__divider" />
                   </div>
 
