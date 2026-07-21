@@ -1,0 +1,102 @@
+# Production deploy — pulsepairs.com (i-018976d3f2bbd2711, SSM-based).
+#
+# Mirror of updown-backend's deploy-production.yml for the frontend service.
+# The GitHub-hosted runner uploads a git-archive tarball to S3 and asks SSM to
+# run /opt/updown/deploy-from-s3.sh on the box, which builds the Next
+# production bundle inside the node:22 container (with the backend sibling
+# mount for the stake-bounds parity prebuild) and force-recreates `frontend`.
+# AWS auth is OIDC (role updown-prod-gha-deploy); no long-lived secret here.
+#
+# NOTE this repo is PUBLIC: deploy config comes from repo variables (not
+# literals) and the `production` environment requires reviewer approval +
+# restricts deployable branches. The role's trust policy only matches jobs
+# running inside this repo's `production` environment.
+name: Deploy production (pulsepairs.com)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Verify the OIDC -> AWS -> SSM chain only; deploy nothing"
+        type: boolean
+        default: false
+
+# Serialize deploys — an in-flight deploy must finish, not be killed mid-write.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  test:
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --legacy-peer-deps
+      - run: npm run test
+
+  deploy:
+    needs: test
+    if: ${{ !cancelled() && (needs.test.result == 'success' || inputs.dry_run) }}
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      SSM_INSTANCE_ID: ${{ vars.SSM_INSTANCE_ID }}
+      ARTIFACT_BUCKET: ${{ vars.ARTIFACT_BUCKET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Dry run — prove the chain, touch nothing
+        if: ${{ inputs.dry_run }}
+        run: |
+          aws sts get-caller-identity
+          CMD_ID=$(aws ssm send-command --instance-ids "$SSM_INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --comment "gha dry-run ${GITHUB_SHA}" \
+            --parameters 'commands=["echo DRY-RUN OK from $(hostname) at $(date -u +%FT%TZ)"]' \
+            --query Command.CommandId --output text)
+          aws ssm wait command-executed --command-id "$CMD_ID" --instance-id "$SSM_INSTANCE_ID"
+          aws ssm get-command-invocation --command-id "$CMD_ID" \
+            --instance-id "$SSM_INSTANCE_ID" --query StandardOutputContent --output text
+
+      - name: Package and upload source artifact
+        if: ${{ !inputs.dry_run }}
+        run: |
+          KEY="updown-frontend/${GITHUB_SHA}.tar.gz"
+          git archive --format=tar.gz -o /tmp/src.tar.gz HEAD
+          aws s3 cp /tmp/src.tar.gz "s3://${ARTIFACT_BUCKET}/${KEY}" --only-show-errors
+          echo "KEY=$KEY" >> "$GITHUB_ENV"
+
+      - name: Deploy via SSM
+        if: ${{ !inputs.dry_run }}
+        run: |
+          CMD_ID=$(aws ssm send-command --instance-ids "$SSM_INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --comment "deploy frontend ${GITHUB_SHA}" \
+            --parameters "commands=[\"/opt/updown/deploy-from-s3.sh frontend ${KEY} ${GITHUB_SHA}\"],executionTimeout=[\"1800\"]" \
+            --query Command.CommandId --output text)
+          echo "SSM command: $CMD_ID"
+          while :; do
+            STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" \
+              --instance-id "$SSM_INSTANCE_ID" --query Status --output text 2>/dev/null || echo Pending)
+            case "$STATUS" in Success|Failed|Cancelled|TimedOut) break ;; esac
+            sleep 10
+          done
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$SSM_INSTANCE_ID" \
+            --query StandardOutputContent --output text
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$SSM_INSTANCE_ID" \
+            --query StandardErrorContent --output text >&2
+          [ "$STATUS" = "Success" ]
