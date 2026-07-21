@@ -11,6 +11,7 @@ import {
   getMarkets,
   getOrders,
   getPositions,
+  getPositionsWithRealized,
   getTrades,
   type OrderRow,
   type PositionRow,
@@ -26,6 +27,7 @@ import {
   isResolvedMarketStatus,
   isTerminalMarketStatus,
 } from "@/lib/derivations";
+import { computeSummary, safeBigInt } from "@/lib/portfolioSummary";
 import { userSmartAccount } from "@/store/atoms";
 
 /**
@@ -94,6 +96,20 @@ function PortfolioInner() {
   const { data: positions, isLoading: positionsLoading } = useQuery({
     queryKey: ["positions", smartAccount?.toLowerCase() ?? ""],
     queryFn: () => getPositions(smartAccount!),
+    enabled: !!smartAccount && isConnected,
+    refetchInterval: 20_000,
+    retry: 1,
+  });
+
+  // Realized-from-sells scalar (atomic USDT, signed) — the realized P&L booked
+  // on manual market-sells, which the open-position rows above cannot carry (a
+  // position sold to zero shares is dropped by the backend's `shares > 0`
+  // filter). Fetched on a SEPARATE key so the bare-array `["positions", …]`
+  // query stays shape-identical for its other consumer, the TradeForm sell
+  // gate. Summed with the settlement term in `computeSummary`.
+  const { data: realizedFromSells } = useQuery({
+    queryKey: ["positions-realized", smartAccount?.toLowerCase() ?? ""],
+    queryFn: async () => (await getPositionsWithRealized(smartAccount!)).realizedFromSells,
     enabled: !!smartAccount && isConnected,
     refetchInterval: 20_000,
     retry: 1,
@@ -183,7 +199,10 @@ function PortfolioInner() {
     return map;
   }, [resolvedMarketKeys, marketQueries]);
 
-  const summary = useMemo(() => computeSummary(positions ?? [], winnerByMarket), [positions, winnerByMarket]);
+  const summary = useMemo(
+    () => computeSummary(positions ?? [], winnerByMarket, realizedFromSells),
+    [positions, winnerByMarket, realizedFromSells],
+  );
 
   const setTab = (t: Tab) => {
     const params = new URLSearchParams(sp?.toString() ?? "");
@@ -291,74 +310,18 @@ function PortfolioInner() {
   );
 }
 
-function computeSummary(
-  positions: PositionRow[],
-  winnerByMarket: Map<string, number | null>,
-) {
-  let invested = BigInt(0);
-  let activeCount = 0;
-  let realizedPnL = BigInt(0);
-  let wins = 0;
-  let losses = 0;
-
-  for (const p of positions) {
-    const cost = safeBigInt(p.costBasis);
-    const shares = safeBigInt(p.shares);
-    if (shares === BigInt(0)) continue;
-
-    if (!isTerminalMarketStatus(p.marketStatus)) {
-      invested += cost;
-      activeCount += 1;
-      continue;
-    }
-
-    if (isResolvedMarketStatus(p.marketStatus)) {
-      const winner = winnerByMarket.get(p.market.toLowerCase()) ?? null;
-      if (winner === 0 || winner == null) continue;
-      if (p.option === winner) {
-        // Winning side pays out 1 USDT per share. shares is in atomic USDT
-        // (decimals match) so payout = shares; pnl = shares - cost.
-        realizedPnL += shares - cost;
-        wins += 1;
-      } else {
-        realizedPnL -= cost;
-        losses += 1;
-      }
-    }
-  }
-
-  const totalResolved = wins + losses;
-  const winRate = totalResolved === 0 ? null : Math.round((wins / totalResolved) * 100);
-
-  return {
-    invested: invested.toString(),
-    activeCount,
-    realizedPnL,
-    winRate,
-    totalResolved,
-  };
-}
-
-function safeBigInt(s: string | undefined | null): bigint {
-  try {
-    return BigInt(s ?? "0");
-  } catch {
-    return BigInt(0);
-  }
-}
-
 function PortfolioSummary({
   invested,
   activeCount,
   realizedPnL,
   winRate,
-  totalResolved,
+  hasRealized,
 }: {
   invested: string;
   activeCount: number;
   realizedPnL: bigint;
   winRate: number | null;
-  totalResolved: number;
+  hasRealized: boolean;
 }) {
   const pnlSign = realizedPnL >= BigInt(0) ? "+" : "−";
   const pnlAbs = realizedPnL >= BigInt(0) ? realizedPnL : -realizedPnL;
@@ -372,7 +335,7 @@ function PortfolioSummary({
       <div className="pp-statsrail__cell">
         <span className="pp-micro">Realized P&L</span>
         <span className="pp-price-xl" style={{ color: pnlColor }}>
-          {totalResolved === 0 ? "—" : `${pnlSign}$${formatUsdt(pnlAbs.toString())}`}
+          {!hasRealized ? "—" : `${pnlSign}$${formatUsdt(pnlAbs.toString())}`}
         </span>
       </div>
       <div className="pp-statsrail__cell">

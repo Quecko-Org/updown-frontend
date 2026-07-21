@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { unifyOrderBook } from "./unifiedBook";
+import { nonCrossingExecutableBps, unifyOrderBook, viewerLevelKeys } from "./unifiedBook";
 import type { OrderBookResponse } from "./api";
 
 const L = (price: number, depth: string, count = 1) => ({ price, depth, count });
@@ -66,5 +66,138 @@ describe("unifyOrderBook", () => {
     const b = book({ downBids: [L(10000, "10")] }); // complement = 0 → dropped
     const u = unifyOrderBook(b, true);
     expect(u.up.asks).toEqual([]);
+  });
+});
+
+describe("nonCrossingExecutableBps", () => {
+  describe("BUY (orderSide 0) vs the synthetic ask", () => {
+    it("returns the ask when the limit rests strictly below it (QA round-5 case)", () => {
+      // 50¢ BUY below the 50.5¢ synthetic ask → rests, hint shows.
+      expect(
+        nonCrossingExecutableBps({ orderSide: 0, limitBps: 5000, bestAskBps: 5050, bestBidBps: 4950 }),
+      ).toBe(5050);
+    });
+
+    it("returns null at exactly the ask (equal price is marketable → no hint)", () => {
+      expect(
+        nonCrossingExecutableBps({ orderSide: 0, limitBps: 5050, bestAskBps: 5050, bestBidBps: 4950 }),
+      ).toBeNull();
+    });
+
+    it("returns null when the limit crosses above the ask", () => {
+      expect(
+        nonCrossingExecutableBps({ orderSide: 0, limitBps: 5100, bestAskBps: 5050, bestBidBps: 4950 }),
+      ).toBeNull();
+    });
+
+    it("returns null when there is no ask liquidity to compare against", () => {
+      expect(
+        nonCrossingExecutableBps({ orderSide: 0, limitBps: 5000, bestAskBps: null, bestBidBps: 4950 }),
+      ).toBeNull();
+      expect(
+        nonCrossingExecutableBps({ orderSide: 0, limitBps: 5000, bestAskBps: undefined, bestBidBps: 4950 }),
+      ).toBeNull();
+    });
+  });
+
+  describe("SELL (orderSide 1) vs the best bid", () => {
+    it("returns the bid when the limit rests strictly above it", () => {
+      expect(
+        nonCrossingExecutableBps({ orderSide: 1, limitBps: 5000, bestAskBps: 5050, bestBidBps: 4950 }),
+      ).toBe(4950);
+    });
+
+    it("returns null at exactly the bid (equal price is marketable → no hint)", () => {
+      expect(
+        nonCrossingExecutableBps({ orderSide: 1, limitBps: 4950, bestAskBps: 5050, bestBidBps: 4950 }),
+      ).toBeNull();
+    });
+
+    it("returns null when the limit crosses at or below the bid", () => {
+      expect(
+        nonCrossingExecutableBps({ orderSide: 1, limitBps: 4900, bestAskBps: 5050, bestBidBps: 4950 }),
+      ).toBeNull();
+    });
+
+    it("returns null when there is no bid liquidity to compare against", () => {
+      expect(
+        nonCrossingExecutableBps({ orderSide: 1, limitBps: 5000, bestAskBps: 5050, bestBidBps: null }),
+      ).toBeNull();
+    });
+  });
+
+  it("returns null for a non-positive or non-finite limit price", () => {
+    expect(
+      nonCrossingExecutableBps({ orderSide: 0, limitBps: 0, bestAskBps: 5050, bestBidBps: 4950 }),
+    ).toBeNull();
+    expect(
+      nonCrossingExecutableBps({ orderSide: 0, limitBps: NaN, bestAskBps: 5050, bestBidBps: 4950 }),
+    ).toBeNull();
+  });
+});
+
+describe("viewerLevelKeys", () => {
+  const order = (o: Partial<import("./unifiedBook").ViewerOrderLeg>) => ({
+    option: 1,
+    side: 0,
+    price: 5000,
+    status: "OPEN",
+    ...o,
+  });
+
+  it("returns an empty set for no orders", () => {
+    expect(viewerLevelKeys(undefined, true).size).toBe(0);
+    expect(viewerLevelKeys([], true).size).toBe(0);
+  });
+
+  it("marks a BUY UP as an up bid AND its complementary DOWN-ask mirror (QA round-5)", () => {
+    const keys = viewerLevelKeys([order({ option: 1, side: 0, price: 5000 })], true);
+    expect(keys.has("up|bid|5000")).toBe(true);
+    expect(keys.has("down|ask|5000")).toBe(true);
+    expect(keys.size).toBe(2);
+  });
+
+  it("marks a BUY DOWN as a down bid with its UP-ask mirror at the complement", () => {
+    const keys = viewerLevelKeys([order({ option: 2, side: 0, price: 4850 })], true);
+    expect(keys.has("down|bid|4850")).toBe(true);
+    expect(keys.has("up|ask|5150")).toBe(true);
+  });
+
+  it("marks a SELL UP as an up ask with its DOWN-bid mirror", () => {
+    const keys = viewerLevelKeys([order({ option: 1, side: 1, price: 6000 })], true);
+    expect(keys.has("up|ask|6000")).toBe(true);
+    expect(keys.has("down|bid|4000")).toBe(true);
+  });
+
+  it("emits no mirror when complementary matching is off", () => {
+    const keys = viewerLevelKeys([order({})], false);
+    expect(keys.has("up|bid|5000")).toBe(true);
+    expect(keys.size).toBe(1);
+  });
+
+  it("includes PARTIALLY_FILLED but ignores FILLED/CANCELLED orders", () => {
+    const keys = viewerLevelKeys(
+      [
+        order({ price: 4000, status: "PARTIALLY_FILLED" }),
+        order({ price: 4100, status: "FILLED" }),
+        order({ price: 4200, status: "CANCELLED" }),
+      ],
+      false,
+    );
+    expect(keys.has("up|bid|4000")).toBe(true);
+    expect(keys.size).toBe(1);
+  });
+
+  it("ignores malformed rows (bad option, out-of-band or fractional price)", () => {
+    const keys = viewerLevelKeys(
+      [
+        order({ option: 3 }),
+        order({ price: 0 }),
+        order({ price: 10000 }),
+        order({ price: 49.5 }),
+      ],
+      true,
+    );
+    expect(keys.size).toBe(0);
   });
 });

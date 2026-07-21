@@ -173,6 +173,32 @@ export async function getPositions(wallet: string): Promise<PositionRow[]> {
   return parseJson<PositionRow[]>(res);
 }
 
+export type PositionsWithRealized = {
+  /** Open positions (net shares > 0) — identical rows to {@link getPositions}. */
+  positions: PositionRow[];
+  /**
+   * Atomic USDT (signed) realized P&L booked from manual market-SELLs, summed
+   * across ALL of the wallet's positions INCLUDING ones sold to zero net shares
+   * (which never appear in `positions`). It is the companion to the settlement
+   * term the portfolio computes client-side (won → shares−cost, lost → −cost
+   * over resolved positions); only their SUM is order-invariant, so this must
+   * never be surfaced on its own.
+   */
+  realizedFromSells: string;
+};
+
+/**
+ * Opt-in variant of {@link getPositions} that additionally returns the
+ * wallet-level realized-from-sells scalar via `?includeRealized=1`. The default
+ * `getPositions` (and every external consumer, incl. rain.trade and the SDK)
+ * keeps its byte-identical bare-array response — only this call opts into the
+ * envelope, so a fully-closed position's realized P&L is no longer discarded.
+ */
+export async function getPositionsWithRealized(wallet: string): Promise<PositionsWithRealized> {
+  const res = await fetch(url(`/positions/${wallet}`, { includeRealized: 1 }));
+  return parseJson<PositionsWithRealized>(res);
+}
+
 export type TradeRow = {
   tradeId: string;
   market: string;

@@ -121,7 +121,10 @@ export function LiveMarketRow({
                 the per-side cents value derived from the implied prob —
                 Polymarket-parity "UP 51¢" / "49¢ DOWN" style — when the
                 book has signal. Pre-trade markets fall back to dashes. */}
-            <span className="pp-market-row__count-chip pp-market-row__count-chip--up">
+            <span
+              className="pp-market-row__count-chip pp-market-row__count-chip--up"
+              title="Midpoint of the UP order book (implied probability) — a buy executes at the book's ↑ ask price"
+            >
               <span>UP</span>
               <span>{upPct == null ? '—' : `${upPct}¢`}</span>
             </span>
@@ -150,7 +153,10 @@ export function LiveMarketRow({
               )}
             </div>
 
-            <span className="pp-market-row__count-chip pp-market-row__count-chip--down">
+            <span
+              className="pp-market-row__count-chip pp-market-row__count-chip--down"
+              title="Midpoint of the DOWN order book (implied probability) — a buy executes at the book's ↑ ask price"
+            >
               <span>{downPct == null ? '—' : `${downPct}¢`}</span>
               <span>DOWN</span>
             </span>

@@ -18,11 +18,17 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { formatUnits } from "viem";
-import { getOrderbook } from "@/lib/api";
-import { unifyOrderBook } from "@/lib/unifiedBook";
+import { getOrderbook, getOrders } from "@/lib/api";
+import { unifyOrderBook, viewerLevelKeys } from "@/lib/unifiedBook";
 import { COMPLEMENTARY_MATCHING_ENABLED } from "@/config/environment";
 import { cn } from "@/lib/cn";
-import { focusedMarketKeyAtom, wsConnectedAtom, wsLastEventAtAtom } from "@/store/atoms";
+import { formatBookPriceCents } from "@/lib/format";
+import {
+  focusedMarketKeyAtom,
+  userSmartAccount,
+  wsConnectedAtom,
+  wsLastEventAtAtom,
+} from "@/store/atoms";
 import { useWsLive } from "@/hooks/useWsLive";
 
 const STALE_MS = 30_000;
@@ -47,7 +53,16 @@ function depthUsd(depth: string, priceBps: number): number {
 }
 
 type Side = "up" | "down";
-type Level = { price: number; depth: string; count: number; depthVal: number; kind: 'bid' | 'ask' };
+type Level = {
+  price: number;
+  depth: string;
+  count: number;
+  depthVal: number;
+  kind: 'bid' | 'ask';
+  /** This level contains one of the viewer's own open orders (incl. its
+   *  complementary mirror on the opposite column). */
+  mine: boolean;
+};
 
 export function OrderBookPanel({
   marketId,
@@ -87,6 +102,23 @@ export function OrderBookPanel({
     refetchOnWindowFocus: !isClosed,
   });
 
+  // The viewer's own open orders on THIS market, so their levels can carry a
+  // "you" badge (QA round-5: a user read their own resting order as a mystery
+  // duplicate at the "same" price). Status filtering is client-side — the
+  // backend's `status` query treats a CSV as one literal value.
+  const viewer = useAtomValue(userSmartAccount);
+  const { data: myOrdersData } = useQuery({
+    queryKey: ["book-my-orders", marketId.toLowerCase(), viewer.toLowerCase()],
+    queryFn: () => getOrders(viewer, { market: marketId.toLowerCase(), limit: 50 }),
+    enabled: !!viewer && !isClosed,
+    refetchInterval: 10_000,
+    refetchOnWindowFocus: true,
+  });
+  const mineKeys = useMemo(
+    () => viewerLevelKeys(myOrdersData?.orders, COMPLEMENTARY_MATCHING_ENABLED),
+    [myOrdersData],
+  );
+
   const staleHint =
     wsConnected && wsLastEventAt != null && now - wsLastEventAt > STALE_MS
       ? "Live updates paused — falling back to snapshots."
@@ -111,6 +143,7 @@ export function OrderBookPanel({
     // each other. Tag each level with `kind` so the renderer can
     // color-code bid (green) vs ask (red).
     const toLevels = (
+      side: Side,
       bids: { price: number; depth: string; count: number }[],
       asks: { price: number; depth: string; count: number }[],
     ): Level[] => {
@@ -123,6 +156,7 @@ export function OrderBookPanel({
           count: l.count,
           depthVal: depthUsd(l.depth, l.price),
           kind: 'bid',
+          mine: mineKeys.has(`${side}|bid|${l.price}`),
         }));
       // Sort ASCENDING to `slice` the 8 *best* (lowest) asks, then reverse
       // for display. Sorting descending up front would keep the 8 worst.
@@ -135,17 +169,18 @@ export function OrderBookPanel({
           count: l.count,
           depthVal: depthUsd(l.depth, l.price),
           kind: 'ask',
+          mine: mineKeys.has(`${side}|ask|${l.price}`),
         }))
         .reverse();
       // Asks on top (best/lowest sell last, nearest the spread), then bids
       // (best/highest buy first) — standard CLOB layout.
       return [...askLevels, ...bidLevels];
     };
-    const ups = toLevels(view.up.bids, view.up.asks);
-    const downs = toLevels(view.down.bids, view.down.asks);
+    const ups = toLevels("up", view.up.bids, view.up.asks);
+    const downs = toLevels("down", view.down.bids, view.down.asks);
     const md = Math.max(1, ...ups.map((r) => r.depthVal), ...downs.map((r) => r.depthVal));
     return { upLevels: ups, downLevels: downs, maxDepth: md };
-  }, [view]);
+  }, [view, mineKeys]);
 
   const hasOrders =
     data != null &&
@@ -181,6 +216,13 @@ export function OrderBookPanel({
         <BookColumn side="up" levels={upLevels} maxDepth={maxDepth} />
         <BookColumn side="down" levels={downLevels} maxDepth={maxDepth} />
       </div>
+      {/* QA round-5: the ↑ glyph was the only executable-price signal and
+          nothing said what it meant. Spell it out. */}
+      <p className="pp-book__legend pp-micro">
+        ↑ ask — the price a buy executes at now · other rows — resting bids
+        (waiting buy orders) · <span className="pp-book__mine">you</span> — your
+        open order
+      </p>
     </div>
   );
 }
@@ -234,14 +276,25 @@ function BookRow({
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+  const rowTitle =
+    (level.kind === 'ask'
+      ? 'Ask — a buy executes at this price right now'
+      : 'Bid — a resting buy order waiting for the market to reach it') +
+    (level.mine ? ' · includes your open order' : '');
   return (
-    <div className={cn("pp-book__col-row", side === "up" ? "pp-book__col-row--up" : "pp-book__col-row--down")}>
+    <div
+      className={cn("pp-book__col-row", side === "up" ? "pp-book__col-row--up" : "pp-book__col-row--down")}
+      title={rowTitle}
+    >
       <div
         className={cn("pp-book__col-bar", side === "up" ? "pp-book__col-bar--up" : "pp-book__col-bar--down")}
         style={{ width: `${pct}%` }}
       />
+      {level.mine ? <span className="pp-book__mine">you</span> : null}
+      {/* Exact bps price (49.5¢, not "50¢") — whole-cent rounding collided
+          distinct levels into apparent duplicates (QA round-5). */}
       <span className="pp-book__col-price-val pp-tabular">
-        {level.kind === 'ask' ? '↑ ' : ''}{Math.round(level.price / 100)}¢
+        {level.kind === 'ask' ? '↑ ' : ''}{formatBookPriceCents(level.price)}¢
       </span>
       <span className="pp-book__col-depth-val pp-tabular">${depthLabel}</span>
     </div>

@@ -674,6 +674,29 @@
   text-align: center;
   color: var(--fg-2);
 }
+/* QA round-5 (2026-07-20): legend explaining ↑ (ask) vs plain rows (bids),
+   and the "you" badge marking levels that hold the viewer's own open order. */
+.pp-book__legend {
+  margin: 0;
+  color: var(--fg-2);
+  text-align: center;
+  line-height: 1.5;
+}
+.pp-book__mine {
+  justify-self: start;
+  font-family: var(--font-sans);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.5;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid var(--border-0);
+  color: var(--fg-1);
+  background: var(--bg-1);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.pp-book__col-row .pp-book__mine { grid-column: 1; }
 
 /* Mobile collapse: switch the side-by-side split into a stacked layout
    so each column gets the full width and depth bars remain readable. */

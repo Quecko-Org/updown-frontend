@@ -38,7 +38,7 @@ import {
   stepPriceBps,
   validateLimitPriceCents,
 } from "@/lib/derivations";
-import { parseUsdtToAtomic } from "@/lib/format";
+import { formatBookPriceCents, parseUsdtToAtomic } from "@/lib/format";
 import {
   bestEffectivePriceCents,
   estimateTotalFee,
@@ -52,7 +52,7 @@ import {
   walkBookForAvgFillPrice,
   walkBookForBudget,
 } from "@/lib/orderBookFill";
-import { unifyOrderBook } from "@/lib/unifiedBook";
+import { nonCrossingExecutableBps, unifyOrderBook } from "@/lib/unifiedBook";
 import { COMPLEMENTARY_MATCHING_ENABLED } from "@/config/environment";
 import {
   MAX_STAKE_ATOMIC,
@@ -135,6 +135,14 @@ const LONG_PRESS_MS = 400;
 // genuinely-populated book before we confirm — absorbs the transient WS blanks
 // (DMM cancel-then-replace, single-option frame before the counterpart hydrates).
 const NO_LIQUIDITY_CONFIRM_MS = 2500;
+
+// How long a resting-LIMIT non-crossing state must hold before the "your order
+// will rest" hint toggles. Same anti-flicker idea as NO_LIQUIDITY_CONFIRM_MS
+// (Issue #2) but far shorter: this hint is informational and non-blocking, and
+// the WS handler's last-known-good guard already drops empty-clobber snapshots,
+// so it only needs to ride out sub-second book wobble (a DMM cancel-replace),
+// not a full REST-poll gap — and typed-price feedback should still feel prompt.
+const NON_CROSSING_HINT_DEBOUNCE_MS = 600;
 
 /**
  * Settlement allowance policy.
@@ -649,6 +657,50 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     const id = setTimeout(() => setNoLiquidity(true), NO_LIQUIDITY_CONFIRM_MS);
     return () => clearTimeout(id);
   }, [noLiquidityTransient]);
+
+  // Best executable prices from the unified (complementary) book: the synthetic
+  // ask a BUY must reach, and the bid a SELL must reach. Same transform the VWAP
+  // walk uses — here only top-of-book is needed, to tell a resting LIMIT from a
+  // marketable one. Asks sort ascending / bids descending, so [0] is best.
+  const executableTopOfBook = useMemo<{
+    bestAskBps: number | null;
+    bestBidBps: number | null;
+  }>(() => {
+    if (!fullOrderbook) return { bestAskBps: null, bestBidBps: null };
+    const unified = unifyOrderBook(fullOrderbook, COMPLEMENTARY_MATCHING_ENABLED);
+    const sideBook = side === 1 ? unified.up : unified.down;
+    return {
+      bestAskBps: sideBook.asks[0]?.price ?? null,
+      bestBidBps: sideBook.bids[0]?.price ?? null,
+    };
+  }, [fullOrderbook, side]);
+
+  // The executable price (bps) a resting LIMIT order fails to reach, or null
+  // when it's marketable / MARKET / there's no book to compare against. QA
+  // round-5: a manually-typed 50¢ BUY reads "To Win $20" but rests below the
+  // 50.5¢ synthetic ask; this surfaces that instead of a silent no-op order.
+  const nonCrossingExecBps = useMemo(() => {
+    if (orderType === "MARKET") return null;
+    return nonCrossingExecutableBps({
+      orderSide,
+      limitBps: limitPrice,
+      bestAskBps: executableTopOfBook.bestAskBps,
+      bestBidBps: executableTopOfBook.bestBidBps,
+    });
+  }, [orderType, orderSide, limitPrice, executableTopOfBook]);
+
+  // Debounce the hint's displayed value the same way the CTA debounces "no
+  // liquidity" — the unified book can wobble for a tick on a DMM cancel-replace,
+  // so hold the last value through a transient blank instead of flickering the
+  // hint off and back on. Null (marketable / no book) settles to hidden.
+  const [nonCrossingHintBps, setNonCrossingHintBps] = useState<number | null>(null);
+  useEffect(() => {
+    const id = setTimeout(
+      () => setNonCrossingHintBps(nonCrossingExecBps),
+      NON_CROSSING_HINT_DEBOUNCE_MS,
+    );
+    return () => clearTimeout(id);
+  }, [nonCrossingExecBps]);
 
   // PR-18 P1-19: the $ budget the user typed. BUY only — for SELL the input
   // is a share count (see `orderAmountAtomic`). Parse tolerantly.
@@ -1348,6 +1400,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             side === 1 && "pp-trade-v2__direction-btn--on",
           )}
           aria-pressed={side === 1}
+          title="Midpoint of the UP order book (implied probability) — a market buy executes at the book's ↑ ask price"
           onClick={() => {
             setSide(1);
             if (!isConnected) scrollToConnect();
@@ -1366,6 +1419,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             side === 2 && "pp-trade-v2__direction-btn--on",
           )}
           aria-pressed={side === 2}
+          title="Midpoint of the DOWN order book (implied probability) — a market buy executes at the book's ↑ ask price"
           onClick={() => {
             setSide(2);
             if (!isConnected) scrollToConnect();
@@ -1424,6 +1478,17 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
           {priceInputInvalid && (
             <p id="limit-price-hint" className="pp-trade-v2__hint pp-trade-v2__hint--error">
               {userPriceParsed.error}
+            </p>
+          )}
+          {/* Non-blocking hint: this LIMIT price doesn't cross the current
+              executable price, so it will rest rather than fill now (QA
+              round-5). Suppressed while the price input is invalid (the error
+              hint above takes over) and when there's no book to compare. */}
+          {!priceInputInvalid && nonCrossingHintBps != null && (
+            <p className="pp-trade-v2__hint">
+              {orderSide === 0 ? "Below" : "Above"} the current executable price (
+              {formatBookPriceCents(nonCrossingHintBps)}¢) — your order will rest
+              until the market reaches your price.
             </p>
           )}
         </div>
@@ -1547,8 +1612,22 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       {!cta.inlineError && (
         <div className="pp-trade-v2__payoff">
           <div className="pp-trade-v2__payoff-primary">
-            <span className="pp-trade-v2__payoff-label">
-              {orderSide === 0 ? "To Win" : "Receive"}
+            <span
+              className="pp-trade-v2__payoff-label"
+              title={
+                orderSide === 0 && orderType === "MARKET"
+                  ? "Estimated from current book liquidity; actual fill price may differ."
+                  : undefined
+              }
+            >
+              {/* MARKET fills at a VWAP over live book depth, so the payoff is
+                  an estimate; a LIMIT order's payoff is exact if it fills at the
+                  typed price. Keep the "To Win" prefix intact either way. */}
+              {orderSide === 0
+                ? orderType === "MARKET"
+                  ? "To Win (est.)"
+                  : "To Win"
+                : "Receive"}
             </span>
             <span
               className={cn(

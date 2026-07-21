@@ -71,6 +71,19 @@ export function formatTimeRemainingNoSeconds(seconds: number): string {
   return "Less than a minute";
 }
 
+/**
+ * Exact cent label for an order-book price level. Prices are integer BASIS
+ * POINTS (hundredths of a cent); rounding them to whole cents collapsed
+ * distinct levels into one label — a DMM bid at 4950 and a user's order at
+ * 5000 both printed "50¢" and read as duplicate orders (QA round-5,
+ * 2026-07-20). Trailing zeros are trimmed: 4950 → "49.5", 5408 → "54.08",
+ * 5000 → "50". Caller appends the "¢".
+ */
+export function formatBookPriceCents(priceBps: number): string {
+  if (!Number.isFinite(priceBps)) return "—";
+  return String(Number((priceBps / 100).toFixed(2)));
+}
+
 export function formatProbabilityPrice(raw: string): string {
   try {
     const v = formatUnits(BigInt(raw), 18);
