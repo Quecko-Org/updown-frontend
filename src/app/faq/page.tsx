@@ -128,11 +128,14 @@ function buildFaq(): FaqItem[] {
       a: (
         <>
           When the market resolves, the relayer automatically credits winning
-          positions ($1 per winning share, minus fees) into your trading
-          account ({tokenSym} balance increases). Losing positions go to $0.
+          positions into your trading account ({tokenSym} balance increases).
+          A winning share pays the full <strong>$1</strong> —{" "}
+          <strong>settlement takes no fee</strong>; trading fees are charged
+          only when you buy or sell. Losing positions go to $0 and need no
+          action — nothing is deducted and no transaction is made for them.
           Auto-claiming usually completes within a few seconds. If the
-          relayer is delayed, a manual <strong>Claim</strong> button appears
-          in your Portfolio so you can nudge the credit yourself.
+          relayer is delayed, it retries automatically until the payout
+          lands; your Portfolio shows <em>Settling&hellip;</em> until then.
         </>
       ),
     },

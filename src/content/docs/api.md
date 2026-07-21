@@ -782,14 +782,16 @@ Atomic on-chain settlement. Every fill produces a single `enterPosition` tx that
 1. Market `endTime` passes — `MarketSyncer` flips status `ACTIVE → TRADING_ENDED`.
 2. AutoCycler's next upkeep tick (Chainlink Automation in prod, cron stopgap on dev) calls `resolver.resolve(marketId)`.
 3. `Resolver` reads the Chainlink Data Streams report (with Gate-2 fallback to AggregatorV3) at the market's end timestamp, compares to the strike snapshotted at market start, sets the winner on the settlement contract. Status flips to `RESOLVED`.
-4. `ClaimService` calls `settlement.withdrawSettlement(marketId)` to drain the contract's accumulated residuals to the relayer EOA. The contract sets `m.settled = true`.
-5. `ClaimService.distributeWinnings` reads winning-side `Position.netShares` (= `sharesBought − sharesSold`) per holder (ThinWallet address) via `getNetSharesByHolder(market, winningOption)`. Each winner gets a `{{USDT_SYMBOL}}.transfer(twAddress, netShares)` from the relayer (1 share = $1 {{USDT_SYMBOL}} atomic — binary winner-takes-all). `ClaimPayoutLog` rows persist the per-(market, wallet) two-phase commit.
-6. Losing-side positions receive nothing — `getNetSharesByHolder` filters them out.
-7. Rounding leftover (`dust`) is forwarded on-chain to the treasury EOA. Status flips to `CLAIMED`.
+4. `ClaimService` calls `settlement.redeemFor(marketId, holders[])`. The **contract** pays each holder their own on-chain `userShares` directly to their own address (1 share = $1 {{USDT_SYMBOL}} atomic — binary winner-takes-all). The relayer only supplies the holder list and the gas; it never takes custody. Chunked at 150 holders per tx to bound gas.
+5. The holder list is enumerated off-chain via `getNetSharesByHolder(market, winningOption)`, but only to pick **candidates** — the contract recomputes every amount from on-chain `userShares`, so a stale list can under-include a winner and can never over-pay one. `ClaimPayoutLog` rows are written from the `Redeemed` events in the redeem tx's own receipt (what actually moved), not from the off-chain fold.
+6. Losing-side positions receive nothing and are never touched — no transaction is made for them. Their collateral was already pooled as complete-set backing at mint time, and the winner's redemption draws it down.
+7. Status flips to `CLAIMED`. **Settlement takes no fee** — fees are charged only on fills, to the taker, capped by the taker's signed `maxFee`.
 
-If the auto-claim path stalls (RPC rate-limit, gas spike), Portfolio surfaces a manual `Claim` button that nudges the relayer to retry. Funds never strand on-chain — they wait on the contract until claimed.
+> **Note.** Steps 4–5 replaced V1's `withdrawSettlement` + relayer-side `{{USDT_SYMBOL}}.transfer` distribution under Hacken **F-2026-17778**. That path drained the whole pool to the relayer EOA before paying out; it no longer exists. There is also no dust sweep — the residual it swept was an artifact of the drain.
 
-**Source of truth.** At-resolution payouts are funded by the contract's per-fill residual pool (drained in step 4) and sized by `Position.netShares × $1` (the binary CTF model).
+If the auto-claim path stalls (RPC rate-limit, gas spike, or a fill still settling at resolution time), a background sweep re-drives any market left `RESOLVED` with an incomplete payout, so the claim retries automatically until it lands. Funds never strand on-chain: `redeem()` on the settlement contract is permissionless and pays `msg.sender` their own balance, so a winner is never dependent on the relayer being live, honest, or solvent.
+
+**Source of truth.** At-resolution payouts are funded by `marketRetained` — the complete-set collateral escrowed when each pair of shares was minted — and sized by the holder's on-chain `userShares × $1` (the binary CTF model). The off-chain `Position.netShares` ledger mirrors this but is never authoritative for payment.
 
 ---
 

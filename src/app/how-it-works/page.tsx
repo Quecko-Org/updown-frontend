@@ -193,8 +193,9 @@ export default function HowItWorksPage() {
         <p>
           Auto-claiming happens within seconds of resolution — winnings
           show up in your trading account balance with no action required.
-          If the relayer is delayed, a manual <strong>Claim</strong> button
-          appears in your Portfolio.
+          If the relayer is delayed, the claim is retried automatically
+          until it lands; your Portfolio shows{" "}
+          <em>Settling&hellip;</em> in the meantime.
         </p>
       </Section>
 
@@ -221,11 +222,20 @@ export default function HowItWorksPage() {
           You don&rsquo;t need to do anything.
         </p>
         <p>
-          If the relayer is rate-limited or hits a transient error, your
-          Portfolio&rsquo;s Resolved tab will show a <strong>Claim</strong>{" "}
-          button for any unclaimed winning position. Clicking it nudges
-          the relayer to retry. You&rsquo;ll never lose unclaimed winnings —
-          they sit on the settlement contract until claimed.
+          If the relayer is rate-limited or hits a transient error, there is
+          nothing for you to do: a background sweep re-drives any resolved
+          market whose payout didn&rsquo;t complete, so the claim retries on
+          its own until it succeeds. Your Portfolio&rsquo;s Resolved tab
+          shows <em>Settling&hellip;</em> until it lands, then{" "}
+          <em>Auto-claimed</em>.
+        </p>
+        <p>
+          You&rsquo;ll never lose unclaimed winnings. They sit on the
+          settlement contract credited to <em>your</em> address, and the
+          contract&rsquo;s <code>redeem()</code> is permissionless — the
+          relayer can only ever pay you your own balance, never redirect it,
+          and it cannot pay you twice. Settlement takes{" "}
+          <strong>no fee</strong>: a winning share pays the full $1.
         </p>
       </Section>
 
