@@ -212,6 +212,9 @@ export type TradeRow = {
   platformFee: string;
   makerFee: string;
   settlementStatus: string;
+  // On-chain settlement tx. Null/absent until broadcast (and again if a
+  // reconcile resets it) — render that as "pending", not as an error.
+  settlementTxHash?: string | null;
   createdAt: string;
   // Complementary rows carry the TAKER's option with the MAKER's price;
   // `takerPrice` is the complement the aggressor actually executed at.

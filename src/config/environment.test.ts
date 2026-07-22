@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeChain, tokenSymbolForActiveChain } from "./environment";
+import { activeChain, explorerTxUrl, tokenSymbolForActiveChain } from "./environment";
 
 /**
  * F3 (2026-05-16) — chain-gate logic verification.
@@ -49,5 +49,41 @@ describe("F3 chain-gate", () => {
     // `=== 421614` is satisfied iff Sepolia, rejected iff mainnet.
     const ANY_CHAIN: number = activeChain.id;
     expect(ANY_CHAIN === 421614 || ANY_CHAIN === 42161).toBe(true);
+  });
+});
+
+/**
+ * Portfolio Activity "Tx" column (2026-07-21).
+ *
+ * The column links each fill to its settlement tx. The null cases matter as
+ * much as the happy path: a fill matches off-chain before its settlement tx
+ * is broadcast, so `settlementTxHash` is legitimately null on fresh rows —
+ * and the backend resets it to null when a reconcile drops a tx. The helper
+ * must return null (→ "Pending" placeholder) rather than build a dead link
+ * to `/tx/undefined`.
+ */
+describe("explorerTxUrl", () => {
+  const HASH = "0x" + "ab".repeat(32);
+
+  it("builds an explorer /tx/ link on the active chain", () => {
+    const url = explorerTxUrl(HASH);
+    // Sepolia and mainnet use different Arbiscan hosts; assert against the
+    // chain object rather than hardcoding, so the test travels across builds.
+    expect(url).toBe(`${activeChain.blockExplorers!.default.url}/tx/${HASH}`);
+    expect(url).toContain("arbiscan.io/tx/");
+  });
+
+  it("returns null for a hash that has not been broadcast yet", () => {
+    // These are the three shapes an unsettled fill can arrive as.
+    expect(explorerTxUrl(null)).toBeNull();
+    expect(explorerTxUrl(undefined)).toBeNull();
+    expect(explorerTxUrl("")).toBeNull();
+    expect(explorerTxUrl("   ")).toBeNull();
+  });
+
+  it("does not double up the slash if the explorer url has a trailing one", () => {
+    const url = explorerTxUrl(` ${HASH} `);
+    expect(url).not.toContain("//tx/");
+    expect(url).toContain(`/tx/${HASH}`);
   });
 });

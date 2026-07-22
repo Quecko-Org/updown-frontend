@@ -28,6 +28,7 @@ import {
   isTerminalMarketStatus,
 } from "@/lib/derivations";
 import { computeSummary, safeBigInt } from "@/lib/portfolioSummary";
+import { explorerTxUrl } from "@/config/environment";
 import { userSmartAccount } from "@/store/atoms";
 
 /**
@@ -47,6 +48,41 @@ import { userSmartAccount } from "@/store/atoms";
 function shortenMarket(addr: string): string {
   if (addr.length <= 22) return addr;
   return `${addr.slice(0, 12)}…${addr.slice(-8)}`;
+}
+
+/**
+ * On-chain proof for one fill: a short hash linking out to Arbiscan.
+ *
+ * A fill exists off-chain the moment it matches; the settlement tx lands a
+ * beat later, so `settlementTxHash` is legitimately null on a fresh row (and
+ * again if a reconcile resets it). Show that as "Pending" rather than an
+ * empty cell, so a missing link reads as "not yet" instead of "broken".
+ *
+ * Complementary (MINT/MERGE) fills settle in batches under a single tx, so
+ * the same hash can repeat down the column — the label says "settlement tx",
+ * never "this row's tx", to avoid implying one row = one transaction.
+ */
+function TxCell({ hash, status }: { hash?: string | null; status: string }) {
+  const href = explorerTxUrl(hash);
+  if (!href) {
+    return (
+      <span className="pp-caption" style={{ color: "var(--fg-2)", fontSize: 12 }}>
+        {status === "FAILED" ? "Failed" : "Pending"}
+      </span>
+    );
+  }
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="hover:underline"
+      style={{ color: "var(--fg-0)" }}
+      title={`Settlement tx ${hash} — view on explorer`}
+    >
+      <span className="pp-hash">{`${hash!.slice(0, 8)}…${hash!.slice(-6)}`}</span>
+    </a>
+  );
 }
 
 function statusChipClass(status: string): string {
@@ -695,6 +731,7 @@ function ActivityTab({ wallet }: { wallet: string | null | undefined }) {
             <th>Side</th>
             <th className="r">Shares</th>
             <th className="r">Price</th>
+            <th>Tx</th>
           </tr>
         </thead>
         <tbody>
@@ -744,6 +781,9 @@ function ActivityTab({ wallet }: { wallet: string | null | undefined }) {
                 </td>
                 <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
                   {(price / 100).toFixed(2)}¢
+                </td>
+                <td>
+                  <TxCell hash={t.settlementTxHash} status={t.settlementStatus} />
                 </td>
               </tr>
             );

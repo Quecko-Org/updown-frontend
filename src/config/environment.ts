@@ -11,6 +11,23 @@ export const platform_chainId = CHAIN_ID;
 export const activeChain: Chain = CHAIN_ID === 421614 ? arbitrumSepolia : arbitrum;
 
 /**
+ * Block-explorer link for a transaction on the active chain — arbiscan.io on
+ * Arbitrum One, sepolia.arbiscan.io on Sepolia. Reads the explorer off the
+ * viem chain object so the two never drift apart.
+ *
+ * Returns null for a missing/blank hash (a fill whose settlement tx hasn't
+ * been broadcast yet) or if the chain declares no explorer, so callers render
+ * a placeholder instead of a dead link.
+ */
+export function explorerTxUrl(hash: string | null | undefined): string | null {
+  const h = hash?.trim();
+  if (!h) return null;
+  const base = activeChain.blockExplorers?.default?.url;
+  if (!base) return null;
+  return `${base.replace(/\/$/, "")}/tx/${h}`;
+}
+
+/**
  * Faucet ("Get 100 …") visibility.
  *
  * Always on for the real testnet (Sepolia). ALSO switchable on for the
