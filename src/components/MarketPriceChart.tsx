@@ -4,7 +4,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getMarketPrices } from "@/lib/api";
 import { formatStrikeUsd, parseStrikeUsdNumber } from "@/lib/format";
-import { clipPointsBetween, normalizePriceHistoryData, settlementHeaderLabel, type PricePoint } from "@/lib/priceChart";
+import {
+  chartGridSec,
+  clipPointsBetween,
+  normalizePriceHistoryData,
+  resampleUniform,
+  settlementHeaderLabel,
+  type PricePoint,
+} from "@/lib/priceChart";
 import { cn } from "@/lib/cn";
 
 /**
@@ -164,9 +171,17 @@ export function MarketPriceChart({
 
   const allPoints = useMemo(() => normalizePriceHistoryData(data), [data]);
 
-  // Raw clipped series inside the market window.
+  // Clipped series inside the market window, quantized onto the same uniform
+  // grid the backend serves. Without the resample the WS tick stream rebuilds
+  // a 4-samples-per-second fringe on top of the gridded fetch — see
+  // `resampleUniform`.
   const rawSeries = useMemo(
-    () => clipPointsBetween(allPoints, marketStartSec, marketEndSec),
+    () =>
+      resampleUniform(
+        clipPointsBetween(allPoints, marketStartSec, marketEndSec),
+        chartGridSec(marketEndSec - marketStartSec),
+        marketStartSec,
+      ),
     [allPoints, marketStartSec, marketEndSec],
   );
 

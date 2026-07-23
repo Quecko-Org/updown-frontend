@@ -1,6 +1,73 @@
 import { describe, it, expect } from "vitest";
-import { settlementHeaderLabel } from "./priceChart";
+import {
+  chartGridSec,
+  resampleUniform,
+  settlementHeaderLabel,
+  type PricePoint,
+} from "./priceChart";
 import { formatStrikeUsd } from "./format";
+
+describe("chartGridSec — mirrors the backend chartGridMs", () => {
+  it("matches the backend grid for every live timeframe", () => {
+    expect(chartGridSec(300)).toBe(1);
+    expect(chartGridSec(900)).toBe(1);
+    expect(chartGridSec(3600)).toBe(5);
+  });
+
+  it("falls back to the coarsest grid for very long windows", () => {
+    expect(chartGridSec(24 * 3600)).toBe(60);
+  });
+});
+
+describe("resampleUniform", () => {
+  const T0 = 1_700_000_000;
+  const pt = (t: number, p: number): PricePoint => ({ t, p });
+
+  it("is a no-op on a series already on the grid", () => {
+    const gridded = [pt(T0, 100), pt(T0 + 5, 101), pt(T0 + 10, 102)];
+    expect(resampleUniform(gridded, 5, T0)).toEqual(gridded);
+  });
+
+  // The WS price_snapshot handler appends every raw 250ms tick to the same
+  // react-query cache the gridded fetch populates. Without this collapse the
+  // client rebuilds the exact density cliff the backend grid removed.
+  it("collapses appended sub-grid WS ticks back onto the grid, keeping the newest", () => {
+    const series = [
+      pt(T0, 100),
+      pt(T0 + 5, 110),
+      // Four raw ticks inside one 5s slot, as the WS handler appends them.
+      pt(T0 + 10.0, 120),
+      pt(T0 + 10.25, 121),
+      pt(T0 + 10.5, 122),
+      pt(T0 + 10.75, 123),
+    ];
+    expect(resampleUniform(series, 5, T0)).toEqual([
+      pt(T0, 100),
+      pt(T0 + 5, 110),
+      // Newest wins — it is the live spot the chart header reads.
+      pt(T0 + 10, 123),
+    ]);
+  });
+
+  it("anchors slots on the market start so no point escapes the window", () => {
+    const origin = T0 + 7; // deliberately off any round 5s boundary
+    const out = resampleUniform([pt(origin, 100), pt(origin + 4, 104)], 5, origin);
+    expect(out).toEqual([pt(origin, 104)]);
+    expect(out[0]!.t).toBeGreaterThanOrEqual(origin);
+  });
+
+  it("collapses an hour of raw ticks to the 720 points a 5s grid allows", () => {
+    const series: PricePoint[] = [];
+    for (let i = 0; i < 3600 * 4; i++) series.push(pt(T0 + i * 0.25, 100 + (i % 7)));
+    expect(resampleUniform(series, 5, T0)).toHaveLength(720);
+  });
+
+  it("passes empty input and a degenerate grid through untouched", () => {
+    expect(resampleUniform([], 5, T0)).toEqual([]);
+    const one = [pt(T0, 100)];
+    expect(resampleUniform(one, 0, T0)).toEqual(one);
+  });
+});
 
 describe("settlementHeaderLabel", () => {
   // The exact QA 2026-07-16 case: market 588, 18-dec Streams strike, settlement

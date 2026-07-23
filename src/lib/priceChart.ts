@@ -95,6 +95,53 @@ export function clipPointsBetween(points: PricePoint[], startSec: number, endSec
   return points.filter((pt) => pt.t >= startSec && pt.t <= endSec);
 }
 
+/**
+ * Uniform chart cadence — MIRRORS the backend's `chartGridMs`
+ * (`src/lib/priceSeries.ts`). Keep the two in sync: a mismatch is harmless
+ * (the resample below is idempotent on an already-uniform series only when
+ * the grids agree) but re-introduces the texture cliff this exists to kill.
+ */
+const CHART_TARGET_POINTS = 1000;
+const CHART_GRID_SEC = [1, 5, 60];
+
+export function chartGridSec(windowSec: number): number {
+  const ideal = Math.max(1, windowSec) / CHART_TARGET_POINTS;
+  for (const g of CHART_GRID_SEC) {
+    if (g >= ideal) return g;
+  }
+  return CHART_GRID_SEC[CHART_GRID_SEC.length - 1]!;
+}
+
+/**
+ * Collapse a series onto the uniform grid, keeping the LAST sample in each
+ * slot.
+ *
+ * `/prices` already returns a gridded series, so this is a no-op on a fresh
+ * fetch. It matters for what happens next: the WS `price_snapshot` handler
+ * appends every raw 250ms tick straight into the same react-query cache, so
+ * within seconds of opening a market the tail grows a 4-samples-per-second
+ * fringe against a 5-second body — the same density cliff, rebuilt on the
+ * client. Quantizing here is the one choke point that covers both sources.
+ *
+ * Last-in-slot rather than the backend's median: the newest tick IS the
+ * current spot, and the header reads the final point. The in-flight slot's
+ * vertex therefore carries a live price at a timestamp up to one grid width
+ * stale — invisible next to the endpoint dot, which glides on its own clock.
+ */
+export function resampleUniform(
+  points: PricePoint[],
+  gridSec: number,
+  originSec: number,
+): PricePoint[] {
+  if (gridSec <= 0 || points.length === 0) return points;
+  const slots = new Map<number, PricePoint>();
+  for (const pt of points) {
+    const slot = originSec + Math.floor((pt.t - originSec) / gridSec) * gridSec;
+    slots.set(slot, { t: slot, p: pt.p });
+  }
+  return [...slots.values()].sort((a, b) => a.t - b.t);
+}
+
 /** Last `windowSec` seconds ending at `endAtSec` (e.g. recent action). */
 export function clipRecentWindow(points: PricePoint[], endAtSec: number, windowSec: number): PricePoint[] {
   const start = endAtSec - windowSec;
