@@ -42,6 +42,7 @@ import { formatBookPriceCents, parseUsdtToAtomic } from "@/lib/format";
 import {
   bestEffectivePriceCents,
   estimateTotalFee,
+  executableAskBpsFromOrderBook,
   formatShareCentsLabel,
   sharePriceBpsFromOrderBookMid,
 } from "@/lib/feeEstimate";
@@ -538,6 +539,26 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     [market],
   );
 
+  // QA 2026-07-23: the selector buttons showed the raw side-book "mid", which
+  // on a one-sided book (bids-only DMM, all asks synthetic) degenerates to the
+  // bare native bid — BUY DOWN read 9¢ while a market buy started filling at
+  // the 10.87¢ synthetic ask. Show the executable ask instead (a Polymarket
+  // outcome button is the ask you pay), so the button agrees with the ↑ row in
+  // the order-book panel and with the market card. Mid stays as the fallback
+  // for a book with no asks at all, and keeps feeding the probability bar.
+  const upBtnCents = useMemo(() => {
+    const ask = market
+      ? executableAskBpsFromOrderBook(1, market.orderBook, COMPLEMENTARY_MATCHING_ENABLED)
+      : null;
+    return ask != null ? ask / 100 : upMidCents;
+  }, [market, upMidCents]);
+  const downBtnCents = useMemo(() => {
+    const ask = market
+      ? executableAskBpsFromOrderBook(2, market.orderBook, COMPLEMENTARY_MATCHING_ENABLED)
+      : null;
+    return ask != null ? ask / 100 : downMidCents;
+  }, [market, downMidCents]);
+
   // PR-18 P1-19: the user's raw input in atomic-USDT (6-dec). Its meaning
   // depends on side (see `orderAmountAtomic` below):
   //   - BUY  → a $ BUDGET to spend.
@@ -674,6 +695,20 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       bestBidBps: sideBook.bids[0]?.price ?? null,
     };
   }, [fullOrderbook, side]);
+
+  // QA 2026-07-23: a $10 market BUY against a $6.10 top ask spills to the next
+  // level and the average lands far above the button price. Non-blocking
+  // callout when the estimated VWAP exceeds the best executable ask by >10%,
+  // so a thin book is legible at a glance instead of only via "Avg. Price".
+  // Null (hidden) whenever either input is missing — including the unified
+  // book's transient blanks, when the VWAP nulls out in the same tick.
+  const priceImpactBestAskBps = useMemo(() => {
+    if (orderType !== "MARKET" || orderSide !== 0) return null;
+    const avg = vwapResult?.avgPriceBps;
+    const best = executableTopOfBook.bestAskBps;
+    if (avg == null || best == null || best <= 0) return null;
+    return Number(avg) > best * 1.1 ? best : null;
+  }, [orderType, orderSide, vwapResult, executableTopOfBook]);
 
   // The executable price (bps) a resting LIMIT order fails to reach, or null
   // when it's marketable / MARKET / there's no book to compare against. QA
@@ -1400,7 +1435,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             side === 1 && "pp-trade-v2__direction-btn--on",
           )}
           aria-pressed={side === 1}
-          title="Midpoint of the UP order book (implied probability) — a market buy executes at the book's ↑ ask price"
+          title="Best ask on the UP book — the price a market buy starts filling at; larger orders can fill deeper at a higher average"
           onClick={() => {
             setSide(1);
             if (!isConnected) scrollToConnect();
@@ -1408,7 +1443,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         >
           <span>BUY UP</span>
           <span className="pp-trade-v2__direction-cents pp-tabular">
-            {Math.round(upMidCents)}¢
+            {Math.round(upBtnCents)}¢
           </span>
         </button>
         <button
@@ -1419,7 +1454,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             side === 2 && "pp-trade-v2__direction-btn--on",
           )}
           aria-pressed={side === 2}
-          title="Midpoint of the DOWN order book (implied probability) — a market buy executes at the book's ↑ ask price"
+          title="Best ask on the DOWN book — the price a market buy starts filling at; larger orders can fill deeper at a higher average"
           onClick={() => {
             setSide(2);
             if (!isConnected) scrollToConnect();
@@ -1427,7 +1462,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         >
           <span>BUY DOWN</span>
           <span className="pp-trade-v2__direction-cents pp-tabular">
-            {Math.round(downMidCents)}¢
+            {Math.round(downBtnCents)}¢
           </span>
         </button>
       </div>
@@ -1644,6 +1679,13 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
               ${avgPriceUsd.toFixed(2)}
             </span>
           </div>
+          {priceImpactBestAskBps != null && vwapResult?.avgPriceBps != null && (
+            <p className="pp-trade-v2__hint">
+              High price impact — the book is thin at the top, so this order
+              fills past the best ask ({formatBookPriceCents(priceImpactBestAskBps)}¢
+              → avg {formatBookPriceCents(Number(vwapResult.avgPriceBps))}¢).
+            </p>
+          )}
         </div>
       )}
 
@@ -1693,7 +1735,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
                   text={`5% slippage cap. Market orders sign at this worst-case price so the trade can't fill above it. Typical fill is at "Avg. Price" above; any difference goes to the protocol pool.`}
                 />
               </span>
-              <span className="pp-tabular">≤ ${worstCasePriceCents.toFixed(2)}</span>
+              <span className="pp-tabular">≤ {worstCasePriceCents.toFixed(2)}¢</span>
             </div>
           ) : null}
         </div>
