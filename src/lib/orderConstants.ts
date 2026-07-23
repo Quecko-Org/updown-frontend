@@ -23,14 +23,18 @@ export const SLIPPAGE_BPS = 500;
  * BUY  → `bestAsk × (1 + SLIPPAGE_BPS/10000)`, rounded UP (buyer accepts paying more)
  * SELL → `bestBid × (1 − SLIPPAGE_BPS/10000)`, rounded DOWN (seller accepts receiving less)
  *
- * Clamped to the contract's `[1, 9999]` priceBps range; a result outside
- * that range would either revert on-chain (price=0 → cashPart 0) or be
- * meaningless (price=10000 means "1.00 USDT per share at fill" which is
- * the at-resolution payout, not a trading price).
+ * Clamped to the contract's `[1, 9999]` priceBps range. The clamp SATURATES
+ * rather than rejects: a BUY whose padded cap lands above 9999 (any best ask
+ * ≥ ~9524 bps once × 1.05) just means "pay up to the maximum representable
+ * price" — execution still pegs to the resting maker's price, the cap only
+ * bounds it. Returning null here instead used to make every high-probability
+ * market unbuyable via MARKET: the submit path read null as an empty book and
+ * threw "Insufficient liquidity" against a full one (QA 2026-07-22, $290 BUY
+ * UP vs a 99.0¢ ask). Mirror case for a SELL pushed below 1 bps.
  *
- * Returns `null` if `bestPriceBps` is null/0/out-of-range — caller should
- * reject the trade with an "Insufficient liquidity" toast in that case
- * rather than signing an unfillable order.
+ * Returns `null` only when `bestPriceBps` itself is null/0/≥10000 — i.e. the
+ * relevant side is genuinely empty or quoting at a non-trading price — and the
+ * caller should reject with an "Insufficient liquidity" toast.
  */
 export function computeMarketSlippagePrice(args: {
   orderSide: 0 | 1; // 0 = BUY, 1 = SELL
@@ -57,8 +61,10 @@ export function computeMarketSlippagePrice(args: {
     // is never over-stated. Integer floor.
     priceBps = Math.floor((bestPriceBps * (10000 - slip)) / 10000);
   }
-  // Clamp to [1, 9999]. Below 1 means the slippage pushed an already-low
-  // bid below the contract's minimum representable price.
-  if (priceBps < 1 || priceBps > 9999) return null;
-  return priceBps;
+  // Saturate into [1, 9999] — the contract's representable band. The pad is
+  // a tolerance, not a target: capping a BUY at 9999 (or flooring a SELL at
+  // 1) keeps the order signable while execution still pegs to the resting
+  // maker's price. Rejecting out-of-band results here bricked MARKET BUYs on
+  // every book whose best ask was ≥ ~9524 bps.
+  return Math.max(1, Math.min(9999, priceBps));
 }
