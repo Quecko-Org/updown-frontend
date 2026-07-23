@@ -93,12 +93,13 @@ function statusChipClass(status: string): string {
   return "pp-chip-status pp-chip-status--open";
 }
 
-type Tab = "active" | "resolved" | "activity";
+type Tab = "active" | "resolved" | "activity" | "orders";
 
 function readTab(sp: URLSearchParams | null): Tab {
   const t = sp?.get("tab");
   if (t === "resolved") return "resolved";
   if (t === "activity") return "activity";
+  if (t === "orders") return "orders";
   return "active";
 }
 
@@ -323,6 +324,15 @@ function PortfolioInner() {
         >
           Activity
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "orders"}
+          className={cn("pp-tab__btn", tab === "orders" && "pp-tab__btn--on")}
+          onClick={() => setTab("orders")}
+        >
+          Orders
+        </button>
       </div>
 
       {tab === "active" ? (
@@ -339,8 +349,10 @@ function PortfolioInner() {
           winnerByMarket={winnerByMarket}
           windowByMarket={windowByMarket}
         />
-      ) : (
+      ) : tab === "activity" ? (
         <ActivityTab wallet={smartAccount} />
+      ) : (
+        <OrdersTab wallet={smartAccount} marketStatusByAddress={marketStatusByAddress} />
       )}
     </div>
   );
@@ -788,6 +800,174 @@ function ActivityTab({ wallet }: { wallet: string | null | undefined }) {
               </tr>
             );
           })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Rain-QA ask (2026-07-23): a verbatim view of GET /orders/:wallet so
+// integrators can reconcile their own Portfolio / Order History numbers
+// against ours. Two sections, two queries:
+//   Open Orders   → ?status=OPEN,PARTIALLY_FILLED (complete — a busy wallet's
+//                   open orders must not fall off the history page's limit)
+//   Order History → every order newest-first, all statuses
+// Values render exactly as the API returns them (shares, bps→cents,
+// ISO time) — this tab is a reference surface, not a summary.
+function OrdersTab({
+  wallet,
+  marketStatusByAddress,
+}: {
+  wallet: string | null | undefined;
+  marketStatusByAddress: Map<string, string>;
+}) {
+  const walletLower = wallet?.toLowerCase() ?? "";
+  const { data: openResp, isLoading: openLoading } = useQuery({
+    queryKey: ["orders", walletLower, "open"],
+    queryFn: () =>
+      getOrders(wallet!, { status: ["OPEN", "PARTIALLY_FILLED"], limit: 200 }),
+    enabled: !!wallet,
+    refetchInterval: 10_000,
+    retry: 1,
+  });
+  const { data: historyResp, isLoading: historyLoading } = useQuery({
+    queryKey: ["orders", walletLower, "history"],
+    queryFn: () => getOrders(wallet!, { limit: 100 }),
+    enabled: !!wallet,
+    refetchInterval: 20_000,
+    retry: 1,
+  });
+
+  if (!wallet || openLoading || historyLoading) {
+    return <div className="py-8 text-center pp-caption">Loading…</div>;
+  }
+
+  const openOrders = openResp?.orders ?? [];
+  const history = historyResp?.orders ?? [];
+  const historyTotal = historyResp?.total ?? history.length;
+
+  if (openOrders.length === 0 && history.length === 0) {
+    return (
+      <EmptyState
+        icon="list"
+        title="No orders yet"
+        subtitle="Every order you place — open, filled, or cancelled — shows here."
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <section className="space-y-3">
+        <h2 className="pp-h3">Open orders ({openOrders.length})</h2>
+        {openOrders.length === 0 ? (
+          <p className="pp-caption">No open orders.</p>
+        ) : (
+          <OrderDetailTable
+            orders={openOrders}
+            marketStatusByAddress={marketStatusByAddress}
+          />
+        )}
+      </section>
+      <section className="space-y-3">
+        <h2 className="pp-h3">
+          Order history{" "}
+          <span className="pp-caption" style={{ color: "var(--fg-2)" }}>
+            (latest {history.length} of {historyTotal})
+          </span>
+        </h2>
+        {history.length === 0 ? (
+          <p className="pp-caption">No orders yet.</p>
+        ) : (
+          <OrderDetailTable
+            orders={history}
+            marketStatusByAddress={marketStatusByAddress}
+          />
+        )}
+      </section>
+    </div>
+  );
+}
+
+function OrderDetailTable({
+  orders,
+  marketStatusByAddress,
+}: {
+  orders: OrderRow[];
+  marketStatusByAddress: Map<string, string>;
+}) {
+  return (
+    <div
+      className="overflow-hidden overflow-x-auto rounded-[var(--r-lg)] border"
+      style={{ borderColor: "var(--border-0)", background: "var(--bg-1)" }}
+    >
+      <table className="pp-table min-w-full">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Market</th>
+            <th>Dir</th>
+            <th>Side</th>
+            <th className="hidden sm:table-cell">Type</th>
+            <th className="r">Price</th>
+            <th className="r">Amount</th>
+            <th className="r">Filled</th>
+            <th>Status</th>
+            <th className="r">&nbsp;</th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map((o) => (
+            <tr key={o.orderId}>
+              <td className="pp-tabular" style={{ color: "var(--fg-2)", fontSize: 12 }}>
+                {formatTradeTime(o.createdAt)}
+              </td>
+              <td>
+                <Link
+                  href={marketPathFromAddress(o.market)}
+                  className="hover:underline"
+                  style={{ color: "var(--fg-0)" }}
+                >
+                  <span className="pp-hash">{shortenMarket(o.market)}</span>
+                </Link>
+              </td>
+              <td>
+                <span className={o.option === 1 ? "pp-chip-up" : "pp-chip-down"}>
+                  {o.option === 1 ? "UP" : "DOWN"}
+                </span>
+              </td>
+              <td>
+                <span className="pp-micro" style={{ color: "var(--fg-0)" }}>
+                  {o.side === 0 ? "BUY" : "SELL"}
+                </span>
+              </td>
+              <td className="hidden sm:table-cell">
+                <span className="pp-micro" style={{ color: "var(--fg-2)" }}>
+                  {o.type === 1 ? "MARKET" : "LIMIT"}
+                </span>
+              </td>
+              <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
+                {o.type === 1 ? "MKT" : `${(o.price / 100).toFixed(2)}¢`}
+              </td>
+              <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
+                {formatShares(o.amount)}
+              </td>
+              <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
+                {formatShares(o.filledAmount)}
+              </td>
+              <td>
+                <span className={statusChipClass(o.status)} title={o.reason}>
+                  {o.status}
+                </span>
+              </td>
+              <td className="r">
+                {(o.status === "OPEN" || o.status === "PARTIALLY_FILLED") &&
+                marketStatusByAddress.get(o.market.toLowerCase()) === "ACTIVE" ? (
+                  <CancelOrderButton orderId={o.orderId} market={o.market} />
+                ) : null}
+              </td>
+            </tr>
+          ))}
         </tbody>
       </table>
     </div>
