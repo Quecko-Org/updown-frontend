@@ -1,0 +1,41 @@
+name: Deploy Frontend
+
+on:
+  push:
+    branches:
+      - audit/hacken-remediation-v2
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, updown-frontend-vm]
+
+    env:
+      PM2_PROCESS_NAME: updown-frontend-dev
+      PORT: 3000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Clean previous build
+        run: rm -rf .next
+
+      - name: Build
+        run: npm run build
+
+      - name: Restart app
+        run: |
+          if pm2 describe "$PM2_PROCESS_NAME" > /dev/null; then
+            PORT=$PORT pm2 reload "$PM2_PROCESS_NAME"
+          else
+            PORT=$PORT pm2 start npm --name "$PM2_PROCESS_NAME" -- start
+          fi
+
+          pm2 save
