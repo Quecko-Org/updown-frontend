@@ -59,6 +59,7 @@ import {
   MAX_STAKE_ATOMIC,
   MAX_STAKE_USDT,
   MIN_STAKE_USDT,
+  isStakeInRange,
   maxStakeForBalance,
 } from "@/lib/stakeBounds";
 import { computeMarketSlippagePrice } from "@/lib/orderConstants";
@@ -777,8 +778,13 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     return Number(cost) / 1_000_000;
   }, [orderAmountAtomic, sharePriceBps]);
 
+  // The floor is entry-only: on SELL `stakeUsd` is a SHARE count, and a
+  // position that fell below the minimum (partial fill, or a small budget
+  // spent at a high price) has to stay exitable. Only the ceiling is
+  // two-sided.
   const stakeOutOfRange =
-    stakeUsd > 0 && (stakeUsd < MIN_STAKE_USDT || stakeUsd > MAX_STAKE_USDT);
+    stakeUsd > 0 &&
+    (stakeUsd > MAX_STAKE_USDT || (orderSide === 0 /* BUY */ && stakeUsd < MIN_STAKE_USDT));
 
   // The MARKET slippage cap in bps: the price `submit` actually SIGNS for a
   // MARKET order (the VWAP is only the expected fill). Null for LIMIT-family
@@ -931,12 +937,15 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       }
 
       // Bounds are on the user's INPUT — a $ BUDGET (BUY) or a SHARE count
-      // (SELL), both in the $5–$500 window. This is NOT the wire `amount`.
+      // (SELL). This is NOT the wire `amount`. The $1 floor is entry-only
+      // (see `isStakeInRange`); the $500 ceiling applies to both sides.
       const inputAtomic = parseUsdtToAtomic(stakeUsd.toFixed(2));
-      const min = parseUsdtToAtomic(String(MIN_STAKE_USDT));
-      const max = parseUsdtToAtomic(String(MAX_STAKE_USDT));
-      if (inputAtomic < min || inputAtomic > max) {
-        throw new Error(`Amount must be $${MIN_STAKE_USDT}–$${MAX_STAKE_USDT}`);
+      if (!isStakeInRange(inputAtomic, orderSide === 0 ? "BUY" : "SELL")) {
+        throw new Error(
+          orderSide === 0
+            ? `Amount must be $${MIN_STAKE_USDT}–$${MAX_STAKE_USDT}`
+            : `Amount must be 0–${MAX_STAKE_USDT} shares`,
+        );
       }
 
       if (orderType !== "MARKET" && userPriceCentsInput !== "") {
@@ -1261,7 +1270,10 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       return {
         label: "Adjust amount",
         disabled: true,
-        inlineError: `Amount must be $${MIN_STAKE_USDT}–$${MAX_STAKE_USDT}.`,
+        inlineError:
+          orderSide === 0
+            ? `Amount must be $${MIN_STAKE_USDT}–$${MAX_STAKE_USDT}.`
+            : `You can sell up to ${MAX_STAKE_USDT} shares at a time.`,
       };
     }
     if (insufficientBalance) {

@@ -211,9 +211,10 @@ function buildFaq(): FaqItem[] {
       q: "What's the smallest trade size?",
       a: (
         <>
-          Minimum stake is <strong>$5 {tokenSym}</strong>. Maximum is{" "}
+          Minimum stake is <strong>$1 {tokenSym}</strong>. Maximum is{" "}
           <strong>$500 {tokenSym}</strong> per order. Bigger positions are
-          achievable by stacking multiple orders.
+          achievable by stacking multiple orders. Selling has no minimum — if a
+          position ends up smaller than $1 you can always close it.
         </>
       ),
     },

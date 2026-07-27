@@ -1,5 +1,5 @@
 /**
- * Stake bounds — single source of truth for the $5–$500 trading window.
+ * Stake bounds — single source of truth for the $1–$500 trading window.
  *
  * Mirrors the backend's `src/lib/stakeBounds.ts`. Both sides of the wire
  * MUST agree on these bounds; if you bump one, bump the other in the
@@ -8,11 +8,20 @@
  * The backend route layer (BUG-S2.1) and the SDK (`MIN_STAKE_ATOMIC` /
  * `MAX_STAKE_ATOMIC`) enforce the same window — the frontend is the
  * first gate so users see a friendly error before signing.
+ *
+ * ⚠️ The two sides gate DIFFERENT quantities and that is deliberate:
+ * the backend bound is on the wire `amount` (a SHARE count / face value),
+ * while this gate is on the user's INPUT — a cash budget on BUY, a share
+ * count on SELL. A cash budget always converts UP into shares
+ * (`shares = cash / price`, price < $1), so a $1 cash gate here sits
+ * safely above the backend's $1 face floor at every price.
+ *
+ * Lowered from $5 → $1 on 2026-07-23 (Polymarket parity, rain QA ask).
  */
 
-/** $5 USDT. Anything strictly less is rejected by the disabled-button gate. */
-export const MIN_STAKE_USDT = 5;
-export const MIN_STAKE_ATOMIC = BigInt(5_000_000);
+/** $1. Anything strictly less is rejected by the disabled-button gate — BUY only. */
+export const MIN_STAKE_USDT = 1;
+export const MIN_STAKE_ATOMIC = BigInt(1_000_000);
 
 /** $500 USDT. Anything strictly greater is rejected. */
 export const MAX_STAKE_USDT = 500;
@@ -46,7 +55,18 @@ export function maxStakeForBalance(availableAtomic: bigint): string {
   return dollars.toFixed(2);
 }
 
-/** True iff the stake (atomic) is strictly within [MIN, MAX]. */
-export function isStakeInRange(stakeAtomic: bigint): boolean {
-  return stakeAtomic >= MIN_STAKE_ATOMIC && stakeAtomic <= MAX_STAKE_ATOMIC;
+/**
+ * True iff the stake (atomic) is within the window for `side`.
+ *
+ * The minimum is ENTRY-ONLY. On SELL the input is a share count, and a
+ * holder left with a sub-$1 position — routine after a partial fill —
+ * must still be able to exit; only the ceiling applies there.
+ */
+export function isStakeInRange(
+  stakeAtomic: bigint,
+  side: "BUY" | "SELL" = "BUY",
+): boolean {
+  if (stakeAtomic > MAX_STAKE_ATOMIC) return false;
+  if (side === "SELL") return stakeAtomic > BigInt(0);
+  return stakeAtomic >= MIN_STAKE_ATOMIC;
 }
