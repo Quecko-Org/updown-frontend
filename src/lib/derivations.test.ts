@@ -8,6 +8,8 @@ import {
   isResolvedMarketStatus,
   isTerminalMarketStatus,
   isValidPermissionsContext,
+  formatPriceCents,
+  stepPriceBps,
   validateLimitPriceCents,
 } from "./derivations";
 
@@ -97,24 +99,41 @@ describe("buildTerminalOrderToast (Fix 2c + P1 hotfix relaxed maker guard)", () 
     expect(t).toBeNull();
   });
 
-  it("emits info toast with fmtUsd values for partial-fill cancellation", () => {
+  // Issue #9: the figures report transacted VALUE (shares * price / 10000), not
+  // the $1-face "To Win" count. 3 shares filled of a 10-share order at 50¢ =
+  // $1.50 of $5.00, not $3.00 of $10.00.
+  it("reports cost-based value for partial-fill cancellation (Issue #9)", () => {
     const t = buildTerminalOrderToast(
-      { id: "x", maker: wallet, status: "CANCELLED", amount: "10000000", filledAmount: "3000000" },
+      { id: "x", maker: wallet, status: "CANCELLED", price: 5000, amount: "10000000", filledAmount: "3000000" },
       wallet,
     );
     expect(t?.kind).toBe("info");
-    expect(t?.message).toContain("$3.00");
-    expect(t?.message).toContain("$10.00");
+    expect(t?.message).toContain("$1.50");
+    expect(t?.message).toContain("$5.00");
     expect(t?.message).toMatch(/remainder cancelled/);
   });
 
-  it("emits success toast on FILLED", () => {
+  // Issue #9: a filled order toasts the cost transacted, not share FACE.
+  // 25 shares at 50¢ = $12.50, not the $25.00 To-Win face value.
+  it("emits success toast with cost-based value on FILLED (Issue #9)", () => {
     const t = buildTerminalOrderToast(
-      { id: "x", maker: wallet, status: "FILLED", amount: "25000000", filledAmount: "25000000" },
+      { id: "x", maker: wallet, status: "FILLED", price: 5000, amount: "25000000", filledAmount: "25000000" },
       wallet,
     );
     expect(t?.kind).toBe("success");
-    expect(t?.message).toContain("$25.00");
+    expect(t?.message).toContain("$12.50");
+  });
+
+  // Team-lead repro: a 10-share fill (10 * 1e6 atomic) at 5000 bps (50¢) must
+  // toast the $5.00 cost, NOT the $10.00 To-Win face.
+  it("toasts $5.00 for a 10-share FILLED at 50¢ (Issue #9 repro)", () => {
+    const t = buildTerminalOrderToast(
+      { id: "x", maker: wallet, status: "FILLED", price: 5000, amount: "10000000", filledAmount: "10000000" },
+      wallet,
+    );
+    expect(t?.kind).toBe("success");
+    expect(t?.message).toBe("Order filled: $5.00.");
+    expect(t?.message).not.toContain("$10.00");
   });
 
   it("stays quiet on non-terminal PARTIALLY_FILLED (more fills may arrive)", () => {
@@ -197,34 +216,87 @@ describe("buildTerminalOrderToast (Fix 2c + P1 hotfix relaxed maker guard)", () 
 });
 
 describe("validateLimitPriceCents (Fix A price input)", () => {
-  it("accepts integer cents in [1, 99]", () => {
-    expect(validateLimitPriceCents("1")).toEqual({ value: 1, error: null });
-    expect(validateLimitPriceCents("50")).toEqual({ value: 50, error: null });
-    expect(validateLimitPriceCents("99")).toEqual({ value: 99, error: null });
+  it("accepts whole cents in [1, 99]", () => {
+    expect(validateLimitPriceCents("1")).toEqual({ value: 1, bps: 100, error: null });
+    expect(validateLimitPriceCents("50")).toEqual({ value: 50, bps: 5000, error: null });
+    expect(validateLimitPriceCents("99")).toEqual({ value: 99, bps: 9900, error: null });
   });
 
-  it("rejects 0, 100, 150 (outside probability range)", () => {
+  // The reported bug: the market maker rests at sub-cent prices (59.22¢), so a
+  // whole-cent-only input could never cross the spread.
+  it("accepts sub-cent prices matching live book quotes", () => {
+    expect(validateLimitPriceCents("57.5")).toEqual({ value: 57.5, bps: 5750, error: null });
+    expect(validateLimitPriceCents("59.22")).toEqual({ value: 59.22, bps: 5922, error: null });
+    expect(validateLimitPriceCents("40.78")).toEqual({ value: 40.78, bps: 4078, error: null });
+    expect(validateLimitPriceCents("0.01")).toEqual({ value: 0.01, bps: 1, error: null });
+    expect(validateLimitPriceCents("99.99")).toEqual({ value: 99.99, bps: 9999, error: null });
+  });
+
+  // Guards the reason `bps` exists: 59.22 * 100 is 5921.999999999999 in binary
+  // float, and a fractional bps throws inside BigInt() when the order is signed.
+  it("always yields an integer bps, despite float representation error", () => {
+    for (let bps = 1; bps <= 9999; bps++) {
+      const r = validateLimitPriceCents(String(bps / 100));
+      expect(r.error).toBeNull();
+      expect(r.bps).toBe(bps);
+      expect(Number.isInteger(r.bps)).toBe(true);
+    }
+  });
+
+  it("rejects prices outside the [0.01, 99.99] probability range", () => {
     expect(validateLimitPriceCents("0").value).toBeNull();
-    expect(validateLimitPriceCents("0").error).toMatch(/at least 1/);
+    expect(validateLimitPriceCents("0").error).toMatch(/at least/);
+    expect(validateLimitPriceCents("0.009").value).toBeNull();
     expect(validateLimitPriceCents("100").value).toBeNull();
     expect(validateLimitPriceCents("100").error).toMatch(/at most 99/);
+    expect(validateLimitPriceCents("99.999").value).toBeNull();
     expect(validateLimitPriceCents("150").value).toBeNull();
   });
 
-  it("rejects non-integers and garbage", () => {
-    expect(validateLimitPriceCents("50.5").value).toBeNull();
-    expect(validateLimitPriceCents("50.5").error).toMatch(/whole cents/i);
+  it("rejects a 3rd decimal rather than silently rounding it", () => {
+    expect(validateLimitPriceCents("50.555").value).toBeNull();
+    expect(validateLimitPriceCents("50.555").error).toMatch(/2 decimals/i);
+    expect(validateLimitPriceCents("59.221").bps).toBeNull();
+    expect(validateLimitPriceCents("59.225").bps).toBeNull();
+  });
+
+  it("rejects garbage", () => {
     expect(validateLimitPriceCents("abc").value).toBeNull();
     expect(validateLimitPriceCents("").error).toMatch(/enter a price/i);
     expect(validateLimitPriceCents("-5").value).toBeNull();
+    expect(validateLimitPriceCents("Infinity").value).toBeNull();
   });
 
   it("accepts whitespace-padded input", () => {
-    expect(validateLimitPriceCents("  50  ")).toEqual({ value: 50, error: null });
+    expect(validateLimitPriceCents("  50  ")).toEqual({ value: 50, bps: 5000, error: null });
   });
 
   it("accepts number type (not just string)", () => {
-    expect(validateLimitPriceCents(42)).toEqual({ value: 42, error: null });
+    expect(validateLimitPriceCents(42)).toEqual({ value: 42, bps: 4200, error: null });
+    expect(validateLimitPriceCents(59.22)).toEqual({ value: 59.22, bps: 5922, error: null });
+  });
+});
+
+describe("formatPriceCents / stepPriceBps", () => {
+  it("renders bps as a cents string with no trailing zeros", () => {
+    expect(formatPriceCents(5972)).toBe("59.72");
+    expect(formatPriceCents(5750)).toBe("57.5");
+    expect(formatPriceCents(5700)).toBe("57");
+    expect(formatPriceCents(1)).toBe("0.01");
+  });
+
+  // Round-trips through the validator: whatever the steppers put in the field
+  // must parse back to the exact bps, or the field would show a price the order
+  // cannot sign.
+  it("steps by 1¢ and round-trips through the validator", () => {
+    expect(stepPriceBps(5922, 100)).toBe("60.22");
+    expect(stepPriceBps(5922, -100)).toBe("58.22");
+    expect(validateLimitPriceCents(stepPriceBps(5922, 100)).bps).toBe(6022);
+  });
+
+  it("clamps to the book's [1, 9999] range", () => {
+    expect(stepPriceBps(50, -100)).toBe("0.01");
+    expect(stepPriceBps(9950, 100)).toBe("99.99");
   });
 });
 

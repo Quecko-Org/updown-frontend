@@ -4,10 +4,10 @@ import { Menu, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useMemo, useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
-import { getBalance, getOrders } from "@/lib/api";
+import { getBalance } from "@/lib/api";
 import { identifyHashed, resetIdentity, track } from "@/lib/analytics";
 import { geoStateAtom, userSmartAccount } from "@/store/atoms";
 import { formatUsdt } from "@/lib/format";
@@ -76,6 +76,7 @@ export function Header() {
     isWalletConnected,
     isLoading,
     loadingStep,
+    isSilentRestore,
     walletAddress,
     disconnectWallet,
     showSignModal,
@@ -177,62 +178,17 @@ export function Header() {
   // link below is now shown to any connected wallet (since anyone can
   // accumulate rebates as a maker).
 
-  // Phase2-PRE2: "in orders" derives from the open-orders list, NOT from
-  // backend `balance.inOrders`. Two reasons:
-  //   1. Backend SmartAccount.inOrders has a slow-leak class of bug — over
-  //      time, lock decrements miss some fill paths and the counter drifts
-  //      higher than the actual sum of locked-by-open-orders. (Verified
-  //      against dev: a wallet with 0 open orders had $40 stuck in
-  //      backend.inOrders.) Backend reconciliation is on the backlog.
-  //   2. Single source of truth for "user's open orders". Header and
-  //      /portfolio Active tab now read from the same `["orders", eoa]`
-  //      query key, so they cannot disagree.
-  // Result: the dropdown's "In orders" cell = sum(amount - filledAmount)
-  // across orders the same query Portfolio renders.
-  // 2026-05-17: added refetchInterval matching the balance query cadence.
-  // Pre-fix, this query only refreshed on mount / window-focus, so an
-  // order auto-cancelled by the expiry sweep (no user-initiated action)
-  // would leave the derived inOrders stale until the user clicked away
-  // and back. WS `order_update` merges (useUpDownWebSocket) cover the
-  // common case but rely on a healthy authed `orders:<wallet>` channel.
-  const { data: ordersResp } = useQuery({
-    queryKey: ["orders", tradingIdentity?.toLowerCase() ?? ""],
-    queryFn: () => getOrders(tradingIdentity!, { limit: 50 }),
-    enabled: !!tradingIdentity && isWalletConnected,
-    refetchInterval: 15_000,
-    staleTime: 5_000,
-    retry: 1,
-  });
-
-  const inOrdersDerived = useMemo<string>(() => {
-    const orders = ordersResp?.orders ?? [];
-    let sum = BigInt(0);
-    for (const o of orders) {
-      if (o.status === "OPEN" || o.status === "PARTIALLY_FILLED") {
-        try {
-          sum += BigInt(o.amount) - BigInt(o.filledAmount);
-        } catch {
-          /* skip malformed */
-        }
-      }
-    }
-    return sum.toString();
-  }, [ordersResp]);
-
-  // "Available" = on-chain USDT − sum(open-order remaining). Same desync class
-  // as inOrders — backend's `available` is `cachedBalance - balance.inOrders`,
-  // which inherits the leak. Recompute from `cachedBalance` (on-chain truth)
-  // minus the derived in-orders.
-  const availableDerived = useMemo<string>(() => {
-    try {
-      const cached = BigInt(bal?.cachedBalance ?? "0");
-      const inOrd = BigInt(inOrdersDerived);
-      const av = cached > inOrd ? cached - inOrd : BigInt(0);
-      return av.toString();
-    } catch {
-      return bal?.available ?? "0";
-    }
-  }, [bal?.cachedBalance, bal?.available, inOrdersDerived]);
+  // Issue #1: "In orders" and "Available" come straight from the backend
+  // `/balance` response. The backend locks COST + maxFee per open order (QA
+  // round-1 fix), so `inOrders`/`available` are cost-based atomic USDT — the
+  // dollars actually committed and the dollars still free. The prior client
+  // recompute summed share FACE (`amount - filledAmount`; 1 share = $1 face),
+  // which overstated "In orders" and understated "Available" for any BUY below
+  // $1, and wrongly counted SELL orders (which lock shares, not cash). Rendering
+  // the backend's own figures keeps this chip consistent with what Settlement
+  // reserved and drops Header's duplicate `["orders"]` subscription.
+  const inOrdersDerived = bal?.inOrders ?? "0";
+  const availableDerived = bal?.available ?? "0";
 
   // Phase 4: USDTM lives on the user's ThinWallet. Deposit + Withdraw UI
   // target the TW so the user funds/empties the contract that Settlement
@@ -253,8 +209,10 @@ export function Header() {
 
   return (
     <>
-      {/* Full-screen loading overlay */}
-      {isLoading && (
+      {/* Full-screen loading overlay. Suppressed during a silent reload-restore
+          (isLoading is already left false there; the flag makes it explicit) so
+          a refresh of an already-connected user never flashes the setup curtain. */}
+      {isLoading && !isSilentRestore && (
         <div
           className="fixed inset-0 flex flex-col items-center justify-center gap-3"
           style={{
@@ -317,14 +275,10 @@ export function Header() {
                 {n.label}
               </Link>
             ))}
-            {isWalletConnected ? (
-              <Link
-                href="/rebates"
-                className={cn("pp-hdr__navlink", pathname === "/rebates" && "pp-hdr__navlink--on")}
-              >
-                Rebates
-              </Link>
-            ) : null}
+            {/* Rebates nav removed (QA 2026-07-17): maker-rebate payouts are
+                on-chain-only (Settlement.claimRebate) — the page's Claim
+                button posted to an endpoint that no longer exists. The page
+                itself stays reachable by URL as a read-only accrual view. */}
           </nav>
 
           {/* Right: balance + actions */}
@@ -480,19 +434,6 @@ export function Header() {
                         {n.label}
                       </Link>
                     ))}
-                    {isWalletConnected ? (
-                      <Link
-                        href="/rebates"
-                        onClick={() => setMenuOpen(false)}
-                        className={cn(
-                          "pp-menu__item",
-                          pathname === "/rebates" && "pp-menu__item--on",
-                        )}
-                        role="menuitem"
-                      >
-                        Rebates
-                      </Link>
-                    ) : null}
                     <div className="pp-menu__divider" />
                   </div>
 

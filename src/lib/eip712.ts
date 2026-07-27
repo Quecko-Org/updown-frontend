@@ -1,4 +1,5 @@
 import type { ApiConfig } from "./api";
+import { assertPinnedDomain } from "./pinnedAddresses";
 
 export const ORDER_TYPES = {
   Order: [
@@ -9,6 +10,14 @@ export const ORDER_TYPES = {
     { name: "type", type: "uint8" },
     { name: "price", type: "uint256" },
     { name: "amount", type: "uint256" },
+    // F-2026-17731 (Hacken remediation V2): signed fee cap — the max total fee
+    // (platformFee + makerFee) this order will pay WHEN FILLED AS THE TAKER. The
+    // settlement contract caps the relayer-supplied fee at `takerOrder.maxFee`, so
+    // the relayer can never charge more than the user cryptographically committed to.
+    // Field order MUST match `ORDER_TYPEHASH` in UpDownSettlement.sol and the backend's
+    // `EIP712_ORDER_TYPES` exactly (maxFee between amount and nonce) — any drift makes
+    // the on-chain `SignatureChecker` reject the signature.
+    { name: "maxFee", type: "uint256" },
     { name: "nonce", type: "uint256" },
     { name: "expiry", type: "uint256" },
   ],
@@ -43,13 +52,41 @@ export type OrderSignMessage = {
   type: number;
   price: bigint;
   amount: bigint;
+  /** F-2026-17731: signed fee cap (atomic USDT). Max total fee paid when filled as taker. */
+  maxFee: bigint;
   nonce: bigint;
   expiry: bigint;
 };
 
+// The EIP-712 domain's `verifyingContract` is the settlement contract. On a
+// multi-settlement deployment each market has its OWN settlement, and the
+// backend rebuilds the order/cancel domain from THAT market's settlement — so
+// signing against the top-level (first-pair) settlement from `cfg.eip712.domain`
+// would produce a digest the backend can't verify. Callers thread the selected
+// market's settlement (`parsedKey.settlement`, lowercased) as `verifyingContract`.
+// Omitting it falls back to `cfg.eip712.domain.verifyingContract` — byte-identical
+// on single-settlement deployments (e.g. the demo, where all pairs share one).
+//
+// BOTH of those are server data (`parsedKey.settlement` is parsed out of the
+// composite market key `GET /markets` returns), so the resolved domain is pinned
+// here — the single choke point every order/cancel signature passes through.
+// `assertPinnedDomain` THROWS; there is deliberately no fall-through to signing.
+function domainWithSettlement(
+  cfg: ApiConfig,
+  verifyingContract?: `0x${string}`,
+): (typeof cfg)["eip712"]["domain"] {
+  const domain = {
+    ...cfg.eip712.domain,
+    verifyingContract: verifyingContract ?? cfg.eip712.domain.verifyingContract,
+  } as (typeof cfg)["eip712"]["domain"];
+  assertPinnedDomain(domain);
+  return domain;
+}
+
 export function buildOrderTypedData(
   cfg: ApiConfig,
-  msg: OrderSignMessage
+  msg: OrderSignMessage,
+  verifyingContract?: `0x${string}`,
 ): {
   domain: (typeof cfg)["eip712"]["domain"];
   types: typeof ORDER_TYPES;
@@ -57,7 +94,7 @@ export function buildOrderTypedData(
   message: OrderSignMessage;
 } {
   return {
-    domain: cfg.eip712.domain as (typeof cfg)["eip712"]["domain"],
+    domain: domainWithSettlement(cfg, verifyingContract),
     types: ORDER_TYPES,
     primaryType: "Order",
     message: msg,
@@ -70,9 +107,10 @@ export function buildCancelTypedData(
   orderId: string,
   nonce: bigint,
   expiry: bigint,
+  verifyingContract?: `0x${string}`,
 ) {
   return {
-    domain: cfg.eip712.domain as (typeof cfg)["eip712"]["domain"],
+    domain: domainWithSettlement(cfg, verifyingContract),
     types: CANCEL_TYPES,
     primaryType: "Cancel" as const,
     message: { maker, orderId, nonce, expiry },
@@ -103,7 +141,7 @@ export function buildWithdrawTypedData(
   nonce: bigint
 ) {
   return {
-    domain: cfg.eip712.domain as (typeof cfg)["eip712"]["domain"],
+    domain: domainWithSettlement(cfg),
     types: WITHDRAW_TYPES,
     primaryType: "Withdraw" as const,
     message: { wallet, amount, nonce },

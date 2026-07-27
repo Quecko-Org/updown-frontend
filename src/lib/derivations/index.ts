@@ -187,6 +187,27 @@ export function buildTerminalOrderToast(
   const id = `${data.id ?? "order"}-terminal`;
   const filled = data.filledAmount ?? "0";
   const amount = data.amount ?? "0";
+  // Issue #9: `filled`/`amount` are atomic SHARE counts (1 share = $1 face). The
+  // dollars actually transacted = shares * price(bps) / 10000 — the cost a BUY
+  // paid or the proceeds a SELL received. Reporting fmtUsd(amount) directly
+  // printed the $1-face "To Win" value regardless of the fill price. Guarded
+  // because WS frames aren't fully trusted: a malformed price/amount degrades to
+  // $0 rather than throwing out of the toast builder (fmtUsd itself is already
+  // BigInt-safe; this keeps the multiply/divide equally safe).
+  const priceBps = (() => {
+    try {
+      return BigInt(data.price ?? 0);
+    } catch {
+      return BigInt(0);
+    }
+  })();
+  const txValue = (shares: string): bigint => {
+    try {
+      return (BigInt(shares) * priceBps) / BigInt(10000);
+    } catch {
+      return BigInt(0);
+    }
+  };
 
   if (data.status === "CANCELLED") {
     const reason = data.reason as CancelReason | undefined;
@@ -218,31 +239,64 @@ export function buildTerminalOrderToast(
     }
     return {
       kind: "info",
-      message: `Order partially filled (${fmtUsd(filled)} of ${fmtUsd(amount)}) — remainder cancelled.`,
+      message: `Order partially filled (${fmtUsd(txValue(filled))} of ${fmtUsd(txValue(amount))}) — remainder cancelled.`,
       id,
     };
   }
   if (data.status === "FILLED") {
-    return { kind: "success", message: `Order filled: ${fmtUsd(amount)}.`, id };
+    return { kind: "success", message: `Order filled: ${fmtUsd(txValue(amount))}.`, id };
   }
   return null;
 }
 
 /**
- * Validate a cents-denominated LIMIT price input (1-99¢). Input comes from a
- * text field so we tolerate whitespace + trailing decimals; output is an integer
- * in the [1, 99] range plus an optional error string.
+ * Validate a cents-denominated LIMIT price input (0.01-99.99¢).
+ *
+ * The book is quoted in basis points (1 bps = 0.01¢) and the market maker rests
+ * orders at sub-cent prices like 59.22¢, so a whole-cent-only input could not
+ * express a crossing price: the best a taker could do was overshoot to 60¢ or
+ * rest at 59¢ and never fill. Accepts up to 2 decimals — one bps, the book's
+ * true tick.
+ *
+ * Returns `bps` alongside `value` because bps is what gets signed. Deriving it
+ * here keeps the float→int rounding in ONE place: `59.22 * 100` is
+ * 5921.999999999999 in binary float, and `BigInt()` on a fractional bps throws.
  */
 export function validateLimitPriceCents(raw: string | number): {
   value: number | null;
+  bps: number | null;
   error: string | null;
 } {
+  const fail = (error: string) => ({ value: null, bps: null, error });
   const trimmed = typeof raw === "string" ? raw.trim() : String(raw).trim();
-  if (trimmed === "") return { value: null, error: "Enter a price (1-99¢)" };
+  if (trimmed === "") return fail("Enter a price (0.01-99.99¢)");
   const n = Number(trimmed);
-  if (!Number.isFinite(n)) return { value: null, error: "Not a number" };
-  if (!Number.isInteger(n)) return { value: null, error: "Whole cents only (1-99)" };
-  if (n < 1) return { value: null, error: "Price must be at least 1¢" };
-  if (n > 99) return { value: null, error: "Price must be at most 99¢" };
-  return { value: n, error: null };
+  if (!Number.isFinite(n)) return fail("Not a number");
+  const bps = Math.round(n * 100);
+  // Reject a 3rd decimal rather than silently rounding it: the user typed a
+  // price the book cannot hold, and quietly moving it is worse than saying so.
+  // The 1e-6 tolerance absorbs binary-float noise (~1e-12 at these magnitudes)
+  // while a real 3rd decimal deviates by >= 0.1 bps.
+  if (Math.abs(n * 100 - bps) > 1e-6) return fail("Max 2 decimals (0.01¢ tick)");
+  if (bps < 1) return fail("Price must be at least 0.01¢");
+  if (bps > 9999) return fail("Price must be at most 99.99¢");
+  return { value: bps / 100, bps, error: null };
+}
+
+/**
+ * Render an integer-bps price as a cents string for the price field:
+ * 5972 → "59.72", 5750 → "57.5", 5700 → "57". Number→string already picks the
+ * shortest round-trip form, so trailing zeros never appear.
+ */
+export function formatPriceCents(bps: number): string {
+  return String(Math.round(bps) / 100);
+}
+
+/**
+ * Move a price by a bps delta, clamped to the book's [1, 9999] range. Steps in
+ * bps rather than cents so repeated clicks cannot accumulate float drift into a
+ * fractional bps.
+ */
+export function stepPriceBps(currentBps: number, deltaBps: number): string {
+  return formatPriceCents(Math.min(9999, Math.max(1, Math.round(currentBps) + deltaBps)));
 }

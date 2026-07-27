@@ -2,21 +2,22 @@
 
 import { Suspense, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { useAccount } from "wagmi";
 import Link from "next/link";
-import { toast } from "sonner";
 import {
   getMarket,
   getMarkets,
   getOrders,
   getPositions,
-  postMarketClaim,
+  getPositionsWithRealized,
+  getTrades,
   type OrderRow,
   type PositionRow,
+  type TradeRow,
 } from "@/lib/api";
-import { formatUsdt } from "@/lib/format";
+import { formatShares, formatUsdt } from "@/lib/format";
 import { CancelOrderButton } from "@/components/CancelOrderButton";
 import { EmptyState } from "@/components/EmptyState";
 import { cn } from "@/lib/cn";
@@ -26,6 +27,8 @@ import {
   isResolvedMarketStatus,
   isTerminalMarketStatus,
 } from "@/lib/derivations";
+import { computeSummary, safeBigInt } from "@/lib/portfolioSummary";
+import { explorerTxUrl } from "@/config/environment";
 import { userSmartAccount } from "@/store/atoms";
 
 /**
@@ -47,6 +50,41 @@ function shortenMarket(addr: string): string {
   return `${addr.slice(0, 12)}…${addr.slice(-8)}`;
 }
 
+/**
+ * On-chain proof for one fill: a short hash linking out to Arbiscan.
+ *
+ * A fill exists off-chain the moment it matches; the settlement tx lands a
+ * beat later, so `settlementTxHash` is legitimately null on a fresh row (and
+ * again if a reconcile resets it). Show that as "Pending" rather than an
+ * empty cell, so a missing link reads as "not yet" instead of "broken".
+ *
+ * Complementary (MINT/MERGE) fills settle in batches under a single tx, so
+ * the same hash can repeat down the column — the label says "settlement tx",
+ * never "this row's tx", to avoid implying one row = one transaction.
+ */
+function TxCell({ hash, status }: { hash?: string | null; status: string }) {
+  const href = explorerTxUrl(hash);
+  if (!href) {
+    return (
+      <span className="pp-caption" style={{ color: "var(--fg-2)", fontSize: 12 }}>
+        {status === "FAILED" ? "Failed" : "Pending"}
+      </span>
+    );
+  }
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="hover:underline"
+      style={{ color: "var(--fg-0)" }}
+      title={`Settlement tx ${hash} — view on explorer`}
+    >
+      <span className="pp-hash">{`${hash!.slice(0, 8)}…${hash!.slice(-6)}`}</span>
+    </a>
+  );
+}
+
 function statusChipClass(status: string): string {
   if (status === "FILLED") return "pp-chip-status pp-chip-status--filled";
   if (status === "CANCELLED") return "pp-chip-status pp-chip-status--cancelled";
@@ -55,10 +93,26 @@ function statusChipClass(status: string): string {
   return "pp-chip-status pp-chip-status--open";
 }
 
-type Tab = "active" | "resolved";
+type Tab = "active" | "resolved" | "activity" | "orders";
 
 function readTab(sp: URLSearchParams | null): Tab {
-  return sp?.get("tab") === "resolved" ? "resolved" : "active";
+  const t = sp?.get("tab");
+  if (t === "resolved") return "resolved";
+  if (t === "activity") return "activity";
+  if (t === "orders") return "orders";
+  return "active";
+}
+
+/** Compact "Jul 16, 2:34 PM"-style label for a trade timestamp. */
+function formatTradeTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 export default function PortfolioPage() {
@@ -73,9 +127,8 @@ function PortfolioInner() {
   const router = useRouter();
   const sp = useSearchParams();
   const tab = readTab(sp);
-  const { address, isConnected } = useAccount();
+  const { isConnected } = useAccount();
   const smartAccount = useAtomValue(userSmartAccount);
-  const qc = useQueryClient();
 
   const { data: positions, isLoading: positionsLoading } = useQuery({
     queryKey: ["positions", smartAccount?.toLowerCase() ?? ""],
@@ -85,11 +138,27 @@ function PortfolioInner() {
     retry: 1,
   });
 
-  const addrLower = address?.toLowerCase() ?? "";
+  // Realized-from-sells scalar (atomic USDT, signed) — the realized P&L booked
+  // on manual market-sells, which the open-position rows above cannot carry (a
+  // position sold to zero shares is dropped by the backend's `shares > 0`
+  // filter). Fetched on a SEPARATE key so the bare-array `["positions", …]`
+  // query stays shape-identical for its other consumer, the TradeForm sell
+  // gate. Summed with the settlement term in `computeSummary`.
+  const { data: realizedFromSells } = useQuery({
+    queryKey: ["positions-realized", smartAccount?.toLowerCase() ?? ""],
+    queryFn: async () => (await getPositionsWithRealized(smartAccount!)).realizedFromSells,
+    enabled: !!smartAccount && isConnected,
+    refetchInterval: 20_000,
+    retry: 1,
+  });
+
+  // Account Kit: orders (like positions/balance) are keyed by the SCA —
+  // the trading identity the backend rows live under.
+  const saLower = smartAccount?.toLowerCase() ?? "";
   const { data: ordersResp } = useQuery({
-    queryKey: ["orders", addrLower],
-    queryFn: () => getOrders(address!, { limit: 50 }),
-    enabled: !!address && isConnected,
+    queryKey: ["orders", saLower],
+    queryFn: () => getOrders(smartAccount!, { limit: 50 }),
+    enabled: !!smartAccount && isConnected,
     retry: 1,
     staleTime: 10_000,
   });
@@ -153,18 +222,24 @@ function PortfolioInner() {
     return map;
   }, [resolvedMarketKeys, marketQueries]);
 
-  const summary = useMemo(() => computeSummary(positions ?? [], winnerByMarket), [positions, winnerByMarket]);
+  // #9: resolution-time sort key per resolved market. Positions carry no
+  // end time of their own, so we lift `endTime` off the per-market query
+  // (the same fetch that feeds winner/window). Used to order the Resolved
+  // tab newest-first; markets whose detail hasn't loaded yet sort to 0 and
+  // fall back to the address tiebreak below.
+  const endTimeByMarket = useMemo(() => {
+    const map = new Map<string, number>();
+    resolvedMarketKeys.forEach((m, i) => {
+      const t = marketQueries[i]?.data?.endTime;
+      if (typeof t === "number") map.set(m, t);
+    });
+    return map;
+  }, [resolvedMarketKeys, marketQueries]);
 
-  const claim = useMutation({
-    mutationFn: (market: string) => postMarketClaim(market),
-    onSuccess: () => {
-      toast.success("Claim submitted");
-      const sa = smartAccount?.toLowerCase() ?? "";
-      qc.invalidateQueries({ queryKey: ["positions", sa] });
-      qc.invalidateQueries({ queryKey: ["balance", addrLower] });
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
+  const summary = useMemo(
+    () => computeSummary(positions ?? [], winnerByMarket, realizedFromSells),
+    [positions, winnerByMarket, realizedFromSells],
+  );
 
   const setTab = (t: Tab) => {
     const params = new URLSearchParams(sp?.toString() ?? "");
@@ -193,9 +268,21 @@ function PortfolioInner() {
   const activePositions = (positions ?? []).filter(
     (p) => !isTerminalMarketStatus(p.marketStatus),
   );
-  const resolvedPositions = (positions ?? []).filter((p) =>
-    isResolvedMarketStatus(p.marketStatus),
-  );
+  // #9: newest-resolved first. Sort by the per-market resolution (end) time
+  // descending; when two markets share a time — or their detail hasn't
+  // loaded yet (both key to 0) — fall back to a stable market-address
+  // descending tiebreak so ordering stays deterministic. `.filter()` returns
+  // a fresh array, so this sort never mutates the cached positions feed.
+  const resolvedPositions = (positions ?? [])
+    .filter((p) => isResolvedMarketStatus(p.marketStatus))
+    .sort((a, b) => {
+      const ta = endTimeByMarket.get(a.market.toLowerCase()) ?? 0;
+      const tb = endTimeByMarket.get(b.market.toLowerCase()) ?? 0;
+      if (tb !== ta) return tb - ta;
+      const am = a.market.toLowerCase();
+      const bm = b.market.toLowerCase();
+      return am < bm ? 1 : am > bm ? -1 : 0;
+    });
   const openOrders = orders.filter(
     (o) => o.status === "OPEN" || o.status === "PARTIALLY_FILLED",
   );
@@ -228,6 +315,24 @@ function PortfolioInner() {
         >
           Resolved
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "activity"}
+          className={cn("pp-tab__btn", tab === "activity" && "pp-tab__btn--on")}
+          onClick={() => setTab("activity")}
+        >
+          Activity
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "orders"}
+          className={cn("pp-tab__btn", tab === "orders" && "pp-tab__btn--on")}
+          onClick={() => setTab("orders")}
+        >
+          Orders
+        </button>
       </div>
 
       {tab === "active" ? (
@@ -237,74 +342,20 @@ function PortfolioInner() {
           openOrders={openOrders}
           marketStatusByAddress={marketStatusByAddress}
         />
-      ) : (
+      ) : tab === "resolved" ? (
         <ResolvedTab
           loading={positionsLoading}
           positions={resolvedPositions}
           winnerByMarket={winnerByMarket}
           windowByMarket={windowByMarket}
-          onClaim={(m) => claim.mutate(m)}
-          claimPending={claim.isPending}
         />
+      ) : tab === "activity" ? (
+        <ActivityTab wallet={smartAccount} />
+      ) : (
+        <OrdersTab wallet={smartAccount} marketStatusByAddress={marketStatusByAddress} />
       )}
     </div>
   );
-}
-
-function computeSummary(
-  positions: PositionRow[],
-  winnerByMarket: Map<string, number | null>,
-) {
-  let invested = BigInt(0);
-  let activeCount = 0;
-  let realizedPnL = BigInt(0);
-  let wins = 0;
-  let losses = 0;
-
-  for (const p of positions) {
-    const cost = safeBigInt(p.costBasis);
-    const shares = safeBigInt(p.shares);
-    if (shares === BigInt(0)) continue;
-
-    if (!isTerminalMarketStatus(p.marketStatus)) {
-      invested += cost;
-      activeCount += 1;
-      continue;
-    }
-
-    if (isResolvedMarketStatus(p.marketStatus)) {
-      const winner = winnerByMarket.get(p.market.toLowerCase()) ?? null;
-      if (winner === 0 || winner == null) continue;
-      if (p.option === winner) {
-        // Winning side pays out 1 USDT per share. shares is in atomic USDT
-        // (decimals match) so payout = shares; pnl = shares - cost.
-        realizedPnL += shares - cost;
-        wins += 1;
-      } else {
-        realizedPnL -= cost;
-        losses += 1;
-      }
-    }
-  }
-
-  const totalResolved = wins + losses;
-  const winRate = totalResolved === 0 ? null : Math.round((wins / totalResolved) * 100);
-
-  return {
-    invested: invested.toString(),
-    activeCount,
-    realizedPnL,
-    winRate,
-    totalResolved,
-  };
-}
-
-function safeBigInt(s: string | undefined | null): bigint {
-  try {
-    return BigInt(s ?? "0");
-  } catch {
-    return BigInt(0);
-  }
 }
 
 function PortfolioSummary({
@@ -312,13 +363,13 @@ function PortfolioSummary({
   activeCount,
   realizedPnL,
   winRate,
-  totalResolved,
+  hasRealized,
 }: {
   invested: string;
   activeCount: number;
   realizedPnL: bigint;
   winRate: number | null;
-  totalResolved: number;
+  hasRealized: boolean;
 }) {
   const pnlSign = realizedPnL >= BigInt(0) ? "+" : "−";
   const pnlAbs = realizedPnL >= BigInt(0) ? realizedPnL : -realizedPnL;
@@ -332,7 +383,7 @@ function PortfolioSummary({
       <div className="pp-statsrail__cell">
         <span className="pp-micro">Realized P&L</span>
         <span className="pp-price-xl" style={{ color: pnlColor }}>
-          {totalResolved === 0 ? "—" : `${pnlSign}$${formatUsdt(pnlAbs.toString())}`}
+          {!hasRealized ? "—" : `${pnlSign}$${formatUsdt(pnlAbs.toString())}`}
         </span>
       </div>
       <div className="pp-statsrail__cell">
@@ -393,15 +444,11 @@ function ResolvedTab({
   positions,
   winnerByMarket,
   windowByMarket,
-  onClaim,
-  claimPending,
 }: {
   loading: boolean;
   positions: PositionRow[];
   winnerByMarket: Map<string, number | null>;
   windowByMarket: Map<string, string | null>;
-  onClaim: (market: string) => void;
-  claimPending: boolean;
 }) {
   if (loading) {
     return <div className="py-8 text-center pp-caption">Loading…</div>;
@@ -445,7 +492,11 @@ function ResolvedTab({
             const pnl = won ? shares - cost : lost ? -cost : BigInt(0);
             const pnlColor = pnl > BigInt(0) ? "var(--up)" : pnl < BigInt(0) ? "var(--down)" : "var(--fg-2)";
             const pnlAbs = pnl >= BigInt(0) ? pnl : -pnl;
-            const claimable = p.marketStatus === "RESOLVED" && won;
+            // Winnings are credited automatically by the relayer (trustless
+            // redeemFor); the market flips RESOLVED → CLAIMED when the payout
+            // lands. There is no user-callable claim — the manual button this
+            // replaced could only ever 401 against the admin-gated route.
+            const settling = p.marketStatus === "RESOLVED" && won;
             return (
               <tr key={`${p.market}-${p.option}`}>
                 <td>
@@ -486,7 +537,7 @@ function ResolvedTab({
                   )}
                 </td>
                 <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
-                  ${formatUsdt(p.shares)}
+                  {formatShares(p.shares)}
                 </td>
                 <td className="r pp-tabular" style={{ color: pnlColor }}>
                   {winner == null
@@ -496,16 +547,13 @@ function ResolvedTab({
                 <td className="r">
                   {p.marketStatus === "CLAIMED" ? (
                     <span className="pp-chip-status pp-chip-status--filled">Auto-claimed</span>
-                  ) : claimable ? (
-                    <button
-                      type="button"
-                      className="pp-btn pp-btn--secondary pp-btn--sm"
-                      disabled={claimPending}
-                      onClick={() => onClaim(p.market)}
-                      title="Nudge the relayer to credit winnings."
+                  ) : settling ? (
+                    <span
+                      className="pp-chip-status pp-chip-status--open"
+                      title="Winnings are credited automatically — no action needed."
                     >
-                      Claim
-                    </button>
+                      Settling…
+                    </span>
                   ) : null}
                 </td>
               </tr>
@@ -557,10 +605,10 @@ function PositionTable({
                 </span>
               </td>
               <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
-                ${formatUsdt(p.shares)}
+                {formatShares(p.shares)}
               </td>
               <td className="r pp-tabular" style={{ color: "var(--fg-2)" }}>
-                {p.avgPrice} bps
+                {(p.avgPrice / 100).toFixed(2)}¢
               </td>
               {mode === "active" ? (
                 <td>
@@ -622,7 +670,7 @@ function OrderTable({
                 </span>
               </td>
               <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
-                ${formatUsdt(o.amount)}
+                {formatShares(o.amount)}
               </td>
               <td className="r pp-tabular hidden sm:table-cell" style={{ color: "var(--fg-0)" }}>
                 {o.type === 1 ? "MKT" : `${(o.price / 100).toFixed(0)}¢`}
@@ -633,7 +681,289 @@ function OrderTable({
               <td className="r">
                 {(o.status === "OPEN" || o.status === "PARTIALLY_FILLED") &&
                 marketStatusByAddress.get(o.market.toLowerCase()) === "ACTIVE" ? (
-                  <CancelOrderButton orderId={o.orderId} />
+                  <CancelOrderButton orderId={o.orderId} market={o.market} />
+                ) : null}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// #7: individual-trade activity feed. The /positions feed NETS trades and
+// drops any position that closes out at 0 net shares, so a fully-sold
+// position vanishes and a sell is never itemized anywhere. This tab lists
+// the raw trades (buys AND sells) keyed by the connected SCA — the same
+// trading identity positions/orders/balance are keyed under — so sold
+// positions remain visible. Buy vs Sell is derived per row from whether the
+// SCA was the buyer or seller on that trade.
+function ActivityTab({ wallet }: { wallet: string | null | undefined }) {
+  const walletLower = wallet?.toLowerCase() ?? "";
+  const { data: trades, isLoading } = useQuery({
+    queryKey: ["trades", walletLower],
+    queryFn: () => getTrades(wallet!),
+    enabled: !!wallet,
+    refetchInterval: 20_000,
+    retry: 1,
+  });
+
+  if (!wallet || isLoading) {
+    return <div className="py-8 text-center pp-caption">Loading…</div>;
+  }
+
+  // Newest first. The endpoint's ordering isn't contractually guaranteed, so
+  // sort defensively by createdAt descending.
+  const rows: TradeRow[] = [...(trades ?? [])].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+
+  if (rows.length === 0) {
+    return (
+      <EmptyState
+        icon="list"
+        title="No trades yet"
+        subtitle="Your individual buys and sells — including fully-sold positions — show here."
+      />
+    );
+  }
+
+  return (
+    <div
+      className="overflow-hidden overflow-x-auto rounded-[var(--r-lg)] border"
+      style={{ borderColor: "var(--border-0)", background: "var(--bg-1)" }}
+    >
+      <table className="pp-table min-w-full">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Market</th>
+            <th>Dir</th>
+            <th>Side</th>
+            <th className="r">Shares</th>
+            <th className="r">Price</th>
+            <th>Tx</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((t) => {
+            // A complementary (MINT/MERGE) row stores the TAKER's option with
+            // the resting MAKER's price, reusing buyer/seller as taker/maker.
+            // Render THIS wallet's real leg: the taker leg executes at the
+            // complement (`takerPrice`), the maker leg at `price` but on the
+            // OPPOSITE option; a MINT is a buy on both legs, a MERGE a sell.
+            // Rendering the row literally showed a $10 DOWN buy at 32.5¢ as
+            // "30.77 @ 67.50¢" (QA round-4, 2026-07-17).
+            const inBuyerSlot = t.buyer.toLowerCase() === walletLower;
+            const complementary = t.matchType === "MINT" || t.matchType === "MERGE";
+            const isBuy = complementary ? t.matchType === "MINT" : inBuyerSlot;
+            const option = !complementary || inBuyerSlot ? t.option : t.option === 1 ? 2 : 1;
+            const price =
+              complementary && inBuyerSlot ? t.takerPrice ?? 10000 - t.price : t.price;
+            return (
+              <tr key={t.tradeId}>
+                <td
+                  className="pp-tabular"
+                  style={{ color: "var(--fg-2)", fontSize: 12 }}
+                >
+                  {formatTradeTime(t.createdAt)}
+                </td>
+                <td>
+                  <Link
+                    href={marketPathFromAddress(t.market)}
+                    className="hover:underline"
+                    style={{ color: "var(--fg-0)" }}
+                  >
+                    <span className="pp-hash">{shortenMarket(t.market)}</span>
+                  </Link>
+                </td>
+                <td>
+                  <span className={option === 1 ? "pp-chip-up" : "pp-chip-down"}>
+                    {option === 1 ? "UP" : "DOWN"}
+                  </span>
+                </td>
+                <td>
+                  <span className="pp-micro" style={{ color: "var(--fg-0)" }}>
+                    {isBuy ? "BUY" : "SELL"}
+                  </span>
+                </td>
+                <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
+                  {formatShares(t.amount)}
+                </td>
+                <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
+                  {(price / 100).toFixed(2)}¢
+                </td>
+                <td>
+                  <TxCell hash={t.settlementTxHash} status={t.settlementStatus} />
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Rain-QA ask (2026-07-23): a verbatim view of GET /orders/:wallet so
+// integrators can reconcile their own Portfolio / Order History numbers
+// against ours. Two sections, two queries:
+//   Open Orders   → ?status=OPEN,PARTIALLY_FILLED (complete — a busy wallet's
+//                   open orders must not fall off the history page's limit)
+//   Order History → every order newest-first, all statuses
+// Values render exactly as the API returns them (shares, bps→cents,
+// ISO time) — this tab is a reference surface, not a summary.
+function OrdersTab({
+  wallet,
+  marketStatusByAddress,
+}: {
+  wallet: string | null | undefined;
+  marketStatusByAddress: Map<string, string>;
+}) {
+  const walletLower = wallet?.toLowerCase() ?? "";
+  const { data: openResp, isLoading: openLoading } = useQuery({
+    queryKey: ["orders", walletLower, "open"],
+    queryFn: () =>
+      getOrders(wallet!, { status: ["OPEN", "PARTIALLY_FILLED"], limit: 200 }),
+    enabled: !!wallet,
+    refetchInterval: 10_000,
+    retry: 1,
+  });
+  const { data: historyResp, isLoading: historyLoading } = useQuery({
+    queryKey: ["orders", walletLower, "history"],
+    queryFn: () => getOrders(wallet!, { limit: 100 }),
+    enabled: !!wallet,
+    refetchInterval: 20_000,
+    retry: 1,
+  });
+
+  if (!wallet || openLoading || historyLoading) {
+    return <div className="py-8 text-center pp-caption">Loading…</div>;
+  }
+
+  const openOrders = openResp?.orders ?? [];
+  const history = historyResp?.orders ?? [];
+  const historyTotal = historyResp?.total ?? history.length;
+
+  if (openOrders.length === 0 && history.length === 0) {
+    return (
+      <EmptyState
+        icon="list"
+        title="No orders yet"
+        subtitle="Every order you place — open, filled, or cancelled — shows here."
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <section className="space-y-3">
+        <h2 className="pp-h3">Open orders ({openOrders.length})</h2>
+        {openOrders.length === 0 ? (
+          <p className="pp-caption">No open orders.</p>
+        ) : (
+          <OrderDetailTable
+            orders={openOrders}
+            marketStatusByAddress={marketStatusByAddress}
+          />
+        )}
+      </section>
+      <section className="space-y-3">
+        <h2 className="pp-h3">
+          Order history{" "}
+          <span className="pp-caption" style={{ color: "var(--fg-2)" }}>
+            (latest {history.length} of {historyTotal})
+          </span>
+        </h2>
+        {history.length === 0 ? (
+          <p className="pp-caption">No orders yet.</p>
+        ) : (
+          <OrderDetailTable
+            orders={history}
+            marketStatusByAddress={marketStatusByAddress}
+          />
+        )}
+      </section>
+    </div>
+  );
+}
+
+function OrderDetailTable({
+  orders,
+  marketStatusByAddress,
+}: {
+  orders: OrderRow[];
+  marketStatusByAddress: Map<string, string>;
+}) {
+  return (
+    <div
+      className="overflow-hidden overflow-x-auto rounded-[var(--r-lg)] border"
+      style={{ borderColor: "var(--border-0)", background: "var(--bg-1)" }}
+    >
+      <table className="pp-table min-w-full">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Market</th>
+            <th>Dir</th>
+            <th>Side</th>
+            <th className="hidden sm:table-cell">Type</th>
+            <th className="r">Price</th>
+            <th className="r">Amount</th>
+            <th className="r">Filled</th>
+            <th>Status</th>
+            <th className="r">&nbsp;</th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map((o) => (
+            <tr key={o.orderId}>
+              <td className="pp-tabular" style={{ color: "var(--fg-2)", fontSize: 12 }}>
+                {formatTradeTime(o.createdAt)}
+              </td>
+              <td>
+                <Link
+                  href={marketPathFromAddress(o.market)}
+                  className="hover:underline"
+                  style={{ color: "var(--fg-0)" }}
+                >
+                  <span className="pp-hash">{shortenMarket(o.market)}</span>
+                </Link>
+              </td>
+              <td>
+                <span className={o.option === 1 ? "pp-chip-up" : "pp-chip-down"}>
+                  {o.option === 1 ? "UP" : "DOWN"}
+                </span>
+              </td>
+              <td>
+                <span className="pp-micro" style={{ color: "var(--fg-0)" }}>
+                  {o.side === 0 ? "BUY" : "SELL"}
+                </span>
+              </td>
+              <td className="hidden sm:table-cell">
+                <span className="pp-micro" style={{ color: "var(--fg-2)" }}>
+                  {o.type === 1 ? "MARKET" : "LIMIT"}
+                </span>
+              </td>
+              <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
+                {o.type === 1 ? "MKT" : `${(o.price / 100).toFixed(2)}¢`}
+              </td>
+              <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
+                {formatShares(o.amount)}
+              </td>
+              <td className="r pp-tabular" style={{ color: "var(--fg-0)" }}>
+                {formatShares(o.filledAmount)}
+              </td>
+              <td>
+                <span className={statusChipClass(o.status)} title={o.reason}>
+                  {o.status}
+                </span>
+              </td>
+              <td className="r">
+                {(o.status === "OPEN" || o.status === "PARTIALLY_FILLED") &&
+                marketStatusByAddress.get(o.market.toLowerCase()) === "ACTIVE" ? (
+                  <CancelOrderButton orderId={o.orderId} market={o.market} />
                 ) : null}
               </td>
             </tr>

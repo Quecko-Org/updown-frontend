@@ -50,11 +50,9 @@ export type ApiConfig = {
     };
   };
   /**
-   * Phase 4: ThinWalletFactory address for the active chain. Empty / missing
-   * means factory not deployed on this network → frontend falls back to
-   * Path-1 EOA-direct trading. Non-empty → frontend provisions a TW per
-   * user via POST /thin-wallet/provision and routes order signing via the
-   * ERC-1271 WalletAuth wrap.
+   * Legacy (pre-Account-Kit): ThinWalletFactory address for the active
+   * chain. The backend may still return it; the frontend no longer reads
+   * it — custody is an Alchemy SCA derived client-side (lib/accountKit).
    */
   thinWalletFactoryAddress?: string;
 };
@@ -64,61 +62,8 @@ export async function getConfig(): Promise<ApiConfig> {
   return parseJson<ApiConfig>(res);
 }
 
-// ── Phase 4: ThinWallet endpoints ───────────────────────────────────────
-
-export type ProvisionRequest = {
-  eoa: `0x${string}`;
-  signature: string;
-};
-
-export type ProvisionResponse = {
-  twAddress: `0x${string}`;
-  deployed: boolean;
-  txHash?: string;
-  deployedAtBlock?: number;
-};
-
-export async function postThinWalletProvision(req: ProvisionRequest): Promise<ProvisionResponse> {
-  const res = await fetch(url("/thin-wallet/provision"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
-  });
-  return parseJson<ProvisionResponse>(res);
-}
-
-export type SignedExecuteAuth = {
-  target: `0x${string}`;
-  data: `0x${string}`;
-  nonce: string; // stringified uint256
-  deadline: number; // unix seconds
-  signature: string;
-};
-
-export type ExecuteWithSigRequest = {
-  eoa: `0x${string}`;
-  signedAuth: SignedExecuteAuth;
-};
-
-export type ExecuteWithSigResponse = {
-  txHash: string;
-  blockNumber: number;
-  twAddress: `0x${string}`;
-};
-
-export async function postThinWalletExecuteWithSig(
-  req: ExecuteWithSigRequest,
-): Promise<ExecuteWithSigResponse> {
-  const res = await fetch(url("/thin-wallet/execute-with-sig"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
-  });
-  return parseJson<ExecuteWithSigResponse>(res);
-}
-
 /**
- * F3 (2026-05-16) — testnet faucet for self-funding ThinWallets.
+ * F3 (2026-05-16) — testnet faucet for self-funding trading accounts.
  *
  * Calls the backend's `POST /test/devmint`, which is env-gated to
  * `NODE_ENV !== 'production'`. Returns 404 on prod regardless of the
@@ -228,6 +173,32 @@ export async function getPositions(wallet: string): Promise<PositionRow[]> {
   return parseJson<PositionRow[]>(res);
 }
 
+export type PositionsWithRealized = {
+  /** Open positions (net shares > 0) — identical rows to {@link getPositions}. */
+  positions: PositionRow[];
+  /**
+   * Atomic USDT (signed) realized P&L booked from manual market-SELLs, summed
+   * across ALL of the wallet's positions INCLUDING ones sold to zero net shares
+   * (which never appear in `positions`). It is the companion to the settlement
+   * term the portfolio computes client-side (won → shares−cost, lost → −cost
+   * over resolved positions); only their SUM is order-invariant, so this must
+   * never be surfaced on its own.
+   */
+  realizedFromSells: string;
+};
+
+/**
+ * Opt-in variant of {@link getPositions} that additionally returns the
+ * wallet-level realized-from-sells scalar via `?includeRealized=1`. The default
+ * `getPositions` (and every external consumer, incl. rain.trade and the SDK)
+ * keeps its byte-identical bare-array response — only this call opts into the
+ * envelope, so a fully-closed position's realized P&L is no longer discarded.
+ */
+export async function getPositionsWithRealized(wallet: string): Promise<PositionsWithRealized> {
+  const res = await fetch(url(`/positions/${wallet}`, { includeRealized: 1 }));
+  return parseJson<PositionsWithRealized>(res);
+}
+
 export type TradeRow = {
   tradeId: string;
   market: string;
@@ -241,7 +212,15 @@ export type TradeRow = {
   platformFee: string;
   makerFee: string;
   settlementStatus: string;
+  // On-chain settlement tx. Null/absent until broadcast (and again if a
+  // reconcile resets it) — render that as "pending", not as an error.
+  settlementTxHash?: string | null;
   createdAt: string;
+  // Complementary rows carry the TAKER's option with the MAKER's price;
+  // `takerPrice` is the complement the aggressor actually executed at.
+  // Optional so a stale backend (fields absent) degrades, not crashes.
+  matchType?: "NORMAL" | "MINT" | "MERGE";
+  takerPrice?: number;
 };
 
 export async function getTrades(wallet: string, limit = 50, offset = 0): Promise<TradeRow[]> {
@@ -378,6 +357,12 @@ export type PostOrderBody = {
   type: number | OrderApiType;
   price?: number;
   amount: string;
+  /**
+   * F-2026-17731: signed fee cap (atomic USDT, decimal string). Part of the EIP-712 Order
+   * payload, so it must be the exact value signed into the order digest. The backend stores it
+   * and the settlement contract caps the taker's fee at this value.
+   */
+  maxFee: string;
   nonce: number;
   expiry: number;
   signature: string;
@@ -416,11 +401,9 @@ export async function cancelOrder(
 }
 
 
-export async function postMarketClaim(marketAddress: string): Promise<{ ok: boolean }> {
-  const enc = encodeURIComponent(marketAddress);
-  const res = await fetch(url(`/markets/${enc}/claim`), { method: "POST" });
-  return parseJson(res);
-}
+// QA 2026-07-17: `postMarketClaim` removed. `POST /markets/:address/claim` is
+// admin-key-gated (backend F-17386) — an end-user call can only 401. Winnings
+// are credited automatically by the relayer (RESOLVED → CLAIMED).
 
 // PR-Z (2026-05-20): `getDmmStatus` + `DmmStatusResponse` deleted. The
 // `/dmm/list` backend endpoint was removed in the 2026-05-12 rebate
@@ -451,14 +434,9 @@ export async function getDmmRebates(wallet: string): Promise<DmmRebatesResponse>
   return parseJson<DmmRebatesResponse>(res);
 }
 
-export async function postDmmClaimRebate(body: Record<string, unknown> = {}): Promise<unknown> {
-  const res = await fetch(url("/dmm/claim-rebate"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return parseJson(res);
-}
+// QA 2026-07-17: `postDmmClaimRebate` removed. `POST /dmm/claim-rebate` does
+// not exist in the backend (404) — rebate payout is on-chain-only via
+// UpDownSettlement.claimRebate().
 
 export async function deleteAllMarketOrders(marketComposite: string): Promise<unknown> {
   const enc = encodeURIComponent(marketComposite);

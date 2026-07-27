@@ -1,5 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { formatUsdCompact } from "./format";
+import { formatBookPriceCents, formatUsdCompact } from "./format";
+
+describe("formatBookPriceCents", () => {
+  it("prints whole cents without decimals", () => {
+    expect(formatBookPriceCents(5000)).toBe("50");
+    expect(formatBookPriceCents(100)).toBe("1");
+  });
+
+  it("prints tenth-of-cent prices with one decimal (QA round-5: 4950 must NOT read as 50)", () => {
+    expect(formatBookPriceCents(4950)).toBe("49.5");
+    expect(formatBookPriceCents(5150)).toBe("51.5");
+    expect(formatBookPriceCents(4850)).toBe("48.5");
+  });
+
+  it("prints hundredth-of-cent prices with two decimals", () => {
+    expect(formatBookPriceCents(5408)).toBe("54.08");
+    expect(formatBookPriceCents(5222)).toBe("52.22");
+    expect(formatBookPriceCents(1)).toBe("0.01");
+  });
+
+  it("returns a dash for non-finite input", () => {
+    expect(formatBookPriceCents(NaN)).toBe("—");
+    expect(formatBookPriceCents(Infinity)).toBe("—");
+  });
+});
 
 describe("formatUsdCompact", () => {
   it("returns $0 for null/undefined/zero", () => {

@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { getMarket } from "@/lib/api";
+import { useEffect, useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { getMarket, type MarketDetail, type MarketListItem } from "@/lib/api";
 import { TradeForm } from "@/components/TradeForm";
 import { formatStrikeUsd, marketDurationLabel } from "@/lib/format";
 
@@ -23,11 +23,43 @@ export function MarketTradeDrawer({ marketAddress, onClose }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
+  const queryClient = useQueryClient();
+
+  // Seed the header from the markets-list cache the row was clicked from, so
+  // the drawer shows the real pair + strike immediately instead of flashing
+  // "Loading… / Strike —" while GET /markets/:addr is in flight — the data is
+  // already on screen in the list. `placeholderData` (not `initialData`) keeps
+  // this observer-local: the full detail (order book, timeRemaining) still
+  // fetches in the background and TradeForm's own ["market"] cache is untouched.
+  const listSeed = useMemo<MarketDetail | undefined>(() => {
+    if (!marketAddress) return undefined;
+    const target = marketAddress.toLowerCase();
+    for (const [, list] of queryClient.getQueriesData<MarketListItem[]>({
+      queryKey: ["markets"],
+    })) {
+      const hit = Array.isArray(list)
+        ? list.find((m) => m?.address?.toLowerCase() === target)
+        : undefined;
+      if (hit) {
+        return {
+          ...hit,
+          timeRemainingSeconds: Math.max(0, hit.endTime - Math.floor(Date.now() / 1000)),
+          orderBook: {
+            up: { bestBid: null, bestAsk: null },
+            down: { bestBid: null, bestAsk: null },
+          },
+        };
+      }
+    }
+    return undefined;
+  }, [marketAddress, queryClient]);
+
   const { data: market } = useQuery({
     queryKey: ["market", marketAddress?.toLowerCase() ?? ""],
     queryFn: () => getMarket(marketAddress as string),
     enabled: open,
     refetchInterval: open ? 15_000 : false,
+    placeholderData: listSeed,
   });
 
   if (!open) return null;

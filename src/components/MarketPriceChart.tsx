@@ -4,7 +4,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getMarketPrices } from "@/lib/api";
 import { formatStrikeUsd, parseStrikeUsdNumber } from "@/lib/format";
-import { clipPointsBetween, normalizePriceHistoryData, type PricePoint } from "@/lib/priceChart";
+import {
+  chartGridSec,
+  clipPointsBetween,
+  normalizePriceHistoryData,
+  resampleUniform,
+  settlementHeaderLabel,
+  type PricePoint,
+} from "@/lib/priceChart";
 import { cn } from "@/lib/cn";
 
 /**
@@ -164,9 +171,17 @@ export function MarketPriceChart({
 
   const allPoints = useMemo(() => normalizePriceHistoryData(data), [data]);
 
-  // Raw clipped series inside the market window.
+  // Clipped series inside the market window, quantized onto the same uniform
+  // grid the backend serves. Without the resample the WS tick stream rebuilds
+  // a 4-samples-per-second fringe on top of the gridded fetch — see
+  // `resampleUniform`.
   const rawSeries = useMemo(
-    () => clipPointsBetween(allPoints, marketStartSec, marketEndSec),
+    () =>
+      resampleUniform(
+        clipPointsBetween(allPoints, marketStartSec, marketEndSec),
+        chartGridSec(marketEndSec - marketStartSec),
+        marketStartSec,
+      ),
     [allPoints, marketStartSec, marketEndSec],
   );
 
@@ -177,20 +192,14 @@ export function MarketPriceChart({
   // the strike — matching strike via real data, not by synthesizing a
   // point on top of the strike line.
   //
-  // Resolved markets still pin the last point to settlementPrice at
-  // marketEndSec so the chart visibly closes on where the market landed.
+  // The price path is REAL TICKS ONLY. Resolved markets used to overwrite /
+  // append the last vertex with settlementPrice at marketEndSec, which bent
+  // the line into a visual "hook"/spike toward settlement. Settlement is now
+  // drawn as a discrete endpoint marker (see `geom.settleX/settleY` below),
+  // so the line ends honestly on the last real tick.
   const series = useMemo((): PricePoint[] => {
-    const s: PricePoint[] = [...rawSeries];
-    if (isResolved && settlementNum != null) {
-      const lastT = s[s.length - 1]?.t ?? marketStartSec;
-      if (lastT < marketEndSec) {
-        s.push({ t: marketEndSec, p: settlementNum });
-      } else if (s.length > 0) {
-        s[s.length - 1] = { t: marketEndSec, p: settlementNum };
-      }
-    }
-    return s;
-  }, [rawSeries, settlementNum, isResolved, marketStartSec, marketEndSec]);
+    return [...rawSeries];
+  }, [rawSeries]);
 
   // Sub-second "tickNow" for smooth endpoint glide between WS ticks.
   const [tickNow, setTickNow] = useState(() => Math.floor(Date.now() / 1000));
@@ -349,12 +358,25 @@ export function MarketPriceChart({
     const strikeY = strikeVisible && strikeNum != null ? py(strikeNum) : null;
     const currentY = currentSpot != null ? py(currentSpot) : null;
     const last = series[series.length - 1]!;
-    const above = strikeNum == null ? true : last.p >= strikeNum;
+    // Resolved markets settle up/down by SETTLEMENT vs strike. The line now
+    // ends on the last real tick, so read direction from settlement (not the
+    // tail tick) to keep the header color + arrow honest about the outcome.
+    const settleP = isResolved && settlementNum != null ? settlementNum : null;
+    const above = strikeNum == null ? true : (settleP ?? last.p) >= strikeNum;
 
-    // Endpoint X glides with tickNow for live markets; resolved markets pin
-    // the marker to settlement time.
-    const endX = isResolved ? tx(t1) : tx(Math.max(last.t, Math.min(tickNow, t1)));
+    // Endpoint dot sits on the line's true end (the last real tick). Live
+    // markets glide it toward `tickNow`; resolved markets pin it to that last
+    // tick — settlement is drawn separately as its own marker below.
+    const endX = isResolved ? tx(last.t) : tx(Math.max(last.t, Math.min(tickNow, t1)));
     const endY = py(last.p);
+
+    // Settlement endpoint marker: a discrete dot at (marketEndSec, settlement),
+    // drawn apart from the price path so settlement never bends the line into a
+    // visual "hook". Only when resolved and the value sits inside the frame —
+    // spot-fit can push settlement out of the visible Y range.
+    const settleVisible = settleP != null && settleP >= pMin && settleP <= pMax;
+    const settleX = settleVisible ? tx(t1) : null;
+    const settleY = settleP != null && settleVisible ? py(settleP) : null;
 
     const yLabels = Array.from({ length: Y_TICKS }, (_, i) => {
       const u = i / (Y_TICKS - 1);
@@ -368,8 +390,8 @@ export function MarketPriceChart({
       return { x: PAD_L + u * CHART_W, label: fmtTick(sec, windowSec) };
     });
 
-    return { lineD, areaD, strikeY, currentY, above, endX, endY, yLabels, xLabels };
-  }, [series, marketStartSec, marketEndSec, strikeNum, currentSpot, tickNow, isResolved, windowSec, yRange.min, yRange.max, yScaleMode]);
+    return { lineD, areaD, strikeY, currentY, above, endX, endY, settleX, settleY, yLabels, xLabels };
+  }, [series, marketStartSec, marketEndSec, strikeNum, currentSpot, settlementNum, tickNow, isResolved, windowSec, yRange.min, yRange.max, yScaleMode]);
 
   const directionColor = geom?.above ? "var(--up)" : "var(--down)";
   const directionLabel = strikeNum == null || !geom ? "—" : geom.above ? "UP ▲" : "DOWN ▼";
@@ -398,7 +420,14 @@ export function MarketPriceChart({
             className="pp-price-md"
             style={{ color: isResolved ? directionColor : nowColor }}
           >
-            {currentSpot != null ? fmtPrice2(currentSpot) : "—"}
+            {isResolved
+              ? // Show the on-chain settlement price (identical to the resolved
+                // market card), or "—" while it is still syncing — never the
+                // last spot tick, which disagreed with the card. QA 2026-07-16.
+                settlementHeaderLabel(settlementPriceRaw, strikeDecimals)
+              : currentSpot != null
+                ? fmtPrice2(currentSpot)
+                : "—"}
           </span>
         </div>
         <div className="ml-auto flex items-center gap-3">
@@ -594,6 +623,35 @@ export function MarketPriceChart({
               <circle r="6" fill={directionColor} opacity="0.22" />
               <circle r="3" fill={directionColor} />
             </g>
+
+            {/* Settlement marker — discrete dot at (marketEndSec, settlement),
+                labelled and drawn off the price path so settlement is a point,
+                not a vertex that hooks the line. directionColor matches the
+                header "Settlement" value; a bg-0 ring keeps it crisp against
+                the fill. */}
+            {geom.settleX != null && geom.settleY != null && (
+              <g>
+                <circle
+                  cx={geom.settleX}
+                  cy={geom.settleY}
+                  r="4"
+                  fill={directionColor}
+                  stroke="var(--bg-0)"
+                  strokeWidth="1.5"
+                />
+                <text
+                  x={geom.settleX - 8}
+                  y={geom.settleY + 3}
+                  textAnchor="end"
+                  fontFamily="Geist Mono, ui-monospace, monospace"
+                  fontSize="10"
+                  fill={directionColor}
+                  style={{ fontVariantNumeric: "tabular-nums" }}
+                >
+                  Settlement
+                </text>
+              </g>
+            )}
 
             <line
               x1={PAD_L}

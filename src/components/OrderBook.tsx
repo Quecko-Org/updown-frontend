@@ -18,23 +18,51 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { formatUnits } from "viem";
-import { getOrderbook } from "@/lib/api";
+import { getOrderbook, getOrders } from "@/lib/api";
+import { unifyOrderBook, viewerLevelKeys } from "@/lib/unifiedBook";
+import { COMPLEMENTARY_MATCHING_ENABLED } from "@/config/environment";
 import { cn } from "@/lib/cn";
-import { wsConnectedAtom, wsLastEventAtAtom } from "@/store/atoms";
+import { formatBookPriceCents } from "@/lib/format";
+import {
+  focusedMarketKeyAtom,
+  userSmartAccount,
+  wsConnectedAtom,
+  wsLastEventAtAtom,
+} from "@/store/atoms";
+import { useWsLive } from "@/hooks/useWsLive";
 
 const STALE_MS = 30_000;
 const USDT_DECIMALS = 6;
 
-function depthNumber(depth: string): number {
+/**
+ * Buyable / sellable DOLLAR value at a price level = shares × price.
+ * `depth` is a SHARE count in atomic USDT (6-dp); `priceBps` is 1..9999.
+ * Rendering raw shares as "$" badly overstates thin books — 25 shares at an
+ * 8.5¢ ask is $2.13 of liquidity, not "$25.00" — and made the trade form's
+ * honest "insufficient depth" look like a bug. This is the cash a taker can
+ * actually deploy against the level, matching `walkBookForBudget`.
+ */
+function depthUsd(depth: string, priceBps: number): number {
   try {
-    return Number(formatUnits(BigInt(depth || "0"), USDT_DECIMALS));
+    const shares = BigInt(depth || "0");
+    const notionalAtomic = (shares * BigInt(Math.round(priceBps))) / BigInt(10000);
+    return Number(formatUnits(notionalAtomic, USDT_DECIMALS));
   } catch {
     return 0;
   }
 }
 
 type Side = "up" | "down";
-type Level = { price: number; depth: string; count: number; depthVal: number; kind: 'bid' | 'ask' };
+type Level = {
+  price: number;
+  depth: string;
+  count: number;
+  depthVal: number;
+  kind: 'bid' | 'ask';
+  /** This level contains one of the viewer's own open orders (incl. its
+   *  complementary mirror on the opposite column). */
+  mine: boolean;
+};
 
 export function OrderBookPanel({
   marketId,
@@ -57,12 +85,39 @@ export function OrderBookPanel({
     marketStatus === "CLAIMED" ||
     marketStatus === "TRADING_ENDED";
 
+  // The `orderbook:<key>` WS channel pushes full snapshots into this exact
+  // cache for the focused market, so drop the 20s poll while the socket is
+  // live and this is the focused book; fall back to polling otherwise (WS
+  // down, or a non-focused market). Window-focus + reconnect refetch still
+  // re-seed after any gap.
+  const focusedKey = useAtomValue(focusedMarketKeyAtom);
+  const wsLive = useWsLive();
+  const wsBacked =
+    wsLive && !!focusedKey && marketId.toLowerCase() === focusedKey.toLowerCase();
+
   const { data, isLoading } = useQuery({
     queryKey: ["orderbook", marketId.toLowerCase()],
     queryFn: () => getOrderbook(marketId),
-    refetchInterval: isClosed ? false : 20_000,
+    refetchInterval: isClosed || wsBacked ? false : 20_000,
     refetchOnWindowFocus: !isClosed,
   });
+
+  // The viewer's own open orders on THIS market, so their levels can carry a
+  // "you" badge (QA round-5: a user read their own resting order as a mystery
+  // duplicate at the "same" price). Status filtering is client-side — the
+  // backend's `status` query treats a CSV as one literal value.
+  const viewer = useAtomValue(userSmartAccount);
+  const { data: myOrdersData } = useQuery({
+    queryKey: ["book-my-orders", marketId.toLowerCase(), viewer.toLowerCase()],
+    queryFn: () => getOrders(viewer, { market: marketId.toLowerCase(), limit: 50 }),
+    enabled: !!viewer && !isClosed,
+    refetchInterval: 10_000,
+    refetchOnWindowFocus: true,
+  });
+  const mineKeys = useMemo(
+    () => viewerLevelKeys(myOrdersData?.orders, COMPLEMENTARY_MATCHING_ENABLED),
+    [myOrdersData],
+  );
 
   const staleHint =
     wsConnected && wsLastEventAt != null && now - wsLastEventAt > STALE_MS
@@ -71,14 +126,24 @@ export function OrderBookPanel({
         ? "Live feed disconnected — falling back to snapshots."
         : null;
 
+  // Complementary matching: fold each option's book into a single deep view (a DOWN
+  // bid shows as a synthetic UP ask, etc.) so a cold-start book with only buy-side
+  // demand renders fillable liquidity. Off → the raw {up,down} book, unchanged.
+  const view = useMemo(
+    () => (data ? unifyOrderBook(data, COMPLEMENTARY_MATCHING_ENABLED) : data),
+    [data],
+  );
+
   const { upLevels, downLevels, maxDepth } = useMemo(() => {
-    if (!data) return { upLevels: [] as Level[], downLevels: [] as Level[], maxDepth: 1 };
+    if (!view) return { upLevels: [] as Level[], downLevels: [] as Level[], maxDepth: 1 };
     // Merge bids + asks per outcome into a single price-sorted ladder.
-    // Bids descending then asks ascending so the best bid sits at the
-    // bottom of the bid block (closest to spread) and the best ask at
-    // the top of the ask block. Tag each level with `kind` so the
-    // renderer can color-code bid (green) vs ask (red).
+    // Both blocks render price-DESCENDING, so the spread sits in the
+    // middle: best ask (lowest sell) at the BOTTOM of the ask block,
+    // best bid (highest buy) at the TOP of the bid block, the two facing
+    // each other. Tag each level with `kind` so the renderer can
+    // color-code bid (green) vs ask (red).
     const toLevels = (
+      side: Side,
       bids: { price: number; depth: string; count: number }[],
       asks: { price: number; depth: string; count: number }[],
     ): Level[] => {
@@ -89,9 +154,12 @@ export function OrderBookPanel({
           price: l.price,
           depth: l.depth,
           count: l.count,
-          depthVal: depthNumber(l.depth),
+          depthVal: depthUsd(l.depth, l.price),
           kind: 'bid',
+          mine: mineKeys.has(`${side}|bid|${l.price}`),
         }));
+      // Sort ASCENDING to `slice` the 8 *best* (lowest) asks, then reverse
+      // for display. Sorting descending up front would keep the 8 worst.
       const askLevels = [...asks]
         .sort((a, b) => a.price - b.price)
         .slice(0, 8)
@@ -99,17 +167,20 @@ export function OrderBookPanel({
           price: l.price,
           depth: l.depth,
           count: l.count,
-          depthVal: depthNumber(l.depth),
+          depthVal: depthUsd(l.depth, l.price),
           kind: 'ask',
-        }));
-      // Asks on top (lowest sell), then bids (highest buy) — standard CLOB layout.
+          mine: mineKeys.has(`${side}|ask|${l.price}`),
+        }))
+        .reverse();
+      // Asks on top (best/lowest sell last, nearest the spread), then bids
+      // (best/highest buy first) — standard CLOB layout.
       return [...askLevels, ...bidLevels];
     };
-    const ups = toLevels(data.up.bids, data.up.asks);
-    const downs = toLevels(data.down.bids, data.down.asks);
+    const ups = toLevels("up", view.up.bids, view.up.asks);
+    const downs = toLevels("down", view.down.bids, view.down.asks);
     const md = Math.max(1, ...ups.map((r) => r.depthVal), ...downs.map((r) => r.depthVal));
     return { upLevels: ups, downLevels: downs, maxDepth: md };
-  }, [data]);
+  }, [view, mineKeys]);
 
   const hasOrders =
     data != null &&
@@ -145,6 +216,13 @@ export function OrderBookPanel({
         <BookColumn side="up" levels={upLevels} maxDepth={maxDepth} />
         <BookColumn side="down" levels={downLevels} maxDepth={maxDepth} />
       </div>
+      {/* QA round-5: the ↑ glyph was the only executable-price signal and
+          nothing said what it meant. Spell it out. */}
+      <p className="pp-book__legend pp-micro">
+        ↑ ask — the price a buy executes at now · other rows — resting bids
+        (waiting buy orders) · <span className="pp-book__mine">you</span> — your
+        open order
+      </p>
     </div>
   );
 }
@@ -191,21 +269,32 @@ function BookRow({
   maxDepth: number;
 }) {
   const pct = maxDepth > 0 ? Math.min(100, (level.depthVal / maxDepth) * 100) : 0;
-  // 2026-05-18 fix: `level.depth` is the raw atomic string (USDT 6dp), e.g.
-  // "50000000" for $50. Render the human-readable USDT value, not the
-  // atomic. Use `depthVal` which already runs through `formatUnits`.
+  // `depthVal` is the buyable/sellable DOLLAR value at this level
+  // (shares × price via `depthUsd`), not the raw share count — so a thin
+  // book at a skewed price reads honestly (e.g. $2.13, not "$25.00").
   const depthLabel = level.depthVal.toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+  const rowTitle =
+    (level.kind === 'ask'
+      ? 'Ask — a buy executes at this price right now'
+      : 'Bid — a resting buy order waiting for the market to reach it') +
+    (level.mine ? ' · includes your open order' : '');
   return (
-    <div className={cn("pp-book__col-row", side === "up" ? "pp-book__col-row--up" : "pp-book__col-row--down")}>
+    <div
+      className={cn("pp-book__col-row", side === "up" ? "pp-book__col-row--up" : "pp-book__col-row--down")}
+      title={rowTitle}
+    >
       <div
         className={cn("pp-book__col-bar", side === "up" ? "pp-book__col-bar--up" : "pp-book__col-bar--down")}
         style={{ width: `${pct}%` }}
       />
+      {level.mine ? <span className="pp-book__mine">you</span> : null}
+      {/* Exact bps price (49.5¢, not "50¢") — whole-cent rounding collided
+          distinct levels into apparent duplicates (QA round-5). */}
       <span className="pp-book__col-price-val pp-tabular">
-        {level.kind === 'ask' ? '↑ ' : ''}{(level.price / 100).toFixed(level.price % 100 === 0 ? 0 : 1)}¢
+        {level.kind === 'ask' ? '↑ ' : ''}{formatBookPriceCents(level.price)}¢
       </span>
       <span className="pp-book__col-depth-val pp-tabular">${depthLabel}</span>
     </div>

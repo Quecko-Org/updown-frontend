@@ -24,9 +24,15 @@ describe("computeMarketSlippagePrice", () => {
     expect(computeMarketSlippagePrice({ orderSide: 0, bestPriceBps: 9500 })).toBe(9975);
   });
 
-  it("BUY at bestAsk that would overflow returns null", () => {
-    // bestAsk = 9990 → 9990 * 1.05 = 10489.5 → ceil 10490 → clamp to null
-    expect(computeMarketSlippagePrice({ orderSide: 0, bestPriceBps: 9990 })).toBe(null);
+  it("BUY at bestAsk whose padded cap overflows saturates to 9999 (QA 2026-07-22)", () => {
+    // bestAsk = 9990 → 9990 * 1.05 = 10489.5 → ceil 10490 → saturate to 9999.
+    // Returning null here (the pre-fix behavior) made the submit path throw
+    // "Insufficient liquidity" against a fully-stocked book.
+    expect(computeMarketSlippagePrice({ orderSide: 0, bestPriceBps: 9990 })).toBe(9999);
+    // The exact QA repro: 99.0¢ synthetic ask on a near-resolved market.
+    expect(computeMarketSlippagePrice({ orderSide: 0, bestPriceBps: 9900 })).toBe(9999);
+    // First ask level where the unpadded cap crosses the band edge.
+    expect(computeMarketSlippagePrice({ orderSide: 0, bestPriceBps: 9523 })).toBe(9999);
   });
 
   // ── SELL side ───────────────────────────────────────────────────────
@@ -40,11 +46,12 @@ describe("computeMarketSlippagePrice", () => {
     expect(computeMarketSlippagePrice({ orderSide: 1, bestPriceBps: 5233 })).toBe(4971);
   });
 
-  it("SELL at low bid that would go to 0 returns null", () => {
+  it("SELL at low bid that would floor to 0 saturates to 1", () => {
     // bestBid = 10 → 10 * 0.95 = 9.5 → floor 9, still valid
     expect(computeMarketSlippagePrice({ orderSide: 1, bestPriceBps: 10 })).toBe(9);
-    // bestBid = 1 → 1 * 0.95 = 0.95 → floor 0 → clamp to null
-    expect(computeMarketSlippagePrice({ orderSide: 1, bestPriceBps: 1 })).toBe(null);
+    // bestBid = 1 → 1 * 0.95 = 0.95 → floor 0 → saturate to the 1 bps minimum
+    // (mirror of the BUY overflow: a real bid exists, so the order must sign).
+    expect(computeMarketSlippagePrice({ orderSide: 1, bestPriceBps: 1 })).toBe(1);
   });
 
   // ── Liquidity / out-of-range guards ─────────────────────────────────

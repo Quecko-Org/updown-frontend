@@ -27,17 +27,14 @@ export function parseCompositeMarketKey(raw: string): ParsedCompositeMarketKey |
 }
 
 /**
- * PR-R (2026-05-20): the `/market/<address>` detail route is deleted.
- * The home page drawer is the single trade UI surface; this helper now
- * returns "/" so existing callers (Portfolio rows, MarketCard, etc.)
- * still produce valid navigation. Users land on home and select the
- * market from the strip / list.
- *
- * Future: a home-page deep-link query param (e.g., `/?market=<addr>`)
- * that pre-opens the drawer for the requested market would restore the
- * "navigate directly to this market" UX. Deferred — out of PR-R scope.
+ * PR-R (2026-05-20) deleted the `/market/<address>` detail route; the home
+ * page drawer is the single trade UI surface. This helper produces the
+ * home-page deep link (`/?market=<addr>`) that the markets page reads to
+ * pre-open the trade drawer for the requested market (switching asset +
+ * timeframe to match). Existing callers (Portfolio rows, MarketCard,
+ * MarketClosedPanel's "Go to live market" CTA) pass a market address and
+ * get back a navigable href instead of landing on the current live market.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function marketPathFromAddress(_address: string): string {
-  return "/";
+export function marketPathFromAddress(address: string): string {
+  return `/?market=${address}`;
 }

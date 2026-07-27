@@ -25,6 +25,9 @@ import { DEFAULT_RESTRICTED_COUNTRIES } from "@/lib/geo";
 function loadRestrictedCountries(): readonly string[] {
   const raw = process.env.NEXT_PUBLIC_RESTRICTED_COUNTRIES?.trim();
   if (raw && raw.length > 0) {
+    // "NONE" (case-insensitive) disables the gate — empty list, allow-all.
+    // Mirrors lib/geo.ts so middleware + client belt agree.
+    if (raw.toUpperCase() === "NONE") return [];
     return raw
       .split(",")
       .map((s) => s.trim().toUpperCase())
@@ -42,6 +45,11 @@ function blockedHtml(country: string): string {
 }
 
 export function middleware(req: NextRequest): NextResponse {
+  // Gate disabled (empty restricted list): allow every request through with no
+  // country lookup and no `pp-country` cookie — keeps demo / internal deploys
+  // free of any geo behavior.
+  if (RESTRICTED.length === 0) return NextResponse.next();
+
   const headerCountry =
     req.headers.get("cloudfront-viewer-country") ??
     req.headers.get("x-vercel-ip-country") ??

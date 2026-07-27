@@ -5,7 +5,12 @@ import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { Modal } from "./Modal";
-import { activeChain, tokenSymbolForActiveChain } from "@/config/environment";
+import {
+  activeChain,
+  tokenSymbolForActiveChain,
+  FAUCET_ENABLED,
+  FAUCET_LABEL_SUFFIX,
+} from "@/config/environment";
 import { postDevmintUsdt } from "@/lib/api";
 import { formatUserFacingError } from "@/lib/errors";
 
@@ -21,8 +26,9 @@ type Props = {
  * button below the QR mints $100 USDTM to their ThinWallet via the
  * relayer (`POST /test/devmint`). Rate-limited at 1 per address per 5min.
  *
- * Production safety (Layer 1): button is gated to chainId 421614 (Sepolia)
- * — `isTestnet === false` returns null, so mainnet users never see it.
+ * Production safety (Layer 1): button is gated to `FAUCET_ENABLED` — true on
+ * Sepolia, or when `NEXT_PUBLIC_ENABLE_FAUCET=1` (the mock demo stack). A real
+ * production build leaves the flag unset, so mainnet-USDT users never see it.
  * Layer 2 (backend route 404 on NODE_ENV=production) and Layer 3
  * (Playwright assertion in phase-4d ladder) cover the residual surface.
  */
@@ -33,7 +39,6 @@ export function DepositModal({ open, onClose, depositAddress }: Props) {
   const canCopy = address.length > 0;
   const tokenSymbol = tokenSymbolForActiveChain();
   const chainName = activeChain.name;
-  const isTestnet = activeChain.id === 421614;
   const [minting, setMinting] = useState(false);
   const queryClient = useQueryClient();
 
@@ -110,7 +115,7 @@ export function DepositModal({ open, onClose, depositAddress }: Props) {
         Copy address
       </button>
 
-      {isTestnet && (
+      {FAUCET_ENABLED && (
         <button
           type="button"
           className="pp-btn pp-btn--secondary pp-btn--md"
@@ -119,7 +124,7 @@ export function DepositModal({ open, onClose, depositAddress }: Props) {
           disabled={!canCopy || minting}
           data-testid="deposit-get-test-usdtm"
         >
-          {minting ? "Minting…" : `Get 100 ${tokenSymbol} (testnet)`}
+          {minting ? "Minting…" : `Get 100 ${tokenSymbol} (${FAUCET_LABEL_SUFFIX})`}
         </button>
       )}
     </Modal>

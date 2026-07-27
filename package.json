@@ -14,13 +14,18 @@
     "test:e2e:phase-4d": "playwright test --project=phase-4d"
   },
   "dependencies": {
+    "@aa-sdk/core": "^4.88.4",
+    "@account-kit/infra": "^4.88.4",
+    "@account-kit/smart-contracts": "^4.88.4",
+    "@account-kit/wallet-client": "^4.88.4",
+    "@pulsepairs/sdk": "file:vendor/pulsepairs-sdk-0.5.0.tgz",
     "@tanstack/react-query": "^5.96.2",
     "@wagmi/connectors": "^8.0.1",
     "clsx": "^2.1.1",
     "idb": "^8.0.3",
     "jotai": "^2.19.1",
     "lucide-react": "^1.8.0",
-    "next": "15.5.15",
+    "next": "15.5.20",
     "posthog-js": "^1.372.5",
     "qrcode.react": "^4.2.0",
     "react": "19.1.0",
@@ -43,9 +48,12 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "15.5.15",
+    "eslint-config-next": "15.5.20",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.7"
+  },
+  "overrides": {
+    "vite": "^7.3.6"
   }
 }

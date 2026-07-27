@@ -1,6 +1,6 @@
 import { Clock } from "lucide-react";
 import type { MarketListItem } from "@/lib/api";
-import { formatStrikeUsd } from "@/lib/format";
+import { formatStrikeUsd, fmtUsd } from "@/lib/format";
 
 export type LiveMarketRowProps = {
   market: MarketListItem;
@@ -47,12 +47,6 @@ function formatMmSs(totalSeconds: number): string {
 function formatStrike(strikePrice: string | undefined, decimals: number | undefined): string {
   const formatted = formatStrikeUsd(strikePrice, decimals);
   return formatted === "Pending" ? "Strike —" : `Strike ${formatted}`;
-}
-
-function formatPool(volume: string): string {
-  const n = Number(volume);
-  if (!Number.isFinite(n)) return "$—";
-  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function LiveMarketRow({
@@ -127,7 +121,10 @@ export function LiveMarketRow({
                 the per-side cents value derived from the implied prob —
                 Polymarket-parity "UP 51¢" / "49¢ DOWN" style — when the
                 book has signal. Pre-trade markets fall back to dashes. */}
-            <span className="pp-market-row__count-chip pp-market-row__count-chip--up">
+            <span
+              className="pp-market-row__count-chip pp-market-row__count-chip--up"
+              title="Midpoint of the UP order book (implied probability) — a buy executes at the book's ↑ ask price"
+            >
               <span>UP</span>
               <span>{upPct == null ? '—' : `${upPct}¢`}</span>
             </span>
@@ -156,7 +153,10 @@ export function LiveMarketRow({
               )}
             </div>
 
-            <span className="pp-market-row__count-chip pp-market-row__count-chip--down">
+            <span
+              className="pp-market-row__count-chip pp-market-row__count-chip--down"
+              title="Midpoint of the DOWN order book (implied probability) — a buy executes at the book's ↑ ask price"
+            >
               <span>{downPct == null ? '—' : `${downPct}¢`}</span>
               <span>DOWN</span>
             </span>
@@ -165,7 +165,7 @@ export function LiveMarketRow({
       </div>
 
       <div>
-        <div className="pp-market-row__pool">{formatPool(market.volume)}</div>
+        <div className="pp-market-row__pool">{fmtUsd(market.volume)}</div>
         {/* 2026-05-18: dropped the "{N} traders" line — the underlying
             `traders` was always 0 because the home page hardcoded
             upTraderCount + downTraderCount. We have no trader-count

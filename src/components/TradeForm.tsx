@@ -6,10 +6,17 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
-import { useAccount, useSignTypedData, useWalletClient } from "wagmi";
-import { erc20Abi, encodeFunctionData, maxUint256 } from "viem";
+import { useAccount } from "wagmi";
+import { erc20Abi } from "viem";
 import { createPublicClient, http } from "viem";
-import { ALCHEMY_RPC_URL, activeChain, tokenSymbolForActiveChain } from "@/config/environment";
+import {
+  ALCHEMY_RPC_URL,
+  activeChain,
+  tokenSymbolForActiveChain,
+  FAUCET_ENABLED,
+  FAUCET_LABEL_SUFFIX,
+  SESSION_USDT_ALLOWANCE_BASE_UNITS,
+} from "@/config/environment";
 import { postDevmintUsdt } from "@/lib/api";
 import { toast } from "sonner";
 import {
@@ -19,36 +26,47 @@ import {
   getOrderbook,
   getPositions,
   postOrder,
-  postThinWalletExecuteWithSig,
   ORDER_TYPE_U8,
   type OrderApiType,
   type OrderBookResponse,
 } from "@/lib/api";
 import { buildOrderTypedData } from "@/lib/eip712";
-import { signOrderViaThinWallet } from "@/lib/signOrderViaThinWallet";
-import { deriveEffectiveStatus, validateLimitPriceCents } from "@/lib/derivations";
-import { parseUsdtToAtomic } from "@/lib/format";
+import { assertPinnedApproval } from "@/lib/pinnedAddresses";
+import {
+  deriveEffectiveStatus,
+  formatPriceCents,
+  stepPriceBps,
+  validateLimitPriceCents,
+} from "@/lib/derivations";
+import { formatBookPriceCents, parseUsdtToAtomic } from "@/lib/format";
 import {
   bestEffectivePriceCents,
   estimateTotalFee,
+  executableAskBpsFromOrderBook,
   formatShareCentsLabel,
   sharePriceBpsFromOrderBookMid,
 } from "@/lib/feeEstimate";
 import {
+  buyerLockAtomic as computeBuyerLockAtomic,
   slippageDecision,
   usdToShares,
   walkBookForAvgFillPrice,
+  walkBookForBudget,
 } from "@/lib/orderBookFill";
+import { nonCrossingExecutableBps, unifyOrderBook } from "@/lib/unifiedBook";
+import { COMPLEMENTARY_MATCHING_ENABLED } from "@/config/environment";
 import {
   MAX_STAKE_ATOMIC,
   MAX_STAKE_USDT,
   MIN_STAKE_USDT,
+  isStakeInRange,
   maxStakeForBalance,
 } from "@/lib/stakeBounds";
 import { computeMarketSlippagePrice } from "@/lib/orderConstants";
 import { parseCompositeMarketKey } from "@/lib/marketKey";
 import { cn } from "@/lib/cn";
-import { formatUserFacingError, isUserRejection } from "@/lib/errors";
+import { formatUserFacingError } from "@/lib/errors";
+import { sessionOrdersEnabled } from "@/lib/accountKit";
 import { track } from "@/lib/analytics";
 import { isTerminalMarketStatus } from "@/lib/derivations";
 import { EmptyState } from "@/components/EmptyState";
@@ -56,7 +74,7 @@ import { WalletConnectorList } from "@/components/WalletConnectorList";
 import { MarketClosedPanel } from "@/components/MarketClosedPanel";
 import { TermsAcceptanceModal } from "@/components/TermsAcceptanceModal";
 import { hasAcceptedCurrentVersion } from "@/lib/termsAcceptance";
-import { apiConfigAtom, geoStateAtom, userSmartAccount } from "@/store/atoms";
+import { geoStateAtom, userSmartAccount, userSmartAccountClient } from "@/store/atoms";
 
 // PR-18: USD-stake-based UI presets. Polymarket-parity. The +$X buttons
 // add to whatever value is currently in the stake input; "Max" fills with
@@ -73,11 +91,34 @@ const STAKE_QUICK_ADDS: StakeQuickAdd[] = [
   { kind: "max" },
 ];
 
-const EXPIRY_MODES: { id: "never" | "1h" | "close"; label: string; hint: string }[] = [
+export type ExpiryMode = "1h" | "close";
+
+/**
+ * There is no "Never" mode. UpDownSettlement reverts `OrderExpired` on
+ * `block.timestamp > order.expiry`, so an expiry of 0 is not "never expires",
+ * it is never SETTLES: the order matches, gets a Trade row, and then fails
+ * settlement forever. Every mode here must therefore produce a future
+ * timestamp, bounded by the market's own close — an order cannot usefully
+ * outlive the market it trades.
+ */
+export const EXPIRY_MODES: { id: ExpiryMode; label: string; hint: string }[] = [
   { id: "close", label: "Until close", hint: "expires when market resolves" },
   { id: "1h", label: "1 hour", hint: "expires in 60 min" },
-  { id: "never", label: "Never", hint: "never expires" },
 ];
+
+/**
+ * The unix-second expiry a mode signs into the EIP-712 order payload. Exported
+ * for the sibling test: the expiry is part of the signed digest, so this value
+ * is what the FE both signs AND posts — it is never rewritten server-side.
+ *
+ * "1h" is deliberately NOT clamped to `marketEndTime`. An expiry beyond close
+ * costs nothing (the engine sweeps the order at MARKET_ENDED regardless) and a
+ * LATER expiry is strictly safer on-chain: it is the settlement tx's inclusion
+ * time, not the match time, that the contract compares against.
+ */
+export function expiryForMode(mode: ExpiryMode, marketEndTime: number, nowMs = Date.now()): number {
+  return mode === "1h" ? Math.floor(nowMs / 1000) + 3600 : marketEndTime;
+}
 
 // Ordered so the compact pill's short-click (Market ↔ Limit) matches index 0 / 1;
 // long-press reveals the full list including POST_ONLY + IOC.
@@ -89,6 +130,39 @@ const ORDER_TYPES: { id: OrderApiType; label: string; hint?: string }[] = [
 ];
 
 const LONG_PRESS_MS = 400;
+
+// Issue #2: how long the in-memory book must read empty CONTINUOUSLY before the
+// CTA treats it as real "no liquidity" and disables. Longer than the 2s REST
+// refetch on `fullOrderbook` so a poll always gets a chance to rehydrate a
+// genuinely-populated book before we confirm — absorbs the transient WS blanks
+// (DMM cancel-then-replace, single-option frame before the counterpart hydrates).
+const NO_LIQUIDITY_CONFIRM_MS = 2500;
+
+// How long a resting-LIMIT non-crossing state must hold before the "your order
+// will rest" hint toggles. Same anti-flicker idea as NO_LIQUIDITY_CONFIRM_MS
+// (Issue #2) but far shorter: this hint is informational and non-blocking, and
+// the WS handler's last-known-good guard already drops empty-clobber snapshots,
+// so it only needs to ride out sub-second book wobble (a DMM cancel-replace),
+// not a full REST-poll gap — and typed-price feedback should still feel prompt.
+const NON_CROSSING_HINT_DEBOUNCE_MS = 600;
+
+/**
+ * Settlement allowance policy.
+ *
+ * `APPROVAL_AMOUNT` is what we grant; `APPROVAL_TOP_UP_THRESHOLD` is when we
+ * re-grant. It used to be an unlimited (MAX_UINT256) approval, which made the
+ * settlement address — server-supplied, see `ensureSettlementAllowance` — able
+ * to `transferFrom` the SCA's entire USDT balance forever. A finite allowance
+ * caps that at `APPROVAL_AMOUNT`, which is far above any demo-sized position and
+ * tunable per box via `NEXT_PUBLIC_SESSION_USDT_ALLOWANCE` (default 10,000 USDT).
+ *
+ * The threshold MUST stay well below the amount: they are the two ends of one
+ * loop, and setting them equal would re-approve (a UserOp, and real gas on the
+ * self-paid demo box) after every single fill. At 10% we top up once per ~9,000
+ * USDT of fills instead.
+ */
+const APPROVAL_AMOUNT = SESSION_USDT_ALLOWANCE_BASE_UNITS;
+const APPROVAL_TOP_UP_THRESHOLD = APPROVAL_AMOUNT / BigInt(10);
 
 function InfoTip({ text }: { text: string }) {
   return (
@@ -105,13 +179,12 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const pathname = usePathname();
   const { address, isConnected } = useAccount();
   const smartAccount = useAtomValue(userSmartAccount);
-  const apiConfig = useAtomValue(apiConfigAtom);
+  const ak = useAtomValue(userSmartAccountClient);
   const geo = useAtomValue(geoStateAtom);
   const geoBlocked = geo.status === "restricted";
-  // F3 (2026-05-16): testnet self-funding affordance. Visible only on
-  // Sepolia (`activeChain.id === 421614`); chain gate at render keeps the
-  // button absent on mainnet builds.
-  const isTestnet = activeChain.id === 421614;
+  // F3 (2026-05-16): self-funding affordance. Visible on Sepolia, or on the
+  // mock demo stack when NEXT_PUBLIC_ENABLE_FAUCET=1 (see FAUCET_ENABLED);
+  // absent on real production builds.
   const tokenSymbolForChain = tokenSymbolForActiveChain();
   const [mintingTestUsdt, setMintingTestUsdt] = useState(false);
   const [side, setSide] = useState<1 | 2>(1);
@@ -127,9 +200,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   // doesn't outlive the market window (matches the matching engine's
   // MARKET_ENDED behavior — choosing it explicitly avoids the "where did my
   // order go?" surprise from previous Until-MARKET_ENDED implicit cancels).
-  const [expiryMode, setExpiryMode] = useState<"never" | "1h" | "close">(
-    "close",
-  );
+  const [expiryMode, setExpiryMode] = useState<ExpiryMode>("close");
   const [otypeMenuOpen, setOtypeMenuOpen] = useState(false);
   // 2026-05-16 BUG A redesign: full payoff breakdown collapses behind a
   // Details ▾ accordion so the primary panel surfaces only the two
@@ -335,105 +406,96 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     }
   }, [balanceData]);
 
-  const { signTypedDataAsync } = useSignTypedData();
-  const { data: wc } = useWalletClient();
+  // SELL side is bounded by the SHARES you hold in this market+outcome, not
+  // your USDT balance. Fetch the trading identity's positions (same source
+  // the submit-time precheck at the sign step uses) so the "Available" label,
+  // the "Max" chip, and the pre-sign gate all reflect real holdings instead
+  // of falling back to USDT. Same query cadence as the balance query above;
+  // React Query dedupes with the Portfolio page's identical key.
+  const { data: positionsData } = useQuery({
+    queryKey: ["positions", tradingIdentity?.toLowerCase() ?? ""],
+    queryFn: () => getPositions(tradingIdentity!),
+    enabled: !!tradingIdentity && isConnected,
+    refetchInterval: 15_000,
+    staleTime: 5_000,
+  });
+  // Owned shares (atomic, 6-dec; 1 share = $1 face) for the CURRENT market +
+  // selected direction. `option === side` (1=UP, 2=DOWN) matches the wire the
+  // same way the sign-step precheck does.
+  const ownedSharesAtomic = useMemo(() => {
+    if (!positionsData || !parsedKey) return BigInt(0);
+    const match = positionsData.find(
+      (p) =>
+        p.market.toLowerCase() === parsedKey.composite.toLowerCase() &&
+        p.option === side,
+    );
+    if (!match) return BigInt(0);
+    try {
+      return BigInt(match.shares);
+    } catch {
+      return BigInt(0);
+    }
+  }, [positionsData, parsedKey, side]);
 
   /**
-   * One-time-per-wallet `USDT.approve(settlement, MaxUint256)` from the user's
-   * ThinWallet, executed by the relayer via `/thin-wallet/execute-with-sig`.
+   * One-time-per-wallet onboarding UserOp: DEPLOY the user's SCA (if still
+   * counterfactual) and `USDT.approve(settlement, APPROVAL_AMOUNT)` in a single
+   * UserOp via Account Kit. Satisfies both hard rules from the change
+   * design: deploy-before-fill (the on-chain ERC-1271 check needs code at
+   * `maker`) and the allowance `enterPosition`'s `transferFrom` needs.
    *
-   * Phase 4 flow:
-   *   1. Read current allowance against the TW (not the EOA).
-   *   2. If below threshold, build an `executeWithSig` envelope authorizing
-   *      `TW.executeWithSig(USDTM, approve(Settlement, MAX), nonce, deadline, sig)`.
-   *   3. EOA signs the envelope (free, gasless typed-data popup against the
-   *      TW's EIP-712 domain).
-   *   4. POST `/thin-wallet/execute-with-sig`. Backend's relayer broadcasts.
-   *
-   * Cost to user: zero gas. Cost to relayer: ~80k gas on Arbitrum.
-   * Once approved, every future trade is gasless from the user's POV — only
-   * a typed-data signature (the order's WalletAuth wrap).
+   * Gas: per the configured mode — the demo runs SELF-PAID (the SCA holds a
+   * dust of ETH seeded by the dev faucet); production uses an Alchemy Gas
+   * Manager policy (sponsored, or user-paid-in-USDC for ERC-20-type policies).
    */
   const ensureSettlementAllowance = useCallback(async () => {
-    if (!address || !cfg || !wc) return;
-    if (!smartAccount) return; // wait for TW provisioning to complete
-    const settlement = cfg.eip712.domain.verifyingContract as `0x${string}`;
+    if (!cfg || !ak) return;
+    if (!smartAccount) return; // wait for Account Kit connect to complete
+    // Approve THIS market's settlement, not the top-level (first-pair) one:
+    // on a multi-settlement deployment each market has its own settlement and
+    // `enterPosition`'s transferFrom pulls from that contract. `parsedKey`
+    // carries the selected market's settlement (lowercased); the demo shares a
+    // single settlement so this equals `cfg.eip712.domain.verifyingContract`.
+    const settlement = (parsedKey?.settlement ??
+      cfg.eip712.domain.verifyingContract) as `0x${string}`;
     const usdt = cfg.usdtAddress as `0x${string}`;
-    const twAddress = smartAccount as `0x${string}`;
+    // Both of the above are server-supplied (`parsedKey.settlement` is parsed
+    // out of the composite key `GET /markets` returns), and an allowance is
+    // irrevocable value: pin before granting, never after.
+    assertPinnedApproval({ settlement, usdt });
+    const sca = smartAccount as `0x${string}`;
     const pub = createPublicClient({ chain: activeChain, transport: http(ALCHEMY_RPC_URL) });
-    const THRESHOLD = BigInt(10_000) * BigInt(10) ** BigInt(6);
     const current = (await pub.readContract({
       address: usdt,
       abi: erc20Abi,
       functionName: "allowance",
-      args: [twAddress, settlement],
+      args: [sca, settlement],
     })) as bigint;
-    if (current >= THRESHOLD) return;
+    if (current >= APPROVAL_TOP_UP_THRESHOLD) return;
     track("approve_attempted");
-    toast.info("Authorizing trading… confirm the signature in your wallet (no gas).");
 
-    // Build executeWithSig envelope for USDTM.approve(Settlement, MAX).
-    const approveCalldata = encodeFunctionData({
-      abi: erc20Abi,
-      functionName: "approve",
-      args: [settlement, maxUint256],
-    });
-    // Random 256-bit nonce. crypto.getRandomValues is cryptographically
-    // fresh — collision probability is 2^-256 per call. Stateless on
-    // backend per locked spec; the contract's `usedNonces` mapping is the
-    // single source of truth.
-    const rand = crypto.getRandomValues(new Uint8Array(32));
-    let nonceHex = "0x";
-    for (const b of rand) nonceHex += b.toString(16).padStart(2, "0");
-    const nonceStr = BigInt(nonceHex).toString();
-    const deadline = Math.floor(Date.now() / 1000) + 60 * 60; // +1 hour
-
-    // EOA signs the envelope against the TW's domain.
-    const twDomain = {
-      name: "PulsePairsThinWallet",
-      version: "1",
-      chainId: cfg.chainId,
-      verifyingContract: twAddress,
-    } as const;
-    const execTypes = {
-      ExecuteWithSig: [
-        { name: "target", type: "address" },
-        { name: "data", type: "bytes" },
-        { name: "nonce", type: "uint256" },
-        { name: "deadline", type: "uint256" },
-      ],
-    } as const;
-    let signature: `0x${string}`;
-    try {
-      signature = await signTypedDataAsync({
-        domain: twDomain,
-        types: execTypes,
-        primaryType: "ExecuteWithSig",
-        message: {
-          target: usdt,
-          data: approveCalldata,
-          nonce: BigInt(nonceStr),
-          deadline: BigInt(deadline),
-        },
-      });
-    } catch (e) {
-      if (isUserRejection(e)) throw e;
-      throw e;
+    // Self-paid mode precondition: the SCA needs ETH for its one UserOp. With a
+    // gas policy set the UserOp is sponsored (and, in sponsored-transfer mode,
+    // billed back in USDTm) — the SCA never needs ETH, so this must NOT fire.
+    // The dev faucet (`POST /test/devmint`) seeds ETH alongside the USDTM mint;
+    // fail with actionable copy instead of a bundler error.
+    if (!process.env.NEXT_PUBLIC_ALCHEMY_GAS_POLICY_ID?.trim()) {
+      const ethBal = await pub.getBalance({ address: sca });
+      if (ethBal === BigInt(0)) {
+        throw new Error(
+          // "one-time approval", not "on-chain setup": this fires when the
+          // ALLOWANCE is missing, which has nothing to do with deployment. The
+          // old wording sent people hunting for an undeployed account (an
+          // already-deployed, already-funded SCA hits this too).
+          `Your trading account ${sca} needs a one-time approval before its first trade, but has no ETH for gas. Use the "Get 100 USDT (demo)" faucet (it seeds gas too), or send ~0.001 ETH to that address — it's your trading account, not your MetaMask address.`,
+        );
+      }
     }
 
-    // Relayer broadcasts.
-    const exec = await postThinWalletExecuteWithSig({
-      eoa: address as `0x${string}`,
-      signedAuth: {
-        target: usdt,
-        data: approveCalldata,
-        nonce: nonceStr,
-        deadline,
-        signature,
-      },
-    });
-    track("approve_succeeded", { txHash: exec.txHash });
-  }, [address, cfg, wc, smartAccount, signTypedDataAsync]);
+    toast.info("Setting up your trading account… one-time approval, confirm in your wallet.");
+    const txHash = await ak.onboard({ usdt, settlement, amount: APPROVAL_AMOUNT });
+    track("approve_succeeded", { txHash });
+  }, [cfg, ak, smartAccount, parsedKey]);
 
   const totalBps = (cfg?.platformFeeBps ?? 70) + (cfg?.makerFeeBps ?? 80);
 
@@ -457,10 +519,14 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   }, [orderType, side, marketKey]);
 
   const userPriceParsed = validateLimitPriceCents(userPriceCentsInput);
-  const userOverrideActive = userPriceCentsInput !== "" && userPriceParsed.value != null;
-  const limitPrice = userOverrideActive ? (userPriceParsed.value as number) * 100 : autoLimitPrice;
-  const autoCentsDisplay = Math.round(autoLimitPrice / 100);
-  const priceInputInvalid = userPriceCentsInput !== "" && userPriceParsed.value == null;
+  const userOverrideActive = userPriceCentsInput !== "" && userPriceParsed.bps != null;
+  const limitPrice = userOverrideActive ? (userPriceParsed.bps as number) : autoLimitPrice;
+  // Show the auto price at the book's real resolution. Rounding this to whole
+  // cents made the field read "60" while the order actually signed at 5972 bps
+  // (59.72¢), so stepping down from it jumped to 59.00¢ and silently stopped
+  // crossing the ask.
+  const autoCentsDisplay = formatPriceCents(autoLimitPrice);
+  const priceInputInvalid = userPriceCentsInput !== "" && userPriceParsed.bps == null;
 
   // Phase2-C: per-side mid prices for the BIG selector buttons. Both sides
   // are computed regardless of which is selected so the user sees the live
@@ -474,27 +540,72 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     [market],
   );
 
-  // PR-18 P0-19: stake-aware VWAP for MARKET orders. Walks the relevant
-  // side of the FULL orderbook (asks for BUY, bids for SELL) accumulating
-  // depth until the user's stake is satisfied — returns the volume-
-  // weighted-average fill price they'll actually pay/receive. NEVER falls
-  // back to midpoint or top-of-book when stake walks multiple levels —
-  // that's the bug we're closing.
+  // QA 2026-07-23: the selector buttons showed the raw side-book "mid", which
+  // on a one-sided book (bids-only DMM, all asks synthetic) degenerates to the
+  // bare native bid — BUY DOWN read 9¢ while a market buy started filling at
+  // the 10.87¢ synthetic ask. Show the executable ask instead (a Polymarket
+  // outcome button is the ask you pay), so the button agrees with the ↑ row in
+  // the order-book panel and with the market card. Mid stays as the fallback
+  // for a book with no asks at all, and keeps feeding the probability bar.
+  const upBtnCents = useMemo(() => {
+    const ask = market
+      ? executableAskBpsFromOrderBook(1, market.orderBook, COMPLEMENTARY_MATCHING_ENABLED)
+      : null;
+    return ask != null ? ask / 100 : upMidCents;
+  }, [market, upMidCents]);
+  const downBtnCents = useMemo(() => {
+    const ask = market
+      ? executableAskBpsFromOrderBook(2, market.orderBook, COMPLEMENTARY_MATCHING_ENABLED)
+      : null;
+    return ask != null ? ask / 100 : downMidCents;
+  }, [market, downMidCents]);
+
+  // PR-18 P1-19: the user's raw input in atomic-USDT (6-dec). Its meaning
+  // depends on side (see `orderAmountAtomic` below):
+  //   - BUY  → a $ BUDGET to spend.
+  //   - SELL → a SHARE count to sell (1 share = $1 face; Polymarket parity).
   const stakeAtomicForVwap = useMemo(() => {
     const usd = parseFloat(parseFloat(stakeUsdInput).toFixed(2));
     if (!Number.isFinite(usd) || usd <= 0) return BigInt(0);
     return parseUsdtToAtomic(usd.toFixed(2));
   }, [stakeUsdInput]);
 
+  // PR-18 P0-19: order-book walk for MARKET orders. NEVER falls back to
+  // midpoint/top-of-book when the order walks multiple levels.
+  //   - BUY:  spend the $ budget across the ASKS → shares bought + VWAP paid.
+  //           (`walkBookForBudget`, the fix for the "$10 buys $5" bug — the
+  //           wire `amount` is a SHARE count, so a $ budget MUST be converted
+  //           to shares against the live book before signing.)
+  //   - SELL: sell the share count across the BIDS → VWAP received
+  //           (`walkBookForAvgFillPrice`, shares walked against share-depth).
   const vwapResult = useMemo(() => {
     if (orderType !== "MARKET") return null;
     if (!fullOrderbook) return null;
     if (stakeAtomicForVwap <= BigInt(0)) return null;
-    const sideBook = side === 1 ? fullOrderbook.up : fullOrderbook.down;
-    // BUY (orderSide=0) hits asks (ascending). SELL (orderSide=1) hits
-    // bids (descending). Backend already sorts in those orders.
-    const levels = orderSide === 0 ? sideBook.asks : sideBook.bids;
-    return walkBookForAvgFillPrice(levels, stakeAtomicForVwap);
+    // Complementary matching: a BUY UP can also fill against DOWN buy-side demand
+    // (mint) and a SELL UP against DOWN sell-side supply (merge). The unified view
+    // folds that synthetic liquidity into this side's asks/bids so the VWAP + depth
+    // gates reflect what the engine can actually cross. Off → the raw side book.
+    const unified = unifyOrderBook(fullOrderbook, COMPLEMENTARY_MATCHING_ENABLED);
+    const sideBook = side === 1 ? unified.up : unified.down;
+    if (orderSide === 0 /* BUY: walk asks by budget */) {
+      const w = walkBookForBudget(sideBook.asks, stakeAtomicForVwap);
+      return {
+        avgPriceBps: w.avgPriceBps,
+        requiresMoreDepth: w.requiresMoreDepth,
+        buyerSharesAtomic: w.sharesAtomic,
+        // Max the budget can actually spend, for the insufficient-depth copy.
+        fillableUsd: Number(w.spentAtomic) / 1_000_000,
+      };
+    }
+    // SELL: walk bids by share quantity.
+    const w = walkBookForAvgFillPrice(sideBook.bids, stakeAtomicForVwap);
+    return {
+      avgPriceBps: w.avgPriceBps,
+      requiresMoreDepth: w.requiresMoreDepth,
+      buyerSharesAtomic: BigInt(0),
+      fillableUsd: Number(w.fillableAtomic) / 1_000_000,
+    };
   }, [orderType, fullOrderbook, stakeAtomicForVwap, side, orderSide]);
 
   // Effective per-share price (cents) used for Total / To-win / fee calc
@@ -515,8 +626,25 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     return bestEffectivePriceCents(side, orderSide, market.orderBook);
   }, [orderType, limitPrice, vwapResult, market, side, orderSide]);
 
+  // Phase2-C: the share price feeding fee math is the EFFECTIVE price the
+  // trade fills at, not the order-book mid.
+  const sharePriceBps = useMemo(
+    () => Math.max(1, Math.min(9999, Math.round(effectivePriceCents * 100))),
+    [effectivePriceCents],
+  );
+
   // Depth-availability flags for the disabled-button gate.
-  const noLiquidity =
+  //
+  // `noLiquidityTransient` is the INSTANTANEOUS read of the in-memory (unified)
+  // book: true the moment a MARKET order finds no crossable asks/bids. But that
+  // book blanks transiently — the DMM cancel-then-replaces a side, and a
+  // single-option WS frame can land before the counterpart rehydrates, which
+  // collapses the synthetic asks (folded from the opposite option's bids) to
+  // empty for a tick. So this instantaneous value must NOT drive the disable /
+  // click-gate on its own (Issue #2): it flickers, and a real order that a
+  // fresh fetch would fill gets wrongly blocked. See `noLiquidity` (debounced)
+  // below for the value the CTA actually gates on.
+  const noLiquidityTransient =
     orderType === "MARKET" &&
     stakeAtomicForVwap > BigInt(0) &&
     vwapResult != null &&
@@ -529,12 +657,89 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     vwapResult.avgPriceBps != null;
   const insufficientDepthMaxUsd = useMemo(() => {
     if (!insufficientDepth || !vwapResult) return 0;
-    return Number(vwapResult.fillableAtomic) / 1_000_000;
+    return vwapResult.fillableUsd;
   }, [insufficientDepth, vwapResult]);
 
-  // PR-18 P1-19: stake comes directly from the user's USD input. Parse
-  // tolerantly — empty string / non-numeric / negative all collapse to 0
-  // (which trips the disabled-button gate's `stakeUsd <= 0` check).
+  // Issue #2: debounce the "no liquidity" DISABLE decision. `noLiquidityTransient`
+  // flickers true whenever the in-memory book momentarily blanks (WS cancel-then-
+  // replace, or a single-option frame before the counterpart hydrates). Only treat
+  // it as REAL once it has held continuously for NO_LIQUIDITY_CONFIRM_MS — longer
+  // than the 2s REST refetch on `fullOrderbook`, so a poll always gets a chance to
+  // rehydrate a genuinely-populated book before we confirm. A truly empty book
+  // stays empty across polls → confirms → CTA disables; the authoritative check is
+  // still the submit-time fresh fetch + walkBook guard in `submit`, which throws a
+  // precise error, so a debounced FALSE never lets an unfillable order through.
+  // (NO_LIQUIDITY_CONFIRM_MS is module-scoped so it's stable across renders.)
+  const [noLiquidity, setNoLiquidity] = useState(false);
+  useEffect(() => {
+    if (!noLiquidityTransient) {
+      setNoLiquidity(false);
+      return;
+    }
+    const id = setTimeout(() => setNoLiquidity(true), NO_LIQUIDITY_CONFIRM_MS);
+    return () => clearTimeout(id);
+  }, [noLiquidityTransient]);
+
+  // Best executable prices from the unified (complementary) book: the synthetic
+  // ask a BUY must reach, and the bid a SELL must reach. Same transform the VWAP
+  // walk uses — here only top-of-book is needed, to tell a resting LIMIT from a
+  // marketable one. Asks sort ascending / bids descending, so [0] is best.
+  const executableTopOfBook = useMemo<{
+    bestAskBps: number | null;
+    bestBidBps: number | null;
+  }>(() => {
+    if (!fullOrderbook) return { bestAskBps: null, bestBidBps: null };
+    const unified = unifyOrderBook(fullOrderbook, COMPLEMENTARY_MATCHING_ENABLED);
+    const sideBook = side === 1 ? unified.up : unified.down;
+    return {
+      bestAskBps: sideBook.asks[0]?.price ?? null,
+      bestBidBps: sideBook.bids[0]?.price ?? null,
+    };
+  }, [fullOrderbook, side]);
+
+  // QA 2026-07-23: a $10 market BUY against a $6.10 top ask spills to the next
+  // level and the average lands far above the button price. Non-blocking
+  // callout when the estimated VWAP exceeds the best executable ask by >10%,
+  // so a thin book is legible at a glance instead of only via "Avg. Price".
+  // Null (hidden) whenever either input is missing — including the unified
+  // book's transient blanks, when the VWAP nulls out in the same tick.
+  const priceImpactBestAskBps = useMemo(() => {
+    if (orderType !== "MARKET" || orderSide !== 0) return null;
+    const avg = vwapResult?.avgPriceBps;
+    const best = executableTopOfBook.bestAskBps;
+    if (avg == null || best == null || best <= 0) return null;
+    return Number(avg) > best * 1.1 ? best : null;
+  }, [orderType, orderSide, vwapResult, executableTopOfBook]);
+
+  // The executable price (bps) a resting LIMIT order fails to reach, or null
+  // when it's marketable / MARKET / there's no book to compare against. QA
+  // round-5: a manually-typed 50¢ BUY reads "To Win $20" but rests below the
+  // 50.5¢ synthetic ask; this surfaces that instead of a silent no-op order.
+  const nonCrossingExecBps = useMemo(() => {
+    if (orderType === "MARKET") return null;
+    return nonCrossingExecutableBps({
+      orderSide,
+      limitBps: limitPrice,
+      bestAskBps: executableTopOfBook.bestAskBps,
+      bestBidBps: executableTopOfBook.bestBidBps,
+    });
+  }, [orderType, orderSide, limitPrice, executableTopOfBook]);
+
+  // Debounce the hint's displayed value the same way the CTA debounces "no
+  // liquidity" — the unified book can wobble for a tick on a DMM cancel-replace,
+  // so hold the last value through a transient blank instead of flickering the
+  // hint off and back on. Null (marketable / no book) settles to hidden.
+  const [nonCrossingHintBps, setNonCrossingHintBps] = useState<number | null>(null);
+  useEffect(() => {
+    const id = setTimeout(
+      () => setNonCrossingHintBps(nonCrossingExecBps),
+      NON_CROSSING_HINT_DEBOUNCE_MS,
+    );
+    return () => clearTimeout(id);
+  }, [nonCrossingExecBps]);
+
+  // PR-18 P1-19: the $ budget the user typed. BUY only — for SELL the input
+  // is a share count (see `orderAmountAtomic`). Parse tolerantly.
   const stakeUsd = useMemo(() => {
     const n = parseFloat(stakeUsdInput);
     if (!Number.isFinite(n) || n <= 0) return 0;
@@ -542,57 +747,113 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     return Math.round(n * 100) / 100;
   }, [stakeUsdInput]);
 
-  // Shares-acquired preview (display only). Computed via the integer
-  // BigInt helper to match the wire's rounding rule exactly: floor
-  // division so actualCost ≤ stakeUsd always holds. The display number
-  // is what the user will see in their position post-fill, so it must
-  // never overstate.
-  const sharesPreview = useMemo(() => {
-    if (stakeUsd <= 0 || effectivePriceCents <= 0) return 0;
-    const stakeAtomic = parseUsdtToAtomic(stakeUsd.toFixed(2));
-    const priceBps = BigInt(Math.max(1, Math.min(9999, Math.round(effectivePriceCents * 100))));
-    const sharesAtomic = usdToShares(stakeAtomic, priceBps);
-    // Atomic USDT scale (6 decimals) → display dollars. "Shares acquired"
-    // and "to win" are equivalent dollar amounts in our model (1 share =
-    // $1 if winning); see PR-18 design §5 wire-shape note.
-    return Number(sharesAtomic) / 1_000_000;
-  }, [stakeUsd, effectivePriceCents]);
+  // ── THE FIX ─────────────────────────────────────────────────────────
+  // The wire `Order.amount` is a SHARE count: the contract does
+  // `userShares[buyer] += fillAmount` and charges `cost = price × fillAmount
+  // / 10000`. Signing the raw $ figure as `amount` (the old bug) made "$10"
+  // buy 10 shares — costing `price × 10 / 10000` = $5 at a 50¢ ask. Convert
+  // the budget to shares against the live fill price so a $10 buy spends ~$10.
+  //   - BUY MARKET: shares the budget buys walking the asks (VWAP).
+  //   - BUY LIMIT:  budget ÷ limit price (fills at ≤ that price → spend ≤ budget).
+  //   - SELL:       the share count the user typed, 1:1.
+  const orderAmountAtomic = useMemo<bigint>(() => {
+    if (stakeAtomicForVwap <= BigInt(0)) return BigInt(0);
+    if (orderSide === 1 /* SELL */) return stakeAtomicForVwap;
+    if (orderType === "MARKET") return vwapResult?.buyerSharesAtomic ?? BigInt(0);
+    return usdToShares(stakeAtomicForVwap, BigInt(sharePriceBps));
+  }, [stakeAtomicForVwap, orderSide, orderType, vwapResult, sharePriceBps]);
 
-  const stakeOutOfRange =
-    stakeUsd > 0 && (stakeUsd < MIN_STAKE_USDT || stakeUsd > MAX_STAKE_USDT);
-
-  // P0-11: insufficient-balance gate. Only relevant for BUY (the only
-  // side that locks USDT collateral via the off-chain inOrders ledger).
-  // SELL collateral is shares, not USDT, so a SELL can succeed even
-  // when available USDT == 0. Submit-button title surfaces the missing
-  // amount to the cent so the user knows exactly how much to top up.
-  const stakeAtomic = useMemo(() => {
-    if (stakeUsd <= 0) return BigInt(0);
-    return parseUsdtToAtomic(stakeUsd.toFixed(2));
-  }, [stakeUsd]);
-  const insufficientBalance =
-    orderSide === 0 &&
-    stakeAtomic > BigInt(0) &&
-    isConnected &&
-    !!balanceData &&
-    availableUsdAtomic < stakeAtomic;
-  const insufficientBalanceShortfallUsd = useMemo(() => {
-    if (!insufficientBalance) return 0;
-    const short = stakeAtomic - availableUsdAtomic;
-    return Number(short) / 1_000_000;
-  }, [insufficientBalance, stakeAtomic, availableUsdAtomic]);
-
-  // Phase2-C: the share price feeding fee math is the EFFECTIVE price the
-  // trade fills at, not the order-book mid. For LIMIT/POST_ONLY/IOC at a
-  // user-chosen cents that's exactly what they pay; for MARKET it's the
-  // best-ask / best-bid fallback. Matches what the user sees in "Total".
-  const sharePriceBps = useMemo(
-    () => Math.max(1, Math.min(9999, Math.round(effectivePriceCents * 100))),
-    [effectivePriceCents],
+  // Shares acquired (BUY) / sold (SELL). Atomic → display units (1 share = $1).
+  const sharesPreview = useMemo(
+    () => Number(orderAmountAtomic) / 1_000_000,
+    [orderAmountAtomic],
   );
 
+  // Cash side of the trade: `price × amount / 10000`.
+  //   - BUY  → what the user actually spends (≈ their budget).
+  //   - SELL → the proceeds received.
+  const notionalUsd = useMemo(() => {
+    if (orderAmountAtomic <= BigInt(0)) return 0;
+    const cost = (orderAmountAtomic * BigInt(sharePriceBps)) / BigInt(10000);
+    return Number(cost) / 1_000_000;
+  }, [orderAmountAtomic, sharePriceBps]);
+
+  // The floor is entry-only: on SELL `stakeUsd` is a SHARE count, and a
+  // position that fell below the minimum (partial fill, or a small budget
+  // spent at a high price) has to stay exitable. Only the ceiling is
+  // two-sided.
+  const stakeOutOfRange =
+    stakeUsd > 0 &&
+    (stakeUsd > MAX_STAKE_USDT || (orderSide === 0 /* BUY */ && stakeUsd < MIN_STAKE_USDT));
+
+  // The MARKET slippage cap in bps: the price `submit` actually SIGNS for a
+  // MARKET order (the VWAP is only the expected fill). Null for LIMIT-family
+  // orders, and null when there's no book to cap against.
+  const marketSlippagePriceBps = useMemo(() => {
+    if (orderType !== "MARKET") return null;
+    return computeMarketSlippagePrice({ orderSide, bestPriceBps: sharePriceBps });
+  }, [orderType, orderSide, sharePriceBps]);
+
+  // The price the order is signed at, which is what the backend locks against:
+  // the limit for LIMIT/POST_ONLY/IOC, the slippage CAP for MARKET.
+  const signedPriceBpsForLock =
+    orderType === "MARKET" ? (marketSlippagePriceBps ?? sharePriceBps) : sharePriceBps;
+
+  // The buyer's true worst-case cash obligation (cost + signed fee cap),
+  // mirroring the backend's `buyerLock` in MatchingEngine.addOrder. Shared
+  // definition — see `buyerLockAtomic` in @/lib/orderBookFill.
+  const buyerLockAtomic = useMemo(
+    () =>
+      computeBuyerLockAtomic(
+        orderAmountAtomic,
+        BigInt(signedPriceBpsForLock),
+        BigInt(totalBps),
+      ),
+    [orderAmountAtomic, signedPriceBpsForLock, totalBps],
+  );
+
+  // P0-11 / QA #2 (cost-vs-face): insufficient-balance gate. BUY only (SELL
+  // commits shares, not USDT — see `insufficientShares` below).
+  //
+  // Gate on `buyerLockAtomic` so this mirrors what the backend actually locks.
+  // It must never sit BELOW the backend's lock, or an order passes here and is
+  // rejected with "Insufficient balance" after the user has signed; and never
+  // ABOVE it, or the CTA hard-disables on orders the backend would accept.
+  //
+  // This used to compare against `orderAmountAtomic` — the SHARE count, which
+  // at $1 face IS the To-Win payout. That over-demanded by (1−price)×shares:
+  // a $10 limit buy at 50¢ demanded $20, at 10¢ demanded $100. It mirrored the
+  // backend correctly when written (the backend locked face too), then the
+  // backend moved to cost+maxFee and this gate didn't follow. Keep them in
+  // lockstep — if `buyerLock` changes, change this with it.
+  const insufficientBalance =
+    orderSide === 0 &&
+    orderAmountAtomic > BigInt(0) &&
+    isConnected &&
+    !!balanceData &&
+    availableUsdAtomic < buyerLockAtomic;
+  const insufficientBalanceShortfallUsd = useMemo(() => {
+    if (!insufficientBalance) return 0;
+    const short = buyerLockAtomic - availableUsdAtomic;
+    return Number(short) / 1_000_000;
+  }, [insufficientBalance, buyerLockAtomic, availableUsdAtomic]);
+
+  // SELL mirror of the balance gate: you can only sell shares you own.
+  // `orderAmountAtomic` is the share count being sold; `ownedSharesAtomic` is
+  // the live position for this market+side. Gating here disables the CTA
+  // before signing, instead of letting the sign-step precheck throw after the
+  // user has committed to the trade.
+  const insufficientShares =
+    orderSide === 1 &&
+    orderAmountAtomic > BigInt(0) &&
+    isConnected &&
+    !!positionsData &&
+    ownedSharesAtomic < orderAmountAtomic;
+
+  // Fee mirrors the contract: base is the SHARE count (fillAmount), weighted
+  // by 4·p·(1−p). Pass shares (in $ units) as the notional — NOT the budget.
   const { feeUsd: feeUsdDisplay, effectivePercentOfNotional } = estimateTotalFee(
-    stakeUsd,
+    sharesPreview,
     totalBps,
     sharePriceBps,
     cfg?.feeModel,
@@ -606,27 +867,21 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   // user could pay up to this much per share. The actual fill typically
   // matches at `avgPriceUsd` (= VWAP) and the difference settles into
   // marketRetained as protocol dust.
-  const worstCasePriceCents = useMemo(() => {
-    if (orderType !== "MARKET") return null;
-    const slipped = computeMarketSlippagePrice({ orderSide, bestPriceBps: sharePriceBps });
-    if (slipped == null) return null;
-    return slipped / 100;
-  }, [orderType, orderSide, sharePriceBps]);
+  const worstCasePriceCents =
+    marketSlippagePriceBps == null ? null : marketSlippagePriceBps / 100;
   const peakFeeBps = cfg?.peakFeeBps ?? totalBps;
   const peakFeePct = (peakFeeBps / 100).toFixed(2);
 
   // Polymarket-parity: To-win = shares × $1 (each winning share pays $1).
-  // For BUY: net profit ≈ toWin − stakeUsd − fee.
-  // For SELL (PR-5-bundle, formula (c)): the seller receives `price ×
-  // stake` cash atomically on-chain (clean price, no fee deduction).
-  // Fees come from the buyer's residual, NOT from the seller's proceeds.
-  // Pre-PR-5-bundle the engine credited the seller with `stake − fees` to
-  // an off-chain BalanceModel ledger that had no API surface (the P0-7
-  // bug); post-bundle the seller is paid the price-based amount via the
-  // contract's atomic outflow.
+  // For BUY: net profit ≈ toWin − (actual spend) − fee, where the spend is
+  // `notionalUsd` (price × shares), i.e. ≈ the budget — NOT the budget echoed
+  // back, so the flooring of shares is reflected honestly.
+  // For SELL (PR-5-bundle, formula (c)): the seller receives `price × shares`
+  // cash atomically on-chain (clean price, no fee deduction). Fees come from
+  // the buyer's residual, NOT the seller's proceeds.
   const toWinUsd = sharesPreview;
-  const sellProceedsUsd = stakeUsd * (sharePriceBps / 10000);
-  const profitIfBuyWin = Math.max(0, toWinUsd - stakeUsd - feeUsdDisplay);
+  const sellProceedsUsd = notionalUsd;
+  const profitIfBuyWin = Math.max(0, toWinUsd - notionalUsd - feeUsdDisplay);
 
   const submit = useMutation({
     mutationFn: async () => {
@@ -664,69 +919,126 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         await ensureSettlementAllowance();
       }
 
-      // Phase2-C: shares × price → stake. Backend payload remains stake-based;
-      // the share-input is purely a UI abstraction.
-      const amount = parseUsdtToAtomic(stakeUsd.toFixed(2));
-      const min = parseUsdtToAtomic(String(MIN_STAKE_USDT));
-      const max = parseUsdtToAtomic(String(MAX_STAKE_USDT));
-      if (amount < min || amount > max) {
-        throw new Error(`Amount must be $${MIN_STAKE_USDT}–$${MAX_STAKE_USDT}`);
+      // Session-key grant (PoC-validated 2026-07-06): fresh users get the
+      // session installed inside the onboarding UserOp above (no extra
+      // popup); already-onboarded SCAs get a one-time install UserOp here.
+      // After this, order/cancel/WS signatures are popup-less. Non-fatal by
+      // design: rejection or failure just keeps owner-key popup signing.
+      if (ak && sessionOrdersEnabled() && !ak.hasOrderSession) {
+        try {
+          toast.info("Enabling 1-click trading… one-time setup, confirm in your wallet.");
+          const grant = await ak.ensureOrderSession();
+          if (grant === "installed") {
+            toast.success("1-click trading enabled — orders no longer need a wallet confirmation.");
+          }
+        } catch (e) {
+          console.warn("[TradeForm] session grant declined/failed — owner-key signing stays", e);
+        }
+      }
+
+      // Bounds are on the user's INPUT — a $ BUDGET (BUY) or a SHARE count
+      // (SELL). This is NOT the wire `amount`. The $1 floor is entry-only
+      // (see `isStakeInRange`); the $500 ceiling applies to both sides.
+      const inputAtomic = parseUsdtToAtomic(stakeUsd.toFixed(2));
+      if (!isStakeInRange(inputAtomic, orderSide === 0 ? "BUY" : "SELL")) {
+        throw new Error(
+          orderSide === 0
+            ? `Amount must be $${MIN_STAKE_USDT}–$${MAX_STAKE_USDT}`
+            : `Amount must be 0–${MAX_STAKE_USDT} shares`,
+        );
       }
 
       if (orderType !== "MARKET" && userPriceCentsInput !== "") {
         const v = validateLimitPriceCents(userPriceCentsInput);
-        if (v.value == null) throw new Error(v.error ?? "Invalid price");
+        if (v.bps == null) throw new Error(v.error ?? "Invalid price");
       }
 
-      // PR-18 P0-19: slippage recompute. Capture the price the user saw
-      // when they clicked, then re-walk the freshest order-book snapshot
-      // and decide adverse-vs-favorable. Only MARKET orders need this —
-      // LIMIT/POST_ONLY/IOC sign at the user's typed price by definition.
-      // 1¢ threshold per PR-18 decision log; adverse-only (favorable
-      // moves never prompt — silent acceptance is the right default).
-      if (orderType === "MARKET" && vwapResult?.avgPriceBps != null) {
-        const displayedBps = vwapResult.avgPriceBps;
-        // Force a fresh fetch — bypass React Query's 2s cache so the
-        // submit-time snapshot is as fresh as possible.
+      // ── Derive the wire `amount` (a SHARE count) + signed price ─────────
+      // THE FIX: `Order.amount` is shares, and the contract charges
+      // `price × amount / 10000`. A "spend $10" BUY must therefore convert the
+      // budget to shares against the LIVE asks (else "$10" signs as 10 shares
+      // and costs price×10/10000 = $5 at 50¢). Everything is computed off the
+      // freshest book so a user who lingered doesn't sign a stale conversion.
+      //
+      // Adverse-slippage prompt (MARKET only): compare the VWAP shown at click
+      // vs the fresh VWAP; 1¢ threshold, adverse-only.
+      const maybePromptSlippage = (freshAvgBps: bigint) => {
+        if (vwapResult?.avgPriceBps == null) return;
+        const decision = slippageDecision(vwapResult.avgPriceBps, freshAvgBps, orderSide, BigInt(100));
+        if (decision === "prompt") {
+          const displayedC = (Number(vwapResult.avgPriceBps) / 100).toFixed(0);
+          const currentC = (Number(freshAvgBps) / 100).toFixed(0);
+          const ok = window.confirm(
+            `Price moved from ${displayedC}¢ to ${currentC}¢. Continue at ${currentC}¢?`,
+          );
+          if (!ok) {
+            throw new Error("Cancelled — price moved beyond your slippage tolerance.");
+          }
+        }
+      };
+
+      let amount: bigint;
+      let priceNum: number;
+      if (orderType === "MARKET") {
+        // Force a fresh fetch — bypass React Query's 2s cache.
         const fresh = await qc.fetchQuery({
           queryKey: ["orderbook", marketKey.toLowerCase()],
           queryFn: () => getOrderbook(marketKey),
           staleTime: 0,
         });
-        const freshSideBook = side === 1 ? fresh.up : fresh.down;
+        // Unify the fresh book so a MARKET BUY/SELL walks complementary liquidity
+        // too (mint against DOWN bids / merge against DOWN asks). Off → raw side book.
+        const freshUnified = unifyOrderBook(fresh, COMPLEMENTARY_MATCHING_ENABLED);
+        const freshSideBook = side === 1 ? freshUnified.up : freshUnified.down;
         const freshLevels = orderSide === 0 ? freshSideBook.asks : freshSideBook.bids;
-        const freshVwap = walkBookForAvgFillPrice(freshLevels, amount);
-        if (freshVwap.avgPriceBps == null) {
-          throw new Error("No matching liquidity at submit time. Try again or pick a different side.");
-        }
-        if (freshVwap.requiresMoreDepth) {
-          throw new Error(
-            `Insufficient liquidity at submit time. Max fillable now: $${(Number(freshVwap.fillableAtomic) / 1_000_000).toFixed(2)}.`,
-          );
-        }
-        const decision = slippageDecision(
-          displayedBps,
-          freshVwap.avgPriceBps,
-          orderSide,
-          BigInt(100),
-        );
-        if (decision === "prompt") {
-          const displayedC = (Number(displayedBps) / 100).toFixed(0);
-          const currentC = (Number(freshVwap.avgPriceBps) / 100).toFixed(0);
-          const ok = window.confirm(
-            `Price moved from ${displayedC}¢ to ${currentC}¢. Continue at ${currentC}¢?`,
-          );
-          if (!ok) {
-            // User declined — bail out. The mutation's onError will
-            // surface a friendly toast via formatUserFacingError.
-            throw new Error("Cancelled — price moved beyond your slippage tolerance.");
+        const bestPriceBps = freshLevels.length > 0 ? Number(freshLevels[0].price) : null;
+        const slipped = computeMarketSlippagePrice({ orderSide, bestPriceBps });
+        if (slipped == null) throw new Error("Insufficient liquidity");
+        priceNum = slipped;
+
+        if (orderSide === 0 /* BUY: spend budget → shares */) {
+          const walk = walkBookForBudget(freshLevels, inputAtomic);
+          if (walk.avgPriceBps == null || walk.sharesAtomic <= BigInt(0)) {
+            throw new Error("No matching liquidity at submit time. Try again or pick a different side.");
           }
+          if (walk.requiresMoreDepth) {
+            throw new Error(
+              `Insufficient liquidity at submit time. Max fillable now: $${(Number(walk.spentAtomic) / 1_000_000).toFixed(2)}.`,
+            );
+          }
+          amount = walk.sharesAtomic;
+          maybePromptSlippage(walk.avgPriceBps);
+        } else {
+          /* SELL: sell `inputAtomic` shares; walk bids for VWAP + depth. */
+          amount = inputAtomic;
+          const walk = walkBookForAvgFillPrice(freshLevels, inputAtomic);
+          if (walk.avgPriceBps == null) {
+            throw new Error("No matching liquidity at submit time. Try again or pick a different side.");
+          }
+          if (walk.requiresMoreDepth) {
+            throw new Error(
+              `Insufficient liquidity at submit time. Max fillable now: $${(Number(walk.fillableAtomic) / 1_000_000).toFixed(2)}.`,
+            );
+          }
+          maybePromptSlippage(walk.avgPriceBps);
         }
+      } else {
+        // LIMIT / POST_ONLY / IOC: sign at the user's limit price.
+        //   BUY  → shares = budget ÷ limit (fills at ≤ limit → spend ≤ budget).
+        //   SELL → the share count the user typed.
+        priceNum = limitPrice;
+        amount =
+          orderSide === 0
+            ? usdToShares(inputAtomic, BigInt(limitPrice))
+            : inputAtomic;
+      }
+      if (amount <= BigInt(0)) {
+        throw new Error("Order amount rounds to zero — increase the amount.");
       }
 
       if (orderSide === 1 /* SELL */) {
         try {
-          const positions = await getPositions(address);
+          const positions = await getPositions(smartAccount || address);
           const match = positions.find(
             (p) => p.market.toLowerCase() === parsedKey.composite.toLowerCase() && p.option === side,
           );
@@ -746,55 +1058,37 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
 
       const nonce = Math.floor(Math.random() * 1e12);
       // Phase2-C: explicit expiry mode chosen by the user.
-      //   "never" → expiry=0 (matching engine's "no expiry" sentinel)
       //   "1h"    → now + 3600 (legacy default; kept for users who want it)
       //   "close" → market.endTime (default; expires at market close)
-      const expiry =
-        expiryMode === "never"
-          ? 0
-          : expiryMode === "1h"
-            ? Math.floor(Date.now() / 1000) + 3600
-            : market.endTime;
+      // Always a future timestamp — see `expiryForMode`.
+      const expiry = expiryForMode(expiryMode, market.endTime);
       const typeNum = ORDER_TYPE_U8[orderType];
 
-      // PR-O follow-up (selector 0x6cebd3e0 = FeeBreakdownInvalid): MARKET
-      // orders must NOT be signed with `price = 0`. Pre-PR-O the contract
-      // ignored `order.price` on settlement (pulled fillAmount regardless);
-      // under PR-O Option B the contract pulls `(price * fillAmount)/10000`
-      // as the buyer's cash side, so price=0 → cashPart=0 → revert.
-      //
-      // Sign at the worst-acceptable price: best opposite-side top of book ±
-      // SLIPPAGE_BPS. Fresh API fetch right before signing so a user who
-      // lingered on the dialog doesn't sign against a stale WS-cached
-      // price. ~50ms extra latency in exchange for not silently mis-pricing.
-      //
-      // Pre-flight: if liquidity is gone by click time, reject before the
-      // wallet popup. Better to show "Insufficient liquidity" than to ask
-      // the user to sign an order that can't fill.
-      let priceNum: number;
-      if (orderType === "MARKET") {
-        const fresh = await getOrderbook(parsedKey.composite);
-        const sideBook = side === 1 ? fresh.up : fresh.down;
-        const levels = orderSide === 0 ? sideBook.asks : sideBook.bids;
-        const bestPriceBps = levels.length > 0 ? Number(levels[0].price) : null;
-        const slipped = computeMarketSlippagePrice({ orderSide, bestPriceBps });
-        if (slipped == null) {
-          throw new Error("Insufficient liquidity");
-        }
-        priceNum = slipped;
-      } else {
-        priceNum = limitPrice;
-      }
+      // `amount` (shares) and `priceNum` (the non-zero signed price — the
+      // slippage cap for MARKET, the limit for others; price=0 would trip the
+      // contract's FeeBreakdownInvalid) were both derived from the fresh book
+      // above, so the signed digest reproduces the contract's cashPart math.
 
-      // Phase 4: order maker is the user's ThinWallet (a contract). Settlement's
+      // Account Kit: order maker is the user's SCA (a contract). Settlement's
       // `SignatureChecker.isValidSignatureNow` routes to
-      // `ThinWallet.isValidSignature(orderDigest, sig)`, which wraps the
-      // digest in `WalletAuth(bytes32 hash)` against the TW's own EIP-712
-      // domain and recovers — must match the wallet's owner EOA.
-      // We construct the signature in two steps via `signOrderViaThinWallet`:
-      //   1. Compute Settlement-domain order digest off-chain.
-      //   2. Sign a WalletAuth envelope against the TW's domain.
+      // `SCA.isValidSignature(orderDigest, sig)` (ERC-1271/7739). The owner
+      // key signs the FULL "UpDown Exchange" typed-data via the smart-wallet
+      // client and the 6492 wrapper is stripped (`signTypedDataBare`) — no
+      // WalletAuth wrap, no relayer meta-tx. `ensureSettlementAllowance`
+      // above guarantees the SCA is deployed before this signature is used.
       const twAddress = smartAccount as `0x${string}`;
+      if (!ak) throw new Error("Wallet not ready — finish sign-in first");
+      // F-2026-17731 (Hacken remediation V2): sign a fee cap into the order. The relayer charges
+      // a probability-weighted fee (4·p·(1−p), peak weight 1.0 at 50¢) computed at each fill's
+      // price, and a taker order can fill across multiple price levels. The only cap that
+      // provably bounds the CUMULATIVE fee for any fill distribution is the worst-case weight:
+      // amount × totalFeeBps / 10000 (≥ Σ per-fill fees, since each fill's weight ≤ 1 and the
+      // fills sum to ≤ amount). The contract enforces `platformFee + makerFee ≤ takerOrder.maxFee`
+      // cumulatively, so signing the peak means legitimate fills never revert with
+      // FeeExceedsTakerCap while still bounding the relayer to at most totalFeeBps of notional.
+      // `totalBps` is the same constant the pre-sign `buyerLock` gate uses; the
+      // amount here is the fresh-book one, so recompute rather than reuse.
+      const maxFee = (amount * BigInt(totalBps)) / BigInt(10000);
       const msg = {
         maker: twAddress,
         market: parsedKey.marketId,
@@ -803,18 +1097,18 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         type: typeNum,
         price: BigInt(priceNum),
         amount,
+        maxFee,
         nonce: BigInt(nonce),
         expiry: BigInt(expiry),
       };
 
-      const typed = buildOrderTypedData(cfg, msg);
-      const signature = await signOrderViaThinWallet({
-        order: msg,
-        settlementDomain: typed.domain,
-        twAddress,
-        chainId: cfg.chainId,
-        signTypedDataAsync,
-      });
+      // Sign against THIS market's settlement (parsedKey is non-null past the
+      // guard above). The backend rebuilds the order domain from the market's
+      // own settlement; on the single-settlement demo this equals
+      // cfg.eip712.domain.verifyingContract, so the digest is unchanged there.
+      const typed = buildOrderTypedData(cfg, msg, parsedKey.settlement);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const signature = await ak.signTypedDataBare(typed as any);
 
       await postOrder({
         maker: twAddress,
@@ -828,6 +1122,9 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         // payload.
         price: priceNum,
         amount: amount.toString(),
+        // F-2026-17731: the signed fee cap, sent verbatim as the value baked into the order
+        // digest above. Must equal `msg.maxFee` or the on-chain signature check would reject.
+        maxFee: maxFee.toString(),
         nonce,
         expiry,
         signature,
@@ -835,20 +1132,29 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
     },
     onSuccess: () => {
       toast.success("Order submitted");
+      // Clear inputs so a post-fill positions/balance refetch can't trip the
+      // insufficient-shares / insufficient-balance gates against a stale input.
+      // A SELL leaves the sold share count in the box; once positions refetch to
+      // the reduced holdings, that stale count trips `insufficientShares` and
+      // paints a spurious red inline alert. Resetting here (the Max/Clear chips
+      // and deep-link init set the input explicitly, so they still work).
+      setStakeUsdInput("");
+      setUserPriceCentsInput("");
       track("order_placed", {
         type: orderType,
         side: orderSide === 0 ? "BUY" : "SELL",
         option: side === 1 ? "UP" : "DOWN",
         pair: market?.pairSymbol ?? "unknown",
         amountUsd: stakeUsd,
-        priceCents: orderType === "MARKET" ? null : Math.round(limitPrice / 100),
+        priceCents: orderType === "MARKET" ? null : limitPrice / 100,
       });
+      // All identity-scoped caches are keyed by the SCA (the trading
+      // identity the backend's `resolveOwnerEoa` rows are created under).
       const sa = smartAccount?.toLowerCase() ?? "";
-      const addrLower = address?.toLowerCase() ?? "";
       qc.invalidateQueries({ queryKey: ["positions", sa] });
-      qc.invalidateQueries({ queryKey: ["balance", addrLower] });
+      qc.invalidateQueries({ queryKey: ["balance", sa] });
       qc.invalidateQueries({ queryKey: ["orderbook", marketKey.toLowerCase()] });
-      qc.invalidateQueries({ queryKey: ["orders", addrLower] });
+      qc.invalidateQueries({ queryKey: ["orders", sa] });
     },
     onError: (e: Error) => toast.error(formatUserFacingError(e)),
   });
@@ -895,6 +1201,10 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
   const availableUsd = availableUsdAtomic > BigInt(0)
     ? Number(availableUsdAtomic) / 1_000_000
     : 0;
+
+  // Owned shares in display units (1 share = $1 face) for the SELL-side
+  // "Available N UP shares" label and Max chip.
+  const ownedShares = Number(ownedSharesAtomic) / 1_000_000;
 
   // State-adaptive CTA descriptor. Single source of truth for both
   // label and the disabled flag — avoids drift between disabled state
@@ -948,7 +1258,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       return {
         label: "Fix limit price",
         disabled: true,
-        inlineError: userPriceParsed.error ?? "Limit price must be 1¢–99¢.",
+        inlineError: userPriceParsed.error ?? "Limit price must be 0.01¢–99.99¢.",
       };
     }
     if (stakeUsd <= 0) {
@@ -960,7 +1270,10 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       return {
         label: "Adjust amount",
         disabled: true,
-        inlineError: `Amount must be $${MIN_STAKE_USDT}–$${MAX_STAKE_USDT}.`,
+        inlineError:
+          orderSide === 0
+            ? `Amount must be $${MIN_STAKE_USDT}–$${MAX_STAKE_USDT}.`
+            : `You can sell up to ${MAX_STAKE_USDT} shares at a time.`,
       };
     }
     if (insufficientBalance) {
@@ -968,6 +1281,17 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         label: "Deposit",
         disabled: true,
         inlineError: `You need $${insufficientBalanceShortfallUsd.toFixed(2)} more to place this trade.`,
+      };
+    }
+    if (insufficientShares) {
+      const dir = side === 1 ? "UP" : "DOWN";
+      return {
+        label: "Insufficient shares",
+        disabled: true,
+        inlineError:
+          ownedShares > 0
+            ? `You own ${ownedShares.toFixed(2)} ${dir} share${ownedShares === 1 ? "" : "s"} — reduce the amount.`
+            : `You don't own any ${dir} shares on this market.`,
       };
     }
     if (noLiquidity) {
@@ -1123,6 +1447,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             side === 1 && "pp-trade-v2__direction-btn--on",
           )}
           aria-pressed={side === 1}
+          title="Best ask on the UP book — the price a market buy starts filling at; larger orders can fill deeper at a higher average"
           onClick={() => {
             setSide(1);
             if (!isConnected) scrollToConnect();
@@ -1130,7 +1455,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         >
           <span>BUY UP</span>
           <span className="pp-trade-v2__direction-cents pp-tabular">
-            {Math.round(upMidCents)}¢
+            {Math.round(upBtnCents)}¢
           </span>
         </button>
         <button
@@ -1141,6 +1466,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             side === 2 && "pp-trade-v2__direction-btn--on",
           )}
           aria-pressed={side === 2}
+          title="Best ask on the DOWN book — the price a market buy starts filling at; larger orders can fill deeper at a higher average"
           onClick={() => {
             setSide(2);
             if (!isConnected) scrollToConnect();
@@ -1148,7 +1474,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
         >
           <span>BUY DOWN</span>
           <span className="pp-trade-v2__direction-cents pp-tabular">
-            {Math.round(downMidCents)}¢
+            {Math.round(downBtnCents)}¢
           </span>
         </button>
       </div>
@@ -1164,11 +1490,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             <button
               type="button"
               className="pp-trade-v2__stepper"
-              onClick={() => {
-                const cur = userPriceCentsInput === "" ? autoCentsDisplay : Number(userPriceCentsInput);
-                const next = Math.max(1, (Number.isFinite(cur) ? cur : 0) - 1);
-                setUserPriceCentsInput(String(next));
-              }}
+              onClick={() => setUserPriceCentsInput(stepPriceBps(limitPrice, -100))}
               aria-label="Decrease limit price by 1¢"
             >
               −
@@ -1176,10 +1498,10 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             <input
               id="limit-price-cents"
               type="number"
-              inputMode="numeric"
-              min={1}
-              max={99}
-              step={1}
+              inputMode="decimal"
+              min={0.01}
+              max={99.99}
+              step={0.01}
               value={userPriceCentsInput === "" ? autoCentsDisplay : userPriceCentsInput}
               onChange={(e) => setUserPriceCentsInput(e.target.value)}
               onFocus={(e) => e.currentTarget.select()}
@@ -1193,11 +1515,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             <button
               type="button"
               className="pp-trade-v2__stepper"
-              onClick={() => {
-                const cur = userPriceCentsInput === "" ? autoCentsDisplay : Number(userPriceCentsInput);
-                const next = Math.min(99, (Number.isFinite(cur) ? cur : 0) + 1);
-                setUserPriceCentsInput(String(next));
-              }}
+              onClick={() => setUserPriceCentsInput(stepPriceBps(limitPrice, 100))}
               aria-label="Increase limit price by 1¢"
             >
               +
@@ -1207,6 +1525,17 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
           {priceInputInvalid && (
             <p id="limit-price-hint" className="pp-trade-v2__hint pp-trade-v2__hint--error">
               {userPriceParsed.error}
+            </p>
+          )}
+          {/* Non-blocking hint: this LIMIT price doesn't cross the current
+              executable price, so it will rest rather than fill now (QA
+              round-5). Suppressed while the price input is invalid (the error
+              hint above takes over) and when there's no book to compare. */}
+          {!priceInputInvalid && nonCrossingHintBps != null && (
+            <p className="pp-trade-v2__hint">
+              {orderSide === 0 ? "Below" : "Above"} the current executable price (
+              {formatBookPriceCents(nonCrossingHintBps)}¢) — your order will rest
+              until the market reaches your price.
             </p>
           )}
         </div>
@@ -1221,13 +1550,21 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             Amount
           </label>
           <span className="pp-trade-v2__amount-available pp-tabular">
-            Available ${availableUsd.toFixed(2)}
+            {orderSide === 1
+              ? `Available ${ownedShares.toFixed(2)} ${side === 1 ? "UP" : "DOWN"} share${ownedShares === 1 ? "" : "s"}`
+              : `Available $${availableUsd.toFixed(2)}`}
           </span>
         </div>
         <div className="pp-trade-v2__amount-input-wrap">
-          <span className="pp-trade-v2__amount-currency" aria-hidden>
-            $
-          </span>
+          {/* BUY takes a $ budget; SELL takes a SHARE count (1 share = $1
+              face). The affordance must track that meaning — a `$` on the
+              SELL input mislabels a share count as dollars. BUY shows a
+              leading `$`; SELL shows a trailing "shares" unit instead. */}
+          {orderSide === 0 && (
+            <span className="pp-trade-v2__amount-currency" aria-hidden>
+              $
+            </span>
+          )}
           <input
             id="trade-stake"
             type="text"
@@ -1249,6 +1586,11 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             )}
             aria-invalid={stakeOutOfRange}
           />
+          {orderSide === 1 && (
+            <span className="pp-trade-v2__amount-currency" aria-hidden>
+              shares
+            </span>
+          )}
         </div>
         <div className="pp-trade-v2__chips">
           {STAKE_QUICK_ADDS.map((qa, i) =>
@@ -1258,11 +1600,20 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
                 type="button"
                 className="pp-trade-v2__chip"
                 onClick={() => {
-                  setStakeUsdInput(
-                    maxStakeForBalance(
-                      availableUsdAtomic > BigInt(0) ? availableUsdAtomic : MAX_STAKE_ATOMIC,
-                    ),
-                  );
+                  // SELL Max = the shares you actually own (1 share = $1 face),
+                  // clamped to the trading window by maxStakeForBalance.
+                  if (orderSide === 1) {
+                    setStakeUsdInput(maxStakeForBalance(ownedSharesAtomic));
+                    return;
+                  }
+                  // BUY collateral is the share count (over-locked as USDT by
+                  // the backend). The most a budget can spend while keeping
+                  // shares ≤ available is `available × price / 10000`; anything
+                  // larger would over-lock and be rejected.
+                  const base =
+                    availableUsdAtomic > BigInt(0) ? availableUsdAtomic : MAX_STAKE_ATOMIC;
+                  const budgetAtomic = (base * BigInt(sharePriceBps)) / BigInt(10000);
+                  setStakeUsdInput(maxStakeForBalance(budgetAtomic));
                 }}
                 aria-label="Set amount to max"
               >
@@ -1308,8 +1659,22 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       {!cta.inlineError && (
         <div className="pp-trade-v2__payoff">
           <div className="pp-trade-v2__payoff-primary">
-            <span className="pp-trade-v2__payoff-label">
-              {orderSide === 0 ? "To Win" : "Receive"}
+            <span
+              className="pp-trade-v2__payoff-label"
+              title={
+                orderSide === 0 && orderType === "MARKET"
+                  ? "Estimated from current book liquidity; actual fill price may differ."
+                  : undefined
+              }
+            >
+              {/* MARKET fills at a VWAP over live book depth, so the payoff is
+                  an estimate; a LIMIT order's payoff is exact if it fills at the
+                  typed price. Keep the "To Win" prefix intact either way. */}
+              {orderSide === 0
+                ? orderType === "MARKET"
+                  ? "To Win (est.)"
+                  : "To Win"
+                : "Receive"}
             </span>
             <span
               className={cn(
@@ -1326,6 +1691,13 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
               ${avgPriceUsd.toFixed(2)}
             </span>
           </div>
+          {priceImpactBestAskBps != null && vwapResult?.avgPriceBps != null && (
+            <p className="pp-trade-v2__hint">
+              High price impact — the book is thin at the top, so this order
+              fills past the best ask ({formatBookPriceCents(priceImpactBestAskBps)}¢
+              → avg {formatBookPriceCents(Number(vwapResult.avgPriceBps))}¢).
+            </p>
+          )}
         </div>
       )}
 
@@ -1343,7 +1715,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
           <div className="pp-trade-v2__details-row">
             <span>{orderSide === 0 ? "You spend" : "You receive"}</span>
             <span className="pp-tabular">
-              ${(orderSide === 0 ? stakeUsd : sellProceedsUsd).toFixed(2)}
+              ${notionalUsd.toFixed(2)}
             </span>
           </div>
           <div className="pp-trade-v2__details-row">
@@ -1375,7 +1747,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
                   text={`5% slippage cap. Market orders sign at this worst-case price so the trade can't fill above it. Typical fill is at "Avg. Price" above; any difference goes to the protocol pool.`}
                 />
               </span>
-              <span className="pp-tabular">≤ ${worstCasePriceCents.toFixed(2)}</span>
+              <span className="pp-tabular">≤ {worstCasePriceCents.toFixed(2)}¢</span>
             </div>
           ) : null}
         </div>
@@ -1433,11 +1805,12 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
       )}
 
       {/* F3 (2026-05-16): inline mint CTA at the friction point.
-          Renders when: connected + on testnet + smartAccount provisioned +
-          balance is insufficient for the current stake. Single click mints
-          100 USDTM to the TW; toast confirms broadcast. Backend route is
-          env-gated (404 in production) and rate-limited (1/addr/5min). */}
-      {isConnected && isTestnet && insufficientBalance && smartAccount && (
+          Renders when: connected + FAUCET_ENABLED (testnet or demo) +
+          smartAccount provisioned + balance is insufficient for the current
+          stake. Single click mints 100 to the SCA; toast confirms broadcast.
+          Backend route is env-gated (404 in production) and rate-limited
+          (1/addr/5min). */}
+      {isConnected && FAUCET_ENABLED && insufficientBalance && smartAccount && (
         <button
           type="button"
           className="pp-trade-v2__testnet-mint"
@@ -1460,7 +1833,7 @@ function TradeFormInner({ marketAddress }: { marketAddress: string }) {
             }
           }}
         >
-          {mintingTestUsdt ? "Minting…" : `Get 100 ${tokenSymbolForChain} (testnet)`}
+          {mintingTestUsdt ? "Minting…" : `Get 100 ${tokenSymbolForChain} (${FAUCET_LABEL_SUFFIX})`}
         </button>
       )}
 

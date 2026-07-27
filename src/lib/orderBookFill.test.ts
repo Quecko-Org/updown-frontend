@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  buyerLockAtomic,
   slippageDecision,
   usdToShares,
   walkBookForAvgFillPrice,
+  walkBookForBudget,
   type BookLevel,
 } from "./orderBookFill";
 
@@ -41,6 +43,74 @@ describe("usdToShares", () => {
     const shares = usdToShares(B(50_000_000), B(6500));
     const reverseCost = (shares * B(6500)) / B(10_000);
     expect(reverseCost <= B(50_000_000)).toBe(true);
+  });
+});
+
+/**
+ * QA #2 (cost-vs-face): the pre-sign balance gate must lock the buyer's real
+ * cash obligation, not the To-Win payout.
+ *
+ * The share count IS the To-Win figure at $1 face, so locking `amount`
+ * over-demanded by (1−price)×shares and hard-disabled the CTA on orders the
+ * backend would happily accept. These cases pin the formula to the backend's
+ * `buyerLock` (MatchingEngine.addOrder) so the two cannot drift apart again.
+ */
+describe("buyerLockAtomic (cost + fee cap, NOT face)", () => {
+  const FEE_BPS = B(150); // 70 platform + 80 maker, the live demo config
+
+  it("the reported bug: $10 at 50¢ locks ~$10.03, not the $20 To-Win", () => {
+    // $10 budget at 50¢ → 20 shares. Face (= To-Win) = $20; cost = $10.
+    const shares = usdToShares(B(10_000_000), B(5000));
+    expect(shares).toBe(B(20_000_000));
+
+    const lock = buyerLockAtomic(shares, B(5000), FEE_BPS);
+    // cost 10_000_000 + maxFee 300_000 = 10_300_000 ($10.30)
+    expect(lock).toBe(B(10_300_000));
+    // The old gate demanded the full face — the regression this test guards.
+    expect(lock).toBeLessThan(shares);
+  });
+
+  it("over-demand grows as 1/price — the 10¢ case that demanded $100", () => {
+    // $10 at 10¢ → 100 shares. Face = $100; true cost is still ~$10.
+    const shares = usdToShares(B(10_000_000), B(1000));
+    expect(shares).toBe(B(100_000_000));
+
+    const lock = buyerLockAtomic(shares, B(1000), FEE_BPS);
+    // cost 10_000_000 + maxFee 1_500_000 = 11_500_000
+    expect(lock).toBe(B(11_500_000));
+    // Face would have demanded 100_000_000 — ~8.7× the real obligation.
+    expect(lock * B(8) < shares).toBe(true);
+  });
+
+  it("never under-locks: lock ≥ cost for every price on the book", () => {
+    // Under-locking is the OTHER failure — it passes the gate, then the
+    // backend rejects after the user has already signed.
+    for (let bps = 1; bps <= 9999; bps += 7) {
+      const shares = usdToShares(B(10_000_000), B(bps));
+      const cost = (shares * B(bps)) / B(10_000);
+      expect(buyerLockAtomic(shares, B(bps), FEE_BPS) >= cost).toBe(true);
+    }
+  });
+
+  it("matches the backend's two-division form exactly (floor per leg)", () => {
+    // A share count that floors differently if the legs are folded into one
+    // division — the backend floors each leg separately, so we must too.
+    const shares = B(76_923_076);
+    const backendForm = (shares * B(6500)) / B(10_000) + (shares * FEE_BPS) / B(10_000);
+    expect(buyerLockAtomic(shares, B(6500), FEE_BPS)).toBe(backendForm);
+  });
+
+  it("fee cap is bounded by feeBps of face, per the signed maxFee", () => {
+    const shares = B(20_000_000);
+    const noFee = buyerLockAtomic(shares, B(5000), B(0));
+    const withFee = buyerLockAtomic(shares, B(5000), FEE_BPS);
+    expect(withFee - noFee).toBe((shares * FEE_BPS) / B(10_000));
+  });
+
+  it("zero / negative inputs → zero lock (defensive, never throws)", () => {
+    expect(buyerLockAtomic(B(0), B(5000), FEE_BPS)).toBe(B(0));
+    expect(buyerLockAtomic(B(-1), B(5000), FEE_BPS)).toBe(B(0));
+    expect(buyerLockAtomic(B(20_000_000), B(0), FEE_BPS)).toBe(B(0));
   });
 });
 
@@ -136,6 +206,68 @@ describe("walkBookForAvgFillPrice", () => {
     const r = walkBookForAvgFillPrice(sparse, B(10_000_000));
     expect(r.avgPriceBps).toBe(B(5600));
     expect(r.fillableAtomic).toBe(B(10_000_000));
+  });
+});
+
+describe("walkBookForBudget (spend $X → shares; the '$10 buys $5' fix)", () => {
+  const askLevels: BookLevel[] = [
+    { price: 5000, depth: "100000000" }, // 100 shares @ 50¢
+    { price: 6000, depth: "50000000" }, //  50 shares @ 60¢
+  ];
+
+  it("REGRESSION: $10 budget @ 50¢ → 20 shares, spends exactly $10", () => {
+    // The reported bug: signing $10 as the amount bought 10 shares for $5.
+    // Correct: $10 buys 20 shares (10 / 0.50) and costs the full $10.
+    const r = walkBookForBudget(askLevels, B(10_000_000));
+    expect(r.sharesAtomic).toBe(B(20_000_000));
+    expect(r.spentAtomic).toBe(B(10_000_000));
+    expect(r.avgPriceBps).toBe(B(5000));
+    expect(r.requiresMoreDepth).toBe(false);
+  });
+
+  it("empty book → zero shares, requiresMoreDepth when budget > 0", () => {
+    const r = walkBookForBudget([], B(10_000_000));
+    expect(r.sharesAtomic).toBe(B(0));
+    expect(r.avgPriceBps).toBeNull();
+    expect(r.requiresMoreDepth).toBe(true);
+  });
+
+  it("zero budget → no shares, no requirement", () => {
+    const r = walkBookForBudget(askLevels, B(0));
+    expect(r.sharesAtomic).toBe(B(0));
+    expect(r.spentAtomic).toBe(B(0));
+    expect(r.avgPriceBps).toBeNull();
+    expect(r.requiresMoreDepth).toBe(false);
+  });
+
+  it("budget spans 2 levels — shares summed, VWAP weighted", () => {
+    // $50 at 50¢ = whole level 1 (100 shares, $50). $10 left buys
+    // 10/0.60 = 16.666… → 16_666_666 shares @ 60¢ costing 9_999_999.
+    // Total shares = 116_666_666; spent = 59_999_999; VWAP =
+    // 59_999_999 × 10000 / 116_666_666 = 5142 (floor).
+    const r = walkBookForBudget(askLevels, B(60_000_000));
+    expect(r.sharesAtomic).toBe(B(116_666_666));
+    expect(r.spentAtomic).toBe(B(59_999_999));
+    expect(r.avgPriceBps).toBe(B(5142));
+    expect(r.requiresMoreDepth).toBe(false);
+  });
+
+  it("budget exceeds total depth → buys all, requiresMoreDepth=true", () => {
+    // Depth: 100 shares @ 50¢ ($50) + 50 @ 60¢ ($30) = $80 max spend.
+    // Ask to spend $200 → buys 150 shares for $80, flags more-depth.
+    const r = walkBookForBudget(askLevels, B(200_000_000));
+    expect(r.sharesAtomic).toBe(B(150_000_000));
+    expect(r.spentAtomic).toBe(B(80_000_000));
+    expect(r.requiresMoreDepth).toBe(true);
+  });
+
+  it("cost ≤ budget always holds (dust rounds to protocol)", () => {
+    // 47.5¢ never divides $10 evenly → spent must be ≤ budget.
+    const odd: BookLevel[] = [{ price: 4750, depth: "1000000000" }];
+    const r = walkBookForBudget(odd, B(10_000_000));
+    expect(r.spentAtomic).toBeLessThanOrEqual(B(10_000_000));
+    // shares = floor(10_000_000 × 10000 / 4750) = 21_052_631
+    expect(r.sharesAtomic).toBe(B(21_052_631));
   });
 });
 

@@ -3,56 +3,54 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
-import { useSignTypedData } from "wagmi";
 import { toast } from "sonner";
 import {
   buildCancelTypedData,
-  CANCEL_TYPES,
   freshCancelNonce,
   cancelExpirySeconds,
 } from "@/lib/eip712";
 import { cancelOrder } from "@/lib/api";
+import { parseCompositeMarketKey } from "@/lib/marketKey";
 import { formatUserFacingError } from "@/lib/errors";
-import { apiConfigAtom, userSmartAccount } from "@/store/atoms";
-import { signTypedDataViaThinWallet } from "@/lib/signOrderViaThinWallet";
+import { apiConfigAtom, userSmartAccount, userSmartAccountClient } from "@/store/atoms";
 import { cn } from "@/lib/cn";
 
 /**
  * Small per-row Cancel button for OPEN / PARTIALLY_FILLED orders.
  *
- * Phase 4 PR-A (2026-05-16): the cancel sig must validate against `order.maker
- * = TW address`. Pre-fix it signed with the EOA and submitted `maker = EOA`,
- * which the backend's `verifyCancelSignature` rejected because the order it
- * tried to match had `maker = TW`. Same WalletAuth-wrap pattern as the
- * order-sign path in TradeForm: hash the Cancel typed-data against Settlement's
- * domain, wrap in WalletAuth against the TW's domain, sign with the EOA.
+ * Account Kit: `order.maker` is the user's SCA, so the cancel signature is
+ * the owner-signed Cancel typed-data as a bare ERC-1271 sig
+ * (`ak.signTypedDataBare`) — same path as order signing in TradeForm.
  * Backend's `SignatureService.verifyCancelSignature` uses viem's
- * `verifyTypedData` which dispatches to ERC-1271 when `maker` is a contract.
- *
- * Path-1 fallback: when `smartAccount === walletAddress` (no factory on this
- * chain), the WalletAuth wrap is unnecessary — but harmless. The contract
- * deployed for the EOA-as-TW case would still validate. (Practically: on
- * Path-1 chains, `smartAccount` IS the EOA and the wrap path won't execute
- * because no TW exists. Cancel would need a plain ECDSA sig instead.) We
- * branch on whether smartAccount differs from walletAddress in the
- * signing path below.
+ * `verifyTypedData`, which dispatches to ERC-1271 when `maker` is a contract.
  */
 export function CancelOrderButton({
   orderId,
+  market,
   className,
 }: {
   orderId: string;
+  /**
+   * The order's composite market key (`{settlement}-{marketId}`). Used to
+   * derive the cancel domain's settlement so the signature verifies against
+   * the order's OWN settlement — the backend's `verifyCancelSignature` builds
+   * the domain from the per-market settlement, so signing against the
+   * top-level (first-pair) one would be rejected on a multi-settlement
+   * deployment. Omitted → falls back to the config domain (single-settlement
+   * demo behavior, unchanged).
+   */
+  market?: string;
   className?: string;
 }) {
-  const { signTypedDataAsync } = useSignTypedData();
   const apiConfig = useAtomValue(apiConfigAtom);
   const smartAccount = useAtomValue(userSmartAccount);
+  const ak = useAtomValue(userSmartAccountClient);
   const qc = useQueryClient();
   const [pending, setPending] = useState(false);
 
   const cancel = useMutation({
     mutationFn: async () => {
-      if (!smartAccount) throw new Error("Wallet not ready — finish sign-in first");
+      if (!smartAccount || !ak) throw new Error("Wallet not ready — finish sign-in first");
       if (!apiConfig) throw new Error("Config not loaded yet — try again in a moment");
       // PR-13: each cancel sig is unique-per-attempt (random nonce + 5-min
       // expiry) so a leaked sig can't replay forever.
@@ -60,26 +58,13 @@ export function CancelOrderButton({
       const expiry = cancelExpirySeconds();
       const maker = smartAccount as `0x${string}`;
 
-      // Phase 4: order.maker is the TW. Cancel sig wraps the Cancel digest
-      // in a WalletAuth envelope so the on-chain SignatureChecker route on
-      // the backend (`SignatureService.verifyCancelSignature` → viem's
-      // verifyTypedData → ERC-1271 dispatch to TW.isValidSignature) succeeds.
-      const cancelMsg = {
-        maker,
-        orderId,
-        nonce,
-        expiry,
-      };
-      const typed = buildCancelTypedData(apiConfig, maker, orderId, nonce, expiry);
-      const signature = await signTypedDataViaThinWallet({
-        sourceDomain: typed.domain,
-        sourceTypes: CANCEL_TYPES,
-        sourcePrimaryType: "Cancel",
-        sourceMessage: cancelMsg,
-        twAddress: maker,
-        chainId: apiConfig.chainId,
-        signTypedDataAsync,
-      });
+      // Derive this order's settlement from its composite market key so the
+      // cancel domain matches the backend's per-market `verifyCancelSignature`.
+      // Falls back to the config domain when `market` is absent/unparseable.
+      const settlement = market ? parseCompositeMarketKey(market)?.settlement : undefined;
+      const typed = buildCancelTypedData(apiConfig, maker, orderId, nonce, expiry, settlement);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const signature = await ak.signTypedDataBare(typed as any);
       await cancelOrder(orderId, { maker, signature, nonce, expiry });
     },
     onSuccess: () => {

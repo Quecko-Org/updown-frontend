@@ -12,6 +12,14 @@ export function formatUsdt(raw: string | bigint): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: 6 });
 }
 
+/** Format an atomic 6-dp SHARE count for display. Shares are atomic 6-dp and
+ *  1:1 with $1 face value, so the numeric formatting matches `formatUsdt` —
+ *  the difference is purely semantic: a share count is NOT dollars, so callers
+ *  render it with a "shares" affordance and never a `$` prefix. */
+export function formatShares(raw: string | bigint): string {
+  return formatUsdt(raw);
+}
+
 export function parseUsdtToAtomic(dollars: string): bigint {
   const normalized = dollars.trim().replace(/,/g, "");
   return parseUnits(normalized || "0", USDT_DECIMALS);
@@ -61,6 +69,19 @@ export function formatTimeRemainingNoSeconds(seconds: number): string {
   if (h > 0) return m > 0 ? `${h}h ${m} min` : `${h}h`;
   if (m > 0) return `${m} min`;
   return "Less than a minute";
+}
+
+/**
+ * Exact cent label for an order-book price level. Prices are integer BASIS
+ * POINTS (hundredths of a cent); rounding them to whole cents collapsed
+ * distinct levels into one label — a DMM bid at 4950 and a user's order at
+ * 5000 both printed "50¢" and read as duplicate orders (QA round-5,
+ * 2026-07-20). Trailing zeros are trimmed: 4950 → "49.5", 5408 → "54.08",
+ * 5000 → "50". Caller appends the "¢".
+ */
+export function formatBookPriceCents(priceBps: number): string {
+  if (!Number.isFinite(priceBps)) return "—";
+  return String(Number((priceBps / 100).toFixed(2)));
 }
 
 export function formatProbabilityPrice(raw: string): string {

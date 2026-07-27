@@ -1,13 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useAccount } from "wagmi";
 import { useAtomValue } from "jotai";
-import { toast } from "sonner";
-import { getDmmRebates, postDmmClaimRebate } from "@/lib/api";
+import { getDmmRebates } from "@/lib/api";
 import { formatUsdt } from "@/lib/format";
-import { formatUserFacingError } from "@/lib/errors";
 import { EmptyState } from "@/components/EmptyState";
 import { userSmartAccount } from "@/store/atoms";
 
@@ -27,23 +25,11 @@ export default function RebatesPage() {
   // 0 always. Read the TW from the shared atom; Path-1 fallback (no factory)
   // → atom is set to EOA, so this still resolves.
   const smartAccount = useAtomValue(userSmartAccount);
-  const qc = useQueryClient();
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["dmmRebates", smartAccount?.toLowerCase() ?? ""],
     queryFn: () => getDmmRebates(smartAccount!),
     enabled: !!smartAccount && isConnected,
-  });
-
-  const claim = useMutation({
-    mutationFn: () => postDmmClaimRebate({ wallet: smartAccount! }),
-    onSuccess: () => {
-      toast.success("Claim submitted");
-      void qc.invalidateQueries({ queryKey: ["dmmRebates", smartAccount?.toLowerCase()] });
-      const ti = smartAccount?.toLowerCase() ?? "";
-      if (ti) void qc.invalidateQueries({ queryKey: ["balance", ti] });
-    },
-    onError: (e: Error) => toast.error(formatUserFacingError(e)),
   });
 
   if (!isConnected) {
@@ -70,18 +56,17 @@ export default function RebatesPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="pp-h1">Rebates</h1>
+          {/* QA 2026-07-17: the Claim button here posted to /dmm/claim-rebate,
+              an endpoint removed in the 2026-05-12 rebate rebuild — it could
+              never succeed. Rebates accrue on-chain per maker; payout is
+              self-service via UpDownSettlement.claimRebate(), which this demo
+              UI does not wire up. Read-only view. */}
           <p className="pp-caption mt-1 max-w-xl">
-            Accumulated maker rebates. Claim settles on-chain or via the relayer.
+            Maker rebates accrue automatically to your account on-chain as your
+            resting orders fill. Payout is settled by the on-chain rebate
+            contract; no action is needed here.
           </p>
         </div>
-        <button
-          type="button"
-          className="pp-btn pp-btn--primary pp-btn--md shrink-0"
-          disabled={claim.isPending || isLoading || isError}
-          onClick={() => claim.mutate()}
-        >
-          {claim.isPending ? "Claiming…" : "Claim"}
-        </button>
       </div>
 
       {isLoading && <div className="py-8 text-center pp-caption">Loading rebates…</div>}

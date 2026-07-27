@@ -62,6 +62,31 @@ export function sharePriceBpsFromOrderBookMid(
   return 5000;
 }
 
+/**
+ * Best EXECUTABLE ask (bps) for a side — the price a market BUY starts filling
+ * at. Folds the complementary synthetic ask (BPS_SCALE − opposite best bid)
+ * into the native ask, mirroring `unifyOrderBook`, but works off the
+ * top-of-book snapshot in `market.orderBook`: the in-memory depth book blanks
+ * transiently on a DMM cancel-replace, and a price shown on an always-visible
+ * button must not flicker with it. Null when nothing is buyable on that side.
+ */
+export function executableAskBpsFromOrderBook(
+  side: 1 | 2,
+  orderBook: {
+    up: { bestBid: { price: number } | null; bestAsk: { price: number } | null };
+    down: { bestBid: { price: number } | null; bestAsk: { price: number } | null };
+  },
+  complementary: boolean,
+): number | null {
+  const own = side === 1 ? orderBook.up : orderBook.down;
+  const opp = side === 1 ? orderBook.down : orderBook.up;
+  const native = own.bestAsk?.price ?? null;
+  const oppBid = opp.bestBid?.price;
+  const synthetic = complementary && oppBid != null ? BPS_SCALE - oppBid : null;
+  if (native != null && synthetic != null) return Math.min(native, synthetic);
+  return native ?? synthetic;
+}
+
 /** Implied UP share price in bps from on-chain probability weights (list view, no order book). */
 /** Display label for share price in cents (3000 → "30¢"). */
 export function formatShareCentsLabel(priceBps: number): string {

@@ -19,12 +19,14 @@
  *   - happy path           → live + open + nextThree rendered in sequence
  */
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { getMarkets, getPriceHistory, type MarketListItem } from "@/lib/api";
+import { useSetAtom } from "jotai";
+import { focusedMarketKeyAtom } from "@/store/atoms";
+import { useWsLive } from "@/hooks/useWsLive";
+import { getMarket, getMarkets, type MarketListItem } from "@/lib/api";
 import { computeImpliedProb } from "@/lib/format";
-import { normalizePriceHistoryData } from "@/lib/priceChart";
 import { LiveMarketRow } from "@/components/markets/LiveMarketRow";
 import { OpenMarketRow } from "@/components/markets/OpenMarketRow";
 import { MarketsPageChart } from "@/components/markets/MarketsPageChart";
@@ -35,6 +37,7 @@ import { TimeframeSegmented, type Timeframe } from "@/components/markets/Timefra
 import { LiveResolvedToggle, type RowsMode } from "@/components/markets/LiveResolvedToggle";
 import { useTrackLastMarketView } from "@/hooks/useLastMarketView";
 import { useMarketImpliedProb } from "@/hooks/useMarketImpliedProb";
+import { useLiveSpot } from "@/hooks/useLiveSpot";
 
 const TF_TO_SEC: Record<Timeframe, 300 | 900 | 3600> = {
   "5m": 300,
@@ -53,6 +56,19 @@ function clampAsset(raw: string | null): Asset {
 
 function clampTimeframe(raw: string | null): Timeframe {
   if (raw === "15m" || raw === "60m") return raw;
+  return "5m";
+}
+
+// Reverse of ASSET_TO_PAIR / TF_TO_SEC: map a market's pair + duration back
+// to the URL-driven asset + timeframe controls, so a `?market=` deep link can
+// switch the page to the requested market's pair/timeframe.
+function pairToAsset(pair: string | null | undefined): Asset {
+  return (pair ?? "").toUpperCase().startsWith("ETH") ? "eth" : "btc";
+}
+
+function durationToTimeframe(duration: number): Timeframe {
+  if (duration === 900) return "15m";
+  if (duration === 3600) return "60m";
   return "5m";
 }
 
@@ -138,33 +154,46 @@ function MarketsPageInner() {
     return () => clearInterval(id);
   }, []);
 
+  // The `markets` WS channel pushes `market_created` / `market_resolved`, and
+  // the hook's handler prepends the new market + invalidates within ~1s — the
+  // real-time path. So while the socket is live the REST poll is only a safety
+  // net (20s) for the rare case the backend hasn't emitted/indexed yet; when
+  // the socket is down we fall back to the tight 6s poll so a rollover boundary
+  // doesn't leave "No live market" lingering.
+  const wsLive = useWsLive();
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["markets", ASSET_TO_PAIR[asset], TF_TO_SEC[timeframe]],
     queryFn: () => getMarkets(TF_TO_SEC[timeframe], ASSET_TO_PAIR[asset]),
-    refetchInterval: 15_000,
-  });
-
-  // Spot price for the active asset, threaded into the asset pill.
-  const { data: btcSpot } = useQuery({
-    queryKey: ["spot", "BTC"],
-    queryFn: async () => {
-      const ph = await getPriceHistory("BTC");
-      const points = normalizePriceHistoryData(ph);
-      return points.length ? points[points.length - 1].p : null;
-    },
-    refetchInterval: 30_000,
-  });
-  const { data: ethSpot } = useQuery({
-    queryKey: ["spot", "ETH"],
-    queryFn: async () => {
-      const ph = await getPriceHistory("ETH");
-      const points = normalizePriceHistoryData(ph);
-      return points.length ? points[points.length - 1].p : null;
-    },
-    refetchInterval: 30_000,
+    refetchInterval: wsLive ? 20_000 : 6_000,
   });
 
   const buckets = useMemo(() => bucketMarkets(data, nowSec), [data, nowSec]);
+
+  // Publish the focused market's composite key so the global WebSocket
+  // (AppShell → useUpDownWebSocket) subscribes its `orderbook:` / `trades:`
+  // channels: the open trade drawer takes precedence, else the live market
+  // whose book fills the bottom OrderBookDrawer. Cleared on unmount so other
+  // routes don't hold a stale per-market subscription.
+  const setFocusedMarketKey = useSetAtom(focusedMarketKeyAtom);
+  const liveMarketAddress = buckets.live?.address ?? null;
+  useEffect(() => {
+    setFocusedMarketKey(drawerMarket ?? liveMarketAddress);
+    return () => setFocusedMarketKey(null);
+  }, [drawerMarket, liveMarketAddress, setFocusedMarketKey]);
+
+  // Spot price for the asset pill. Reads the live market's own series — the
+  // same cache entry the chart below renders, kept current by the WS
+  // `price_snapshot` stream — so the header and the chart show one number from
+  // one feed. See useLiveSpot for what this replaced (a 30s poll of a
+  // Coinbase-backed endpoint, which is how the header ended up $78 from the
+  // chart in the same screenshot). AssetPicker only renders the selected
+  // asset's price, so only the selected asset needs resolving.
+  const spot = useLiveSpot(
+    asset === "eth" ? "ETH" : "BTC",
+    liveMarketAddress,
+    buckets.live?.startTime,
+    buckets.live?.endTime,
+  );
 
   const setQueryParam = useCallback(
     (key: string, value: string) => {
@@ -178,6 +207,39 @@ function MarketsPageInner() {
   const handleAssetChange = (next: Asset) => setQueryParam("asset", next);
   const handleTimeframeChange = (next: Timeframe) => setQueryParam("timeframe", next);
 
+  // Deep link (`/?market=<addr>`): resolve the requested market — from the
+  // loaded list when present, else a single GET /markets/:addr since the
+  // target may be RESOLVED and outside the live bucket — then switch asset +
+  // timeframe to match and pre-open its trade drawer. These links come from
+  // `marketPathFromAddress` (Portfolio / Activity rows, MarketClosedPanel's
+  // "Go to live market" CTA). The ref guards against the effect re-firing when
+  // our own asset/timeframe URL write re-runs the markets query (and thus the
+  // effect): we act once per distinct `market` param and let it stay sticky.
+  const wantedMarket = searchParams.get("market");
+  const appliedMarketRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!wantedMarket) return;
+    if (appliedMarketRef.current === wantedMarket) return;
+    let cancelled = false;
+    (async () => {
+      const target = wantedMarket.toLowerCase();
+      const m =
+        data?.find((x) => x.address.toLowerCase() === target) ??
+        (await getMarket(wantedMarket).catch(() => null));
+      if (cancelled || !m) return;
+      appliedMarketRef.current = wantedMarket;
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("asset", pairToAsset(m.pairSymbol ?? m.pairId));
+      params.set("timeframe", durationToTimeframe(m.duration));
+      params.set("market", wantedMarket);
+      router.replace(`/?${params.toString()}`, { scroll: false });
+      setDrawerMarket(wantedMarket);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [wantedMarket, data, searchParams, router, setDrawerMarket]);
+
   return (
     <main className="pp-markets-page">
       {/* 2026-05-17 home-page UX redesign: AssetPicker stays as the global
@@ -187,8 +249,8 @@ function MarketsPageInner() {
       <div className="pp-markets-page__controls">
         <AssetPicker
           selected={asset}
-          btcSpotUsd={btcSpot ?? null}
-          ethSpotUsd={ethSpot ?? null}
+          btcSpotUsd={asset === "btc" ? spot : null}
+          ethSpotUsd={asset === "eth" ? spot : null}
           onChange={handleAssetChange}
         />
       </div>

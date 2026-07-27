@@ -2,6 +2,7 @@ import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
 import type { PublicClient } from "viem";
 import type { ApiConfig, BalanceResponse } from "@/lib/api";
+import type { UpDownAccountKitSigner } from "@/lib/accountKit";
 import {
   MAX_NOTIFICATIONS_PER_WALLET,
   NOTIFICATIONS_STORAGE_KEY,
@@ -11,25 +12,22 @@ import {
 } from "@/lib/notifications";
 
 /**
- * Smart-account address — the user's per-EOA ThinWallet under Phase 4. Set
- * during connect by `useThinWallet` after the relayer has provisioned the
- * TW via `factory.deployWallet`. Consumers (TradeForm, DepositModal,
+ * Smart-account address — the user's Alchemy Account Kit SCA, derived
+ * deterministically from the owner EOA at connect (WalletContext →
+ * `UpDownAccountKitSigner.connect()`). Consumers (TradeForm, DepositModal,
  * Header, portfolio) MUST read from this atom for any "user trading
  * identity" lookup:
- *   - allowance / balance reads target the TW, not the EOA
- *   - order.maker = TW address (so SignatureChecker dispatches to
- *     ThinWallet.isValidSignature via ERC-1271 at fill time)
- *   - deposit UI shows the TW address as the receive-USDT destination
- *
- * Path-1 fallback: on chains where the factory is NOT deployed
- * (`config.thinWalletFactoryAddress` is empty/missing), `useThinWallet`
- * skips provisioning and WalletContext writes the EOA into this atom
- * directly — restoring the pre-Phase-4 Path-1 behavior. Frontend code
- * doesn't branch; the atom just carries whichever identity is correct
- * for the active chain.
+ *   - allowance / balance reads target the SCA, not the EOA
+ *   - order.maker = SCA address (SignatureChecker dispatches to
+ *     SCA.isValidSignature via ERC-1271 at fill time)
+ *   - deposit UI shows the SCA address as the receive-USDT destination
+ *   - backend rows are keyed by this address (`resolveOwnerEoa` treats the
+ *     SCA as its own owner — there is no provisioning step)
  */
 export const userSmartAccount = atom<string>("");
-export const userSmartAccountClient = atom<unknown>(null);
+/** The connected `UpDownAccountKitSigner` — signs orders/cancels (bare
+ *  ERC-1271), WS-auth (raw), and sends onboarding/withdraw UserOps. */
+export const userSmartAccountClient = atom<UpDownAccountKitSigner | null>(null);
 export const userPublicClient = atom<PublicClient | null>(null);
 
 export const apiConfigAtom = atom<ApiConfig | null>(null);
@@ -38,6 +36,18 @@ export const wsConnectedAtom = atom(false);
 
 /** Last time a WebSocket message was handled (ms since epoch); for stale UI hints. */
 export const wsLastEventAtAtom = atom<number | null>(null);
+
+/**
+ * Composite key (`settlementAddress-marketId`) of the market the user is
+ * currently looking at — the open trade drawer, else the live market whose
+ * book is shown in the bottom OrderBookDrawer. `null` when neither exists.
+ *
+ * Set by the markets page; read by AppShell, which feeds it to
+ * `useUpDownWebSocket` so the SDK client subscribes that market's public
+ * `orderbook:` / `trades:` channels (live book updates) and drops them when
+ * focus moves.
+ */
+export const focusedMarketKeyAtom = atom<string | null>(null);
 
 export const balanceSnapshotAtom = atom<BalanceResponse | null>(null);
 
